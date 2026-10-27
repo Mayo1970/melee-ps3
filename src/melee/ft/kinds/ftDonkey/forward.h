@@ -4,97 +4,101 @@
 #include <melee/ft/forward.h>
 #include <melee/ft/kinds/ftCommon/forward.h>
 
-static MotionFlags const ftDk_MF_Special =
-    ftCo_MF_Special | Ft_MF_SkipModel | Ft_MF_KeepSfx | Ft_MF_SkipItemVis |
-    Ft_MF_UnkUpdatePhys | Ft_MF_FreezeState;
+#define ftDk_MF_Special                                                       \
+    ((MotionFlags) (ftCo_MF_Special | Ft_MF_SkipModel | Ft_MF_KeepSfx |       \
+                    Ft_MF_SkipItemVis | Ft_MF_UnkUpdatePhys |                 \
+                    Ft_MF_FreezeState))
 
-static MotionFlags const ftDk_MF_SpecialN =
-    ftDk_MF_Special | Ft_MF_KeepFastFall;
+#define ftDk_MF_SpecialN ((MotionFlags) (ftDk_MF_Special | Ft_MF_KeepFastFall))
 
-static MotionFlags const ftDk_MF_SpecialS = ftDk_MF_Special | Ft_MF_KeepGfx;
+#define ftDk_MF_SpecialS ((MotionFlags) (ftDk_MF_Special | Ft_MF_KeepGfx))
 
-static MotionFlags const ftDk_MF_SpecialHi =
-    ftDk_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepGfx;
+#define ftDk_MF_SpecialHi                                                     \
+    ((MotionFlags) (ftDk_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepGfx))
 
-static MotionFlags const ftDk_MF_SpecialLwStart =
-    ftDk_MF_Special | Ft_MF_KeepColAnimHitStatus;
+#define ftDk_MF_SpecialLwStart                                                \
+    ((MotionFlags) (ftDk_MF_Special | Ft_MF_KeepColAnimHitStatus))
 
-static MotionFlags const ftDk_MF_SpecialAirN =
-    ftDk_MF_Special | Ft_MF_KeepFastFall | Ft_MF_SkipParasol;
+#define ftDk_MF_SpecialAirN                                                   \
+    ((MotionFlags) (ftDk_MF_Special | Ft_MF_KeepFastFall | Ft_MF_SkipParasol))
 
-static MotionFlags const ftDk_MF_SpecialAirS =
-    ftDk_MF_Special | Ft_MF_KeepGfx | Ft_MF_SkipParasol;
+#define ftDk_MF_SpecialAirS                                                   \
+    ((MotionFlags) (ftDk_MF_Special | Ft_MF_KeepGfx | Ft_MF_SkipParasol))
 
-static MotionFlags const ftDk_MF_SpecialAirHi =
-    ftDk_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepGfx | Ft_MF_SkipParasol;
+#define ftDk_MF_SpecialAirHi                                                  \
+    ((MotionFlags) (ftDk_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepGfx |    \
+                    Ft_MF_SkipParasol))
 
-static MotionFlags const ftDk_MF_SpecialN_CollCancel =
-    ftCommon_GroundAirColl_MF;
+#define ftDk_MF_SpecialN_CollCancel ((MotionFlags) (ftCommon_GroundAirColl_MF))
 
-static MotionFlags const ftDk_MF_SpecialN_Coll =
-    ftDk_MF_SpecialN_CollCancel | Ft_MF_KeepGfx | Ft_MF_KeepColAnimHitStatus |
-    Ft_MF_KeepColAnimPartHitStatus | Ft_MF_SkipHit;
+#define ftDk_MF_SpecialN_Coll                                                 \
+    ((MotionFlags) (ftDk_MF_SpecialN_CollCancel | Ft_MF_KeepGfx |             \
+                    Ft_MF_KeepColAnimHitStatus |                              \
+                    Ft_MF_KeepColAnimPartHitStatus | Ft_MF_SkipHit))
 
-static MotionFlags const ftDk_MF_MS_386 =
-    ftDk_MF_Special | Ft_MF_KeepColAnimHitStatus | Ft_MF_SkipParasol;
+#define ftDk_MF_MS_386                                                        \
+    ((MotionFlags) (ftDk_MF_Special | Ft_MF_KeepColAnimHitStatus |            \
+                    Ft_MF_SkipParasol))
 
-static MotionFlags const ftDk_MF_SpecialLw =
-    ftDk_MF_Special | Ft_MF_KeepColAnimHitStatus | Ft_MF_Unk19;
+#define ftDk_MF_SpecialLw                                                     \
+    ((MotionFlags) (ftDk_MF_Special | Ft_MF_KeepColAnimHitStatus |            \
+                    Ft_MF_Unk19))
 
-static MotionFlags const ftDk_MF_MS_350 =
-    Ft_MF_KeepSwordTrail | Ft_MF_Unk19 | Ft_MF_SkipModelPartVis;
+#define ftDk_MF_MS_350                                                        \
+    ((MotionFlags) (Ft_MF_KeepSwordTrail | Ft_MF_Unk19 |                      \
+                    Ft_MF_SkipModelPartVis))
 
-static MotionFlags const ftDk_MF_Cargo =
-    Ft_MF_SkipModel | Ft_MF_SkipAnimVel | Ft_MF_FreezeState | Ft_MF_SkipMetalB;
+#define ftDk_MF_Cargo                                                         \
+    ((MotionFlags) (Ft_MF_SkipModel | Ft_MF_SkipAnimVel | Ft_MF_FreezeState | \
+                    Ft_MF_SkipMetalB))
 
-static MotionFlags const ftDk_MF_CargoThrow =
-    ftDk_MF_Cargo | Ft_MF_SkipHit | Ft_MF_SkipItemVis;
+#define ftDk_MF_CargoThrow                                                    \
+    ((MotionFlags) (ftDk_MF_Cargo | Ft_MF_SkipHit | Ft_MF_SkipItemVis))
 
-static MotionFlags const ftDk_MF_CargoThrowF =
-    ftDk_MF_CargoThrow | Ft_MF_KeepFastFall;
+#define ftDk_MF_CargoThrowF                                                   \
+    ((MotionFlags) (ftDk_MF_CargoThrow | Ft_MF_KeepFastFall))
 
-static MotionFlags const ftDk_MF_CargoThrowB =
-    ftDk_MF_CargoThrow | Ft_MF_KeepGfx;
+#define ftDk_MF_CargoThrowB                                                   \
+    ((MotionFlags) (ftDk_MF_CargoThrow | Ft_MF_KeepGfx))
 
-static MotionFlags const ftDk_MF_CargoThrowHi =
-    ftDk_MF_CargoThrow | Ft_MF_KeepFastFall | Ft_MF_KeepGfx;
+#define ftDk_MF_CargoThrowHi                                                  \
+    ((MotionFlags) (ftDk_MF_CargoThrow | Ft_MF_KeepFastFall | Ft_MF_KeepGfx))
 
-static MotionFlags const ftDk_MF_CargoThrowLw =
-    ftDk_MF_CargoThrow | Ft_MF_KeepColAnimHitStatus;
+#define ftDk_MF_CargoThrowLw                                                  \
+    ((MotionFlags) (ftDk_MF_CargoThrow | Ft_MF_KeepColAnimHitStatus))
 
-static MotionFlags const ftDk_MF_CargoWait =
-    ftDk_MF_Cargo | Ft_MF_KeepFastFall | Ft_MF_KeepColAnimHitStatus |
-    Ft_MF_Unk19;
+#define ftDk_MF_CargoWait                                                     \
+    ((MotionFlags) (ftDk_MF_Cargo | Ft_MF_KeepFastFall |                      \
+                    Ft_MF_KeepColAnimHitStatus | Ft_MF_Unk19))
 
-static MotionFlags const ftDk_MF_CargoTurn =
-    ftDk_MF_CargoWait | Ft_MF_KeepAccessory;
+#define ftDk_MF_CargoTurn                                                     \
+    ((MotionFlags) (ftDk_MF_CargoWait | Ft_MF_KeepAccessory))
 
-static MotionFlags const ftDk_MF_CargoWalk =
-    ftDk_MF_CargoWait | Ft_MF_UpdateCmd;
+#define ftDk_MF_CargoWalk ((MotionFlags) (ftDk_MF_CargoWait | Ft_MF_UpdateCmd))
 
-static MotionFlags const ftDk_MF_CargoJump =
-    ftDk_MF_CargoWait | Ft_MF_SkipNametagVis;
+#define ftDk_MF_CargoJump                                                     \
+    ((MotionFlags) (ftDk_MF_CargoWait | Ft_MF_SkipNametagVis))
 
-static MotionFlags const ftDk_MF_MS_360 =
-    ftDk_MF_CargoWait | Ft_MF_KeepSwordTrail;
+#define ftDk_MF_MS_360                                                        \
+    ((MotionFlags) (ftDk_MF_CargoWait | Ft_MF_KeepSwordTrail))
 
-static MotionFlags const ftDk_MF_MS_341 = Ft_MF_Unk19 | Ft_MF_SkipModelPartVis;
+#define ftDk_MF_MS_341 ((MotionFlags) (Ft_MF_Unk19 | Ft_MF_SkipModelPartVis))
 
-static MotionFlags const ftDk_MF_Move_53 =
-    ftDk_MF_MS_341 | Ft_MF_SkipAnimVel | Ft_MF_Unk06;
+#define ftDk_MF_Move_53                                                       \
+    ((MotionFlags) (ftDk_MF_MS_341 | Ft_MF_SkipAnimVel | Ft_MF_Unk06))
 
-static MotionFlags const ftDk_MF_MS_342_Base =
-    ftDk_MF_Move_53 | Ft_MF_KeepColAnimHitStatus;
+#define ftDk_MF_MS_342_Base                                                   \
+    ((MotionFlags) (ftDk_MF_Move_53 | Ft_MF_KeepColAnimHitStatus))
 
-static MotionFlags const ftDk_MF_MS_342 =
-    ftDk_MF_MS_342_Base | Ft_MF_KeepGfx | Ft_MF_UpdateCmd;
+#define ftDk_MF_MS_342                                                        \
+    ((MotionFlags) (ftDk_MF_MS_342_Base | Ft_MF_KeepGfx | Ft_MF_UpdateCmd))
 
-static MotionFlags const ftDk_MF_MS_345 =
-    ftDk_MF_MS_342_Base | Ft_MF_KeepAccessory;
+#define ftDk_MF_MS_345                                                        \
+    ((MotionFlags) (ftDk_MF_MS_342_Base | Ft_MF_KeepAccessory))
 
-static MotionFlags const ftDk_MF_MS_348 = ftDk_MF_Move_53 |
-                                          Ft_MF_KeepFastFall | Ft_MF_SkipHit |
-                                          Ft_MF_SkipNametagVis;
+#define ftDk_MF_MS_348                                                        \
+    ((MotionFlags) (ftDk_MF_Move_53 | Ft_MF_KeepFastFall | Ft_MF_SkipHit |    \
+                    Ft_MF_SkipNametagVis))
 
 typedef enum ftDk_MotionState {
     ftDk_MS_HeavyWait = ftCo_MS_Count,

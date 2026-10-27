@@ -4,44 +4,45 @@
 #include <melee/ft/forward.h>
 #include <melee/ft/kinds/ftCommon/forward.h>
 
-static MotionFlags const ftMt_MF_Special =
-    Ft_MF_SkipModel | Ft_MF_SkipItemVis | Ft_MF_UnkUpdatePhys |
-    Ft_MF_FreezeState;
+#define ftMt_MF_Special                                                       \
+    ((MotionFlags) (Ft_MF_SkipModel | Ft_MF_SkipItemVis |                     \
+                    Ft_MF_UnkUpdatePhys | Ft_MF_FreezeState))
 
-static MotionFlags const ftMt_MF_SpecialHiStart =
-    ftMt_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepGfx;
+#define ftMt_MF_SpecialHiStart                                                \
+    ((MotionFlags) (ftMt_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepGfx))
 
-static MotionFlags const ftMt_MF_SpecialNStart =
-    ftMt_MF_Special | Ft_MF_KeepFastFall | Ft_MF_SkipThrowException;
+#define ftMt_MF_SpecialNStart                                                 \
+    ((MotionFlags) (ftMt_MF_Special | Ft_MF_KeepFastFall |                    \
+                    Ft_MF_SkipThrowException))
 
-static MotionFlags const ftMt_MF_SpecialLw =
-    ftMt_MF_Special | Ft_MF_KeepColAnimHitStatus | Ft_MF_SkipThrowException;
+#define ftMt_MF_SpecialLw                                                     \
+    ((MotionFlags) (ftMt_MF_Special | Ft_MF_KeepColAnimHitStatus |            \
+                    Ft_MF_SkipThrowException))
 
-static MotionFlags const ftMt_MF_SpecialAirHiStart =
-    ftMt_MF_SpecialHiStart | Ft_MF_SkipParasol;
+#define ftMt_MF_SpecialAirHiStart                                             \
+    ((MotionFlags) (ftMt_MF_SpecialHiStart | Ft_MF_SkipParasol))
 
-static MotionFlags const ftMt_MF_SpecialAirNStart =
-    ftMt_MF_SpecialNStart | Ft_MF_SkipParasol;
+#define ftMt_MF_SpecialAirNStart                                              \
+    ((MotionFlags) (ftMt_MF_SpecialNStart | Ft_MF_SkipParasol))
 
-static MotionFlags const ftMt_MF_SpecialAirLw =
-    ftMt_MF_SpecialLw | Ft_MF_SkipParasol;
+#define ftMt_MF_SpecialAirLw                                                  \
+    ((MotionFlags) (ftMt_MF_SpecialLw | Ft_MF_SkipParasol))
 
-static MotionFlags const ftMt_MF_SpecialS =
-    ftMt_MF_Special | Ft_MF_KeepGfx | Ft_MF_SkipColAnim;
+#define ftMt_MF_SpecialS                                                      \
+    ((MotionFlags) (ftMt_MF_Special | Ft_MF_KeepGfx | Ft_MF_SkipColAnim))
 
-static MotionFlags const ftMt_MF_SpecialAirS =
-    ftMt_MF_SpecialS | Ft_MF_SkipParasol;
+#define ftMt_MF_SpecialAirS                                                   \
+    ((MotionFlags) (ftMt_MF_SpecialS | Ft_MF_SkipParasol))
 
-static MotionFlags const ftMt_MF_SpecialN =
-    ftMt_MF_SpecialNStart | Ft_MF_Unk19;
+#define ftMt_MF_SpecialN ((MotionFlags) (ftMt_MF_SpecialNStart | Ft_MF_Unk19))
 
-static MotionFlags const ftMt_MF_SpecialAirN =
-    ftMt_MF_SpecialN | Ft_MF_SkipParasol;
+#define ftMt_MF_SpecialAirN                                                   \
+    ((MotionFlags) (ftMt_MF_SpecialN | Ft_MF_SkipParasol))
 
-static MotionFlags const ftMt_MF_SpecialN_Coll = ftCommon_GroundAirColl_MF;
+#define ftMt_MF_SpecialN_Coll ((MotionFlags) (ftCommon_GroundAirColl_MF))
 
-static MotionFlags const ftMt_MF_SpecialNLoop_Coll =
-    ftMt_MF_SpecialN_Coll | Ft_MF_KeepSfx;
+#define ftMt_MF_SpecialNLoop_Coll                                             \
+    ((MotionFlags) (ftMt_MF_SpecialN_Coll | Ft_MF_KeepSfx))
 
 typedef enum ftMewtwo_MotionState {
     ftMt_MS_SpecialNStart = ftCo_MS_Count,

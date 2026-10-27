@@ -10,6 +10,9 @@
 #include <dolphin/dvd.h>
 #include <sysdolphin/baselib/debug.h>
 #include <sysdolphin/baselib/devcom.h>
+#ifdef TARGET_PS3
+#include <dolphin/ar.h>
+#endif
 
 static bool cancel;
 
@@ -50,8 +53,9 @@ void lbFile_800161C4(int file, uintptr_t src, uintptr_t dst, size_t size,
 }
 
 #define MAX_FILENAME_LENGTH 0x20
-const int FILE_EXTENSION_LENGTH = 4; // ".usd" or ".dat"
-const int MAX_BASENAME_LENGTH = MAX_FILENAME_LENGTH - FILE_EXTENSION_LENGTH;
+#define EXTENSION_LENGTH 4 // ".usd" or ".dat"
+const int FILE_EXTENSION_LENGTH = EXTENSION_LENGTH;
+const int MAX_BASENAME_LENGTH = MAX_FILENAME_LENGTH - EXTENSION_LENGTH;
 
 /// append file extension (if needed)
 char* lbFileGetFullName(const char* basename)
@@ -122,7 +126,13 @@ void lbFile_800164A4(int file, uintptr_t dst, size_t* size, int pri,
 {
     int type;
     *size = lbFile_8001634C(file);
+#ifdef TARGET_PS3
+    // ARAM addresses end at ARGetSize(); PS3 heap memory is mapped far
+    // above 16 MB, and static buffers are never load targets.
+    type = (dst >= ARGetSize()) ? 0x21 : 0x23;
+#else
     type = (dst >= 0x80000000) ? 0x21 : 0x23;
+#endif
     HSD_DevComRequest(file, 0, dst, OSRoundUp32B(*size), type, pri, callback,
                       args);
 }

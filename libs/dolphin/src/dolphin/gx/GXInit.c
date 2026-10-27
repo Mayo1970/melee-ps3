@@ -18,6 +18,12 @@ u32* __piReg;
 GXBool __GXinBegin;
 #endif
 
+#ifdef TARGET_PS3
+BOOL IsWriteGatherBufferEmpty(void)
+{
+    return TRUE;
+}
+#else
 asm BOOL IsWriteGatherBufferEmpty(void){
     // clang-format off
     sync
@@ -25,6 +31,7 @@ asm BOOL IsWriteGatherBufferEmpty(void){
     andi. r3, r3, 1
     // clang-format on
 }
+#endif
 
 static void EnableWriteGatherPipe(void)
 {
@@ -204,18 +211,18 @@ GXFifoObj* GXInit(void* base, u32 size)
 
     __cpReg[3] = 0;
     SET_REG_FIELD(0, gx->perfSel, 4, 4, 0);
-    GXWGFifo.u8 = 8;
-    GXWGFifo.u8 = 0x20;
-    GXWGFifo.s32 = gx->perfSel;
-    GXWGFifo.u8 = 0x10;
-    GXWGFifo.s32 = 0x1006;
-    GXWGFifo.s32 = 0;
-    GXWGFifo.u8 = 0x61;
-    GXWGFifo.s32 = 0x23000000;
-    GXWGFifo.u8 = 0x61;
-    GXWGFifo.s32 = 0x24000000;
-    GXWGFifo.u8 = 0x61;
-    GXWGFifo.s32 = 0x67000000;
+    GX_WG(u8, 8);
+    GX_WG(u8, 0x20);
+    GX_WG(s32, gx->perfSel);
+    GX_WG(u8, 0x10);
+    GX_WG(s32, 0x1006);
+    GX_WG(s32, 0);
+    GX_WG(u8, 0x61);
+    GX_WG(s32, 0x23000000);
+    GX_WG(u8, 0x61);
+    GX_WG(s32, 0x24000000);
+    GX_WG(u8, 0x61);
+    GX_WG(s32, 0x67000000);
     __GXSetTmemConfig(0);
     __GXInitGX();
 

@@ -227,7 +227,11 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height,
     ASSERTMSGLINEV(0x248, ((u32) image_ptr & 0x1F) == 0,
                    "%s: %s pointer not aligned to 32B", "GXInitTexObj",
                    "image");
+#ifdef TARGET_PS3
+    imageBase = OSCachedToPhysical(image_ptr) >> 5;
+#else
     imageBase = (u32) ((u32) image_ptr >> 5) & 0x01FFFFFF;
+#endif
     SET_REG_FIELD(0x24A, t->image3, 21, 0, imageBase);
     switch (format & 0xF) {
     case 0:
@@ -343,7 +347,11 @@ void GXInitTexObjData(GXTexObj* obj, void* image_ptr)
     ASSERTMSGLINEV(0x2FE, ((u32) image_ptr & 0x1F) == 0,
                    "%s: %s pointer not aligned to 32B", "GXInitTexObjData",
                    "image");
+#ifdef TARGET_PS3
+    imageBase = OSCachedToPhysical(image_ptr) >> 5;
+#else
     imageBase = ((u32) image_ptr >> 5) & 0x01FFFFFF;
+#endif
     SET_REG_FIELD(0x301, t->image3, 21, 0, imageBase);
 }
 
@@ -627,7 +635,11 @@ void GXInitTlutObj(GXTlutObj* tlut_obj, void* lut, GXTlutFmt fmt,
                    "Tlut");
     t->tlut = 0;
     SET_REG_FIELD(0x45B, t->tlut, 2, 10, fmt);
+#ifdef TARGET_PS3
+    SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, OSCachedToPhysical(lut) >> 5);
+#else
     SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, ((u32) lut & 0x3FFFFFFF) >> 5);
+#endif
     SET_REG_FIELD(0x45D, t->loadTlut0, 8, 24, 0x64);
     t->numEntries = n_entries;
 }

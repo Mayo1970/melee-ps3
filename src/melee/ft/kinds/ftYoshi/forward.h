@@ -8,48 +8,48 @@ struct S_UNK_YOSHI1;
 typedef struct ftYs_DatAttrs ftYs_DatAttrs;
 
 /// @todo Fix names
-static MotionFlags const ftYs_MF_Special =
-    Ft_MF_SkipModel | Ft_MF_SkipItemVis | Ft_MF_UnkUpdatePhys |
-    Ft_MF_FreezeState;
+#define ftYs_MF_Special                                                       \
+    ((MotionFlags) (Ft_MF_SkipModel | Ft_MF_SkipItemVis |                     \
+                    Ft_MF_UnkUpdatePhys | Ft_MF_FreezeState))
 
-static MotionFlags const ftYs_MF_MS_341 = Ft_MF_UnkUpdatePhys;
+#define ftYs_MF_MS_341 ((MotionFlags) (Ft_MF_UnkUpdatePhys))
 
-static MotionFlags const ftYs_MF_ShieldStart =
-    Ft_MF_KeepFastFall | Ft_MF_KeepGfx | Ft_MF_SkipModel | Ft_MF_SkipAnimVel |
-    Ft_MF_Unk06 | Ft_MF_SkipColAnim | Ft_MF_UnkUpdatePhys;
+#define ftYs_MF_ShieldStart                                                   \
+    ((MotionFlags) (Ft_MF_KeepFastFall | Ft_MF_KeepGfx | Ft_MF_SkipModel |    \
+                    Ft_MF_SkipAnimVel | Ft_MF_Unk06 | Ft_MF_SkipColAnim |     \
+                    Ft_MF_UnkUpdatePhys))
 
-static MotionFlags const ftYs_MF_ShieldHold =
-    Ft_MF_Unk19 | Ft_MF_UnkUpdatePhys;
+#define ftYs_MF_ShieldHold ((MotionFlags) (Ft_MF_Unk19 | Ft_MF_UnkUpdatePhys))
 
-static MotionFlags const ftYs_MF_SpecialN =
-    ftYs_MF_Special | Ft_MF_KeepFastFall;
+#define ftYs_MF_SpecialN ((MotionFlags) (ftYs_MF_Special | Ft_MF_KeepFastFall))
 
-static MotionFlags const ftYs_MF_SpecialAirHi =
-    ftYs_MF_SpecialN | Ft_MF_KeepGfx | Ft_MF_SkipThrowException;
+#define ftYs_MF_SpecialAirHi                                                  \
+    ((MotionFlags) (ftYs_MF_SpecialN | Ft_MF_KeepGfx |                        \
+                    Ft_MF_SkipThrowException))
 
-static MotionFlags const ftYs_MF_UnkBase = ftYs_MF_Special | Ft_MF_KeepSfx;
+#define ftYs_MF_UnkBase ((MotionFlags) (ftYs_MF_Special | Ft_MF_KeepSfx))
 
-static MotionFlags const ftYs_MF_SpecialAirS = ftYs_MF_UnkBase | Ft_MF_KeepGfx;
+#define ftYs_MF_SpecialAirS ((MotionFlags) (ftYs_MF_UnkBase | Ft_MF_KeepGfx))
 
-static MotionFlags const ftYs_MF_MS_366 =
-    ftYs_MF_UnkBase | Ft_MF_KeepColAnimHitStatus;
+#define ftYs_MF_MS_366                                                        \
+    ((MotionFlags) (ftYs_MF_UnkBase | Ft_MF_KeepColAnimHitStatus))
 
-static MotionFlags const ftYs_MF_SpecialS =
-    ftYs_MF_SpecialN | Ft_MF_SkipParasol;
+#define ftYs_MF_SpecialS ((MotionFlags) (ftYs_MF_SpecialN | Ft_MF_SkipParasol))
 
-static MotionFlags const ftYs_MF_MS_365 =
-    ftYs_MF_SpecialAirHi | Ft_MF_SkipParasol;
+#define ftYs_MF_MS_365                                                        \
+    ((MotionFlags) (ftYs_MF_SpecialAirHi | Ft_MF_SkipParasol))
 
-static MotionFlags const ftYs_MF_SpecialHi =
-    ftYs_MF_SpecialAirS | Ft_MF_SkipParasol;
+#define ftYs_MF_SpecialHi                                                     \
+    ((MotionFlags) (ftYs_MF_SpecialAirS | Ft_MF_SkipParasol))
 
-static MotionFlags const ftYs_MF_MS_368 = ftYs_MF_MS_366 | Ft_MF_SkipParasol;
+#define ftYs_MF_MS_368 ((MotionFlags) (ftYs_MF_MS_366 | Ft_MF_SkipParasol))
 
-static MotionFlags const ftYs_MF_SpecialN_Coll =
-    ftCommon_GroundAirColl_MF | Ft_MF_KeepGfx | Ft_MF_SkipModel;
+#define ftYs_MF_SpecialN_Coll                                                 \
+    ((MotionFlags) (ftCommon_GroundAirColl_MF | Ft_MF_KeepGfx |               \
+                    Ft_MF_SkipModel))
 
-static MotionFlags const ftYs_MF_SpecialN_CollHit =
-    ftYs_MF_SpecialN_Coll | Ft_MF_SkipHit;
+#define ftYs_MF_SpecialN_CollHit                                              \
+    ((MotionFlags) (ftYs_MF_SpecialN_Coll | Ft_MF_SkipHit))
 
 typedef enum ftYoshi_MotionState {
     ftYs_MS_GuardOn_0 = ftCo_MS_Count,

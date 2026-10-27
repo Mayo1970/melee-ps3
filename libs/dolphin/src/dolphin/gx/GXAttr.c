@@ -554,7 +554,11 @@ void GXSetArray(GXAttr attr, const void* base_ptr, u8 stride)
     }
     CHECK_ATTRNAME3(0x352, attr);
     cpAttr = attr - GX_VA_POS;
+#ifdef TARGET_PS3
+    phyAddr = OSCachedToPhysical((void*) base_ptr);
+#else
     phyAddr = (u32) base_ptr & 0x3FFFFFFF;
+#endif
     GX_WRITE_SOME_REG2(8, cpAttr | 0xA0, phyAddr, cpAttr - 12);
     GX_WRITE_SOME_REG3(8, cpAttr | 0xB0, stride, cpAttr - 12);
 }

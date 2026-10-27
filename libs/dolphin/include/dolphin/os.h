@@ -70,6 +70,10 @@ u32 __OSSimulatedMemSize : (OS_BASE_CACHED | 0x00F0);
 u32 __OSBusClock : (OS_BASE_CACHED | 0x00F8);
 u32 __OSCoreClock : (OS_BASE_CACHED | 0x00FC);
 int __EXIProbeStartTime[2] : (OS_BASE_CACHED | 0x30C0);
+#elif defined(TARGET_PC)
+// No GameCube low memory here; the port defines the clocks.
+extern u32 __OSBusClock;
+extern u32 __OSCoreClock;
 #else
 #define __OSBusClock (*(u32*) (OS_BASE_CACHED | 0x00F8))
 #define __OSCoreClock (*(u32*) (OS_BASE_CACHED | 0x00FC))
@@ -187,7 +191,8 @@ u32 OSCachedToPhysical(void* caddr);
 u32 OSUncachedToPhysical(void* ucaddr);
 void* OSCachedToUncached(void* caddr);
 void* OSUncachedToCached(void* ucaddr);
-#if !DEBUG
+// TARGET_PS3: the port maps addresses (ps3/os/mem.c).
+#if !DEBUG && !defined(TARGET_PS3)
 #define OSPhysicalToCached(paddr)                                             \
     ((void*) ((u32) (OS_BASE_CACHED + (u32) (paddr))))
 #define OSPhysicalToUncached(paddr)                                           \

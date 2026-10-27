@@ -38,7 +38,11 @@ void GXBeginDisplayList(void* list, u32 size)
     GXSetCPUFifo((GXFifoObj*) &DisplayListFifo);
 }
 
+#ifdef TARGET_PS3
+u32 GXEndDisplayList(void)
+#else
 unsigned long GXEndDisplayList(void)
+#endif
 {
     u32 ov;
     u32 reg;
@@ -94,6 +98,10 @@ void GXCallDisplayList(void* list, u32 nbytes)
         __GXSendFlushPrim();
     }
     GX_WRITE_U8(0x40);
+#ifdef TARGET_PS3
+    GX_WRITE_U32(OSCachedToPhysical(list));
+#else
     GX_WRITE_U32(list);
+#endif
     GX_WRITE_U32(nbytes);
 }

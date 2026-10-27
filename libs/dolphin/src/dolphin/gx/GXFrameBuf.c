@@ -722,7 +722,11 @@ void GXCopyDisp(void* dest, GXBool clear)
     GX_WRITE_RAS_REG(gx->cpDispSize);
     GX_WRITE_RAS_REG(gx->cpDispStride);
 
+#ifdef TARGET_PS3
+    phyAddr = OSCachedToPhysical(dest);
+#else
     phyAddr = (u32) dest & 0x3FFFFFFF;
+#endif
     reg = 0;
     SET_REG_FIELD(0x5D8, reg, 21, 0, phyAddr >> 5);
     SET_REG_FIELD(0x5D9, reg, 8, 24, 0x4B);
@@ -785,7 +789,11 @@ void GXCopyTex(void* dest, GXBool clear)
     GX_WRITE_RAS_REG(gx->cpTexSize);
     GX_WRITE_RAS_REG(gx->cpTexStride);
 
+#ifdef TARGET_PS3
+    phyAddr = OSCachedToPhysical(dest);
+#else
     phyAddr = (u32) dest & 0x3FFFFFFF;
+#endif
     reg = 0;
     SET_REG_FIELD(0x635, reg, 21, 0, phyAddr >> 5);
     SET_REG_FIELD(0x636, reg, 8, 24, 0x4B);

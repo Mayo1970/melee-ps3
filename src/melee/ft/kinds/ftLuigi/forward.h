@@ -4,36 +4,39 @@
 #include <melee/ft/forward.h>
 #include <melee/ft/kinds/ftCommon/forward.h>
 
-static MotionFlags const ftLg_MF_Special =
-    Ft_MF_SkipModel | Ft_MF_SkipItemVis | Ft_MF_UnkUpdatePhys |
-    Ft_MF_FreezeState;
+#define ftLg_MF_Special                                                       \
+    ((MotionFlags) (Ft_MF_SkipModel | Ft_MF_SkipItemVis |                     \
+                    Ft_MF_UnkUpdatePhys | Ft_MF_FreezeState))
 
-static MotionFlags const ftLg_MF_SpecialN =
-    ftLg_MF_Special | Ft_MF_KeepFastFall | Ft_MF_SkipThrowException;
+#define ftLg_MF_SpecialN                                                      \
+    ((MotionFlags) (ftLg_MF_Special | Ft_MF_KeepFastFall |                    \
+                    Ft_MF_SkipThrowException))
 
-static MotionFlags const ftLg_MF_SpecialS =
-    ftLg_MF_Special | Ft_MF_KeepGfx | Ft_MF_KeepSfx;
+#define ftLg_MF_SpecialS                                                      \
+    ((MotionFlags) (ftLg_MF_Special | Ft_MF_KeepGfx | Ft_MF_KeepSfx))
 
-static MotionFlags const ftLg_MF_SpecialHi =
-    ftLg_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepGfx | Ft_MF_KeepSfx;
+#define ftLg_MF_SpecialHi                                                     \
+    ((MotionFlags) (ftLg_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepGfx |    \
+                    Ft_MF_KeepSfx))
 
-static MotionFlags const ftLg_MF_SpecialLw =
-    ftLg_MF_Special | Ft_MF_KeepColAnimHitStatus | Ft_MF_KeepSfx;
+#define ftLg_MF_SpecialLw                                                     \
+    ((MotionFlags) (ftLg_MF_Special | Ft_MF_KeepColAnimHitStatus |            \
+                    Ft_MF_KeepSfx))
 
-static MotionFlags const ftLg_MF_SpecialAirN =
-    ftLg_MF_SpecialN | Ft_MF_SkipParasol;
+#define ftLg_MF_SpecialAirN                                                   \
+    ((MotionFlags) (ftLg_MF_SpecialN | Ft_MF_SkipParasol))
 
-static MotionFlags const ftLg_MF_SpecialAirS =
-    ftLg_MF_SpecialS | Ft_MF_SkipParasol;
+#define ftLg_MF_SpecialAirS                                                   \
+    ((MotionFlags) (ftLg_MF_SpecialS | Ft_MF_SkipParasol))
 
-static MotionFlags const ftLg_MF_SpecialAirHi =
-    ftLg_MF_SpecialHi | Ft_MF_SkipParasol;
+#define ftLg_MF_SpecialAirHi                                                  \
+    ((MotionFlags) (ftLg_MF_SpecialHi | Ft_MF_SkipParasol))
 
-static MotionFlags const ftLg_MF_SpecialAirLw =
-    ftLg_MF_SpecialLw | Ft_MF_SkipParasol;
+#define ftLg_MF_SpecialAirLw                                                  \
+    ((MotionFlags) (ftLg_MF_SpecialLw | Ft_MF_SkipParasol))
 
-static MotionFlags const ftLg_MF_SpecialN_Coll =
-    Ft_MF_SkipColAnim | Ft_MF_UpdateCmd;
+#define ftLg_MF_SpecialN_Coll                                                 \
+    ((MotionFlags) (Ft_MF_SkipColAnim | Ft_MF_UpdateCmd))
 
 typedef enum ftLuigi_MotionState {
     ftLg_MS_SpecialN = ftCo_MS_Count,

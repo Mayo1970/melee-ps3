@@ -24,10 +24,10 @@
 #include <melee/lb/lb_00B0.h>
 #include <melee/lb/lb_00F9.h>
 
-static MotionFlags const ftFx_MF_SpecialLw_Coll =
-    ftCommon_GroundAirColl_MF | Ft_MF_KeepGfx;
-static MotionFlags const ftFx_MF_SpecialLwEnd_Coll =
-    Ft_MF_SkipColAnim | Ft_MF_UpdateCmd;
+#define ftFx_MF_SpecialLw_Coll                                                \
+    ((MotionFlags) (ftCommon_GroundAirColl_MF | Ft_MF_KeepGfx))
+#define ftFx_MF_SpecialLwEnd_Coll                                             \
+    ((MotionFlags) (Ft_MF_SkipColAnim | Ft_MF_UpdateCmd))
 
 void ftFx_SpecialLw_CreateLoopGFX(HSD_GObj* gobj)
 {

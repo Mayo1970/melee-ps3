@@ -421,6 +421,11 @@ static f32 idata[12][3] = {
     { 0.8506508f, -0.5257311f, 0.0f },  { -0.8506508f, -0.5257311f, 0.0f },
 };
 
+#ifdef TARGET_PS3
+// newlib's <strings.h> declares index().
+#define index icosa_index
+#endif
+
 static u8 index[20][3] = {
     { 0, 4, 1 },  { 0, 9, 4 },  { 9, 5, 4 },  { 4, 5, 8 },  { 4, 8, 1 },
     { 8, 10, 1 }, { 8, 3, 10 }, { 5, 3, 8 },  { 5, 2, 3 },  { 2, 7, 3 },

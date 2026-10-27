@@ -113,6 +113,31 @@ void GXGetProjectionv(f32* ptr)
     ptr[6] = gx->projMtx[5];
 }
 
+#ifdef TARGET_PS3
+// No paired singles: the same words, in the same order, through the pipe.
+static void WriteMTX(const f32* m, int n)
+{
+    int i;
+
+    for (i = 0; i < n; i++) {
+        GX_WRITE_F32(m[i]);
+    }
+}
+
+static void WriteMTX3x3from3x4(f32 mtx[3][4])
+{
+    int i;
+
+    for (i = 0; i < 3; i++) {
+        WriteMTX(mtx[i], 3);
+    }
+}
+
+#define WriteMTXPS4x3(mtx, dest) WriteMTX(&(mtx)[0][0], 12)
+#define WriteMTXPS3x3from3x4(mtx, dest) WriteMTX3x3from3x4(mtx)
+#define WriteMTXPS3x3(mtx, dest) WriteMTX(&(mtx)[0][0], 9)
+#define WriteMTXPS4x2(mtx, dest) WriteMTX(&(mtx)[0][0], 8)
+#else
 static asm void WriteMTXPS4x3(register f32 mtx[3][4],
                               register volatile f32* dest)
 {
@@ -181,6 +206,7 @@ static asm void WriteMTXPS4x2(register f32 mtx[2][4],
     psq_st f3, 0(dest), 0, qr0
     // clang-format on
 }
+#endif
 
 #define GX_WRITE_MTX_ELEM(addr, value)                                        \
     do {                                                                      \

@@ -111,10 +111,11 @@ void ftLk_SpecialAirLw_Phys(HSD_GObj* gobj)
     ft_80084EEC(gobj);
 }
 
-static MotionFlags const coll_mf = Ft_MF_SkipMatAnim | Ft_MF_SkipColAnim |
-                                   Ft_MF_UpdateCmd | Ft_MF_SkipItemVis |
-                                   Ft_MF_Unk19 | Ft_MF_SkipModelPartVis |
-                                   Ft_MF_SkipModelFlags | Ft_MF_Unk27;
+#define coll_mf                                                               \
+    ((MotionFlags) (Ft_MF_SkipMatAnim | Ft_MF_SkipColAnim | Ft_MF_UpdateCmd | \
+                    Ft_MF_SkipItemVis | Ft_MF_Unk19 |                         \
+                    Ft_MF_SkipModelPartVis | Ft_MF_SkipModelFlags |           \
+                    Ft_MF_Unk27))
 
 /// @todo Verify MSID.
 void ftLk_SpecialLw_Coll(HSD_GObj* gobj)

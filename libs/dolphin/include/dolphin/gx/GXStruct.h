@@ -33,7 +33,12 @@ typedef struct _GXColorS10 {
 } GXColorS10;
 
 typedef struct _GXTexObj {
+#ifdef TARGET_PS3
+    // The SDK's object holds a pointer: 40 bytes with LP64.
+    u64 dummy[5];
+#else
     u32 dummy[8];
+#endif
 } GXTexObj;
 
 typedef struct _GXLightObj {

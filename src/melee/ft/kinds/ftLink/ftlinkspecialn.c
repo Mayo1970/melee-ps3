@@ -36,12 +36,13 @@ typedef enum cmd_var_idx {
     cmd_unk3,
 } cmd_var_idx;
 
-static MotionFlags const mf = Ft_MF_SkipModel | Ft_MF_SkipItemVis;
+#define mf ((MotionFlags) (Ft_MF_SkipModel | Ft_MF_SkipItemVis))
 
-static MotionFlags const coll_mf =
-    Ft_MF_SkipModel | Ft_MF_SkipMatAnim | Ft_MF_SkipColAnim | Ft_MF_UpdateCmd |
-    Ft_MF_SkipItemVis | Ft_MF_Unk19 | Ft_MF_SkipModelPartVis |
-    Ft_MF_SkipModelFlags | Ft_MF_Unk27;
+#define coll_mf                                                               \
+    ((MotionFlags) (Ft_MF_SkipModel | Ft_MF_SkipMatAnim | Ft_MF_SkipColAnim | \
+                    Ft_MF_UpdateCmd | Ft_MF_SkipItemVis | Ft_MF_Unk19 |       \
+                    Ft_MF_SkipModelPartVis | Ft_MF_SkipModelFlags |           \
+                    Ft_MF_Unk27))
 
 ftLk_SpecialNIndex ftLk_SpecialN_GetIndex(Fighter_GObj* gobj)
 {

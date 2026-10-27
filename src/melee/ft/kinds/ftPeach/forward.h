@@ -4,59 +4,58 @@
 #include <melee/ft/forward.h>
 #include <melee/ft/kinds/ftCommon/forward.h>
 
-static MotionFlags const ftPe_MF_Base = Ft_MF_SkipItemVis | Ft_MF_FreezeState;
+#define ftPe_MF_Base ((MotionFlags) (Ft_MF_SkipItemVis | Ft_MF_FreezeState))
 
-static MotionFlags const ftPe_MF_FloatAttack =
-    ftPe_MF_Base | Ft_MF_SkipParasol;
+#define ftPe_MF_FloatAttack ((MotionFlags) (ftPe_MF_Base | Ft_MF_SkipParasol))
 
-static MotionFlags const ftPe_MF_FloatAttackAirN =
-    ftPe_MF_FloatAttack | Ft_MF_KeepColAnimHitStatus | Ft_MF_SkipHit;
+#define ftPe_MF_FloatAttackAirN                                               \
+    ((MotionFlags) (ftPe_MF_FloatAttack | Ft_MF_KeepColAnimHitStatus |        \
+                    Ft_MF_SkipHit))
 
-static MotionFlags const ftPe_MF_Move_14 =
-    ftPe_MF_FloatAttackAirN | Ft_MF_KeepFastFall;
+#define ftPe_MF_Move_14                                                       \
+    ((MotionFlags) (ftPe_MF_FloatAttackAirN | Ft_MF_KeepFastFall))
 
-static MotionFlags const ftPe_MF_FloatAttackAirB =
-    ftPe_MF_FloatAttackAirN | Ft_MF_KeepGfx;
+#define ftPe_MF_FloatAttackAirB                                               \
+    ((MotionFlags) (ftPe_MF_FloatAttackAirN | Ft_MF_KeepGfx))
 
-static MotionFlags const ftPe_MF_FloatAttackAirHi =
-    ftPe_MF_FloatAttackAirN | Ft_MF_KeepFastFall | Ft_MF_KeepGfx;
+#define ftPe_MF_FloatAttackAirHi                                              \
+    ((MotionFlags) (ftPe_MF_FloatAttackAirN | Ft_MF_KeepFastFall |            \
+                    Ft_MF_KeepGfx))
 
-static MotionFlags const ftPe_MF_Move_17 =
-    ftPe_MF_FloatAttack | Ft_MF_SkipModel;
+#define ftPe_MF_Move_17 ((MotionFlags) (ftPe_MF_FloatAttack | Ft_MF_SkipModel))
 
-static MotionFlags const ftPe_MF_AttackS4 = ftPe_MF_Base | Ft_MF_KeepFastFall |
-                                            Ft_MF_SkipHit | Ft_MF_KeepSfx |
-                                            Ft_MF_SkipRumble;
+#define ftPe_MF_AttackS4                                                      \
+    ((MotionFlags) (ftPe_MF_Base | Ft_MF_KeepFastFall | Ft_MF_SkipHit |       \
+                    Ft_MF_KeepSfx | Ft_MF_SkipRumble))
 
-static MotionFlags const ftPe_MF_Special =
-    ftPe_MF_Base | Ft_MF_SkipModel | Ft_MF_UnkUpdatePhys;
+#define ftPe_MF_Special                                                       \
+    ((MotionFlags) (ftPe_MF_Base | Ft_MF_SkipModel | Ft_MF_UnkUpdatePhys))
 
-static MotionFlags const ftPe_MF_SpecialN =
-    ftPe_MF_Special | Ft_MF_KeepFastFall;
+#define ftPe_MF_SpecialN ((MotionFlags) (ftPe_MF_Special | Ft_MF_KeepFastFall))
 
-static MotionFlags const ftPe_MF_SpecialHi = ftPe_MF_SpecialN | Ft_MF_KeepGfx;
+#define ftPe_MF_SpecialHi ((MotionFlags) (ftPe_MF_SpecialN | Ft_MF_KeepGfx))
 
-static MotionFlags const ftPe_MF_SpecialLw =
-    ftPe_MF_Special | Ft_MF_KeepColAnimHitStatus;
+#define ftPe_MF_SpecialLw                                                     \
+    ((MotionFlags) (ftPe_MF_Special | Ft_MF_KeepColAnimHitStatus))
 
-static MotionFlags const ftPe_MF_SpecialS =
-    ftPe_MF_Special | Ft_MF_KeepGfx | Ft_MF_KeepSfx;
+#define ftPe_MF_SpecialS                                                      \
+    ((MotionFlags) (ftPe_MF_Special | Ft_MF_KeepGfx | Ft_MF_KeepSfx))
 
-static MotionFlags const ftPe_MF_SpecialAirN =
-    ftPe_MF_SpecialN | Ft_MF_SkipParasol;
+#define ftPe_MF_SpecialAirN                                                   \
+    ((MotionFlags) (ftPe_MF_SpecialN | Ft_MF_SkipParasol))
 
-static MotionFlags const ftPe_MF_SpecialAirHi =
-    ftPe_MF_SpecialHi | Ft_MF_SkipParasol;
+#define ftPe_MF_SpecialAirHi                                                  \
+    ((MotionFlags) (ftPe_MF_SpecialHi | Ft_MF_SkipParasol))
 
-static MotionFlags const ftPe_MF_SpecialAirS =
-    ftPe_MF_SpecialS | Ft_MF_SkipParasol;
+#define ftPe_MF_SpecialAirS                                                   \
+    ((MotionFlags) (ftPe_MF_SpecialS | Ft_MF_SkipParasol))
 
-static MotionFlags const ftPe_MF_ParasolOpen =
-    Ft_MF_SkipHit | Ft_MF_SkipModel | Ft_MF_Unk06 | Ft_MF_SkipItemVis |
-    Ft_MF_SkipModelPartVis;
+#define ftPe_MF_ParasolOpen                                                   \
+    ((MotionFlags) (Ft_MF_SkipHit | Ft_MF_SkipModel | Ft_MF_Unk06 |           \
+                    Ft_MF_SkipItemVis | Ft_MF_SkipModelPartVis))
 
-static MotionFlags const ftPe_MF_ParasolFallSpecial =
-    ftPe_MF_ParasolOpen | Ft_MF_Unk19;
+#define ftPe_MF_ParasolFallSpecial                                            \
+    ((MotionFlags) (ftPe_MF_ParasolOpen | Ft_MF_Unk19))
 
 typedef enum ftPeach_MotionState {
     ftPe_MS_Float = ftCo_MS_Count,

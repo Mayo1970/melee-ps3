@@ -174,86 +174,86 @@ typedef enum CharacterKind {
     /* 21 */ ChKind_Max = ChKind_None
 } CharacterKind;
 
-static MotionFlags const Ft_MF_None = 0;
+#define Ft_MF_None ((MotionFlags) (0))
 
-static MotionFlags const Ft_MF_KeepFastFall = 1 << 0;
+#define Ft_MF_KeepFastFall ((MotionFlags) (1 << 0))
 
-static MotionFlags const Ft_MF_KeepGfx = 1 << 1;
+#define Ft_MF_KeepGfx ((MotionFlags) (1 << 1))
 
 /// Preserve full body collision state
-static MotionFlags const Ft_MF_KeepColAnimHitStatus = 1 << 2;
+#define Ft_MF_KeepColAnimHitStatus ((MotionFlags) (1 << 2))
 
 /// Keep hitboxes
-static MotionFlags const Ft_MF_SkipHit = 1 << 3;
+#define Ft_MF_SkipHit ((MotionFlags) (1 << 3))
 
 /// Ignore model state change ?
-static MotionFlags const Ft_MF_SkipModel = 1 << 4;
+#define Ft_MF_SkipModel ((MotionFlags) (1 << 4))
 
-static MotionFlags const Ft_MF_SkipAnimVel = 1 << 5;
+#define Ft_MF_SkipAnimVel ((MotionFlags) (1 << 5))
 
-static MotionFlags const Ft_MF_Unk06 = 1 << 6;
+#define Ft_MF_Unk06 ((MotionFlags) (1 << 6))
 
 /// Ignore switching to character's "hurt" textures ?
-static MotionFlags const Ft_MF_SkipMatAnim = 1 << 7;
+#define Ft_MF_SkipMatAnim ((MotionFlags) (1 << 7))
 
 /// Resets thrower GObj pointer to NULL if false?
-static MotionFlags const Ft_MF_SkipThrowException = 1 << 8;
+#define Ft_MF_SkipThrowException ((MotionFlags) (1 << 8))
 
-static MotionFlags const Ft_MF_KeepSfx = 1 << 9;
+#define Ft_MF_KeepSfx ((MotionFlags) (1 << 9))
 
 /// Ignore Parasol state change
-static MotionFlags const Ft_MF_SkipParasol = 1 << 10;
+#define Ft_MF_SkipParasol ((MotionFlags) (1 << 10))
 
 /// Ignore rumble update?
-static MotionFlags const Ft_MF_SkipRumble = 1 << 11;
+#define Ft_MF_SkipRumble ((MotionFlags) (1 << 11))
 
-static MotionFlags const Ft_MF_SkipColAnim = 1 << 12;
+#define Ft_MF_SkipColAnim ((MotionFlags) (1 << 12))
 
 /// Keep respawn platform?
-static MotionFlags const Ft_MF_KeepAccessory = 1 << 13;
+#define Ft_MF_KeepAccessory ((MotionFlags) (1 << 13))
 
 /// Run all Subaction Events up to the current animation frame
-static MotionFlags const Ft_MF_UpdateCmd = 1 << 14;
+#define Ft_MF_UpdateCmd ((MotionFlags) (1 << 14))
 
-static MotionFlags const Ft_MF_SkipNametagVis = 1 << 15;
+#define Ft_MF_SkipNametagVis ((MotionFlags) (1 << 15))
 
 /// Assume this is for individual bones?
-static MotionFlags const Ft_MF_KeepColAnimPartHitStatus = 1 << 16;
+#define Ft_MF_KeepColAnimPartHitStatus ((MotionFlags) (1 << 16))
 
-static MotionFlags const Ft_MF_KeepSwordTrail = 1 << 17;
+#define Ft_MF_KeepSwordTrail ((MotionFlags) (1 << 17))
 
 /// Used by Ness during Up/Down Smash
-static MotionFlags const Ft_MF_SkipItemVis = 1 << 18;
+#define Ft_MF_SkipItemVis ((MotionFlags) (1 << 18))
 
 /// Skips updating bit 5 of #Fighter::x2222_flag?
-static MotionFlags const Ft_MF_Unk19 = 1 << 19;
+#define Ft_MF_Unk19 ((MotionFlags) (1 << 19))
 
-static MotionFlags const Ft_MF_UnkUpdatePhys = 1 << 20;
+#define Ft_MF_UnkUpdatePhys ((MotionFlags) (1 << 20))
 
 /// Sets anim rate to 0 and some other stuff
-static MotionFlags const Ft_MF_FreezeState = 1 << 21;
+#define Ft_MF_FreezeState ((MotionFlags) (1 << 21))
 
-static MotionFlags const Ft_MF_SkipModelPartVis = 1 << 22;
+#define Ft_MF_SkipModelPartVis ((MotionFlags) (1 << 22))
 
-static MotionFlags const Ft_MF_SkipMetalB = 1 << 23;
+#define Ft_MF_SkipMetalB ((MotionFlags) (1 << 23))
 
-static MotionFlags const Ft_MF_Unk24 = 1 << 24;
+#define Ft_MF_Unk24 ((MotionFlags) (1 << 24))
 
-static MotionFlags const Ft_MF_SkipAttackCount = 1 << 25;
+#define Ft_MF_SkipAttackCount ((MotionFlags) (1 << 25))
 
-static MotionFlags const Ft_MF_SkipModelFlags = 1 << 26;
+#define Ft_MF_SkipModelFlags ((MotionFlags) (1 << 26))
 
-static MotionFlags const Ft_MF_Unk27 = 1 << 27;
+#define Ft_MF_Unk27 ((MotionFlags) (1 << 27))
 
-static MotionFlags const Ft_MF_SkipHitStun = 1 << 28;
+#define Ft_MF_SkipHitStun ((MotionFlags) (1 << 28))
 
 /// Keeps current fighter animation?
-static MotionFlags const Ft_MF_SkipAnim = 1 << 29;
+#define Ft_MF_SkipAnim ((MotionFlags) (1 << 29))
 
-static MotionFlags const Ft_MF_Unk30 = 1 << 30;
+#define Ft_MF_Unk30 ((MotionFlags) (1 << 30))
 
 /// Unused?
-static MotionFlags const Ft_MF_Unk31 = 1 << 31;
+#define Ft_MF_Unk31 ((MotionFlags) (1 << 31))
 
 /// Ledge Grab Macros
 

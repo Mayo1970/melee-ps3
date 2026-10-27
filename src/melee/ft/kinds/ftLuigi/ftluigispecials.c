@@ -171,10 +171,11 @@ void ftLg_SpecialAirSStart_Coll(HSD_GObj* gobj)
     }
 }
 
-static u32 const transition_flags0 =
-    Ft_MF_KeepColAnimHitStatus | Ft_MF_SkipMatAnim | Ft_MF_KeepSfx |
-    Ft_MF_UpdateCmd | Ft_MF_SkipColAnim | Ft_MF_SkipItemVis | Ft_MF_Unk19 |
-    Ft_MF_SkipModelPartVis | Ft_MF_SkipModelFlags | Ft_MF_Unk27;
+#define transition_flags0                                                     \
+    ((u32) (Ft_MF_KeepColAnimHitStatus | Ft_MF_SkipMatAnim | Ft_MF_KeepSfx |  \
+            Ft_MF_UpdateCmd | Ft_MF_SkipColAnim | Ft_MF_SkipItemVis |         \
+            Ft_MF_Unk19 | Ft_MF_SkipModelPartVis | Ft_MF_SkipModelFlags |     \
+            Ft_MF_Unk27))
 
 /// Luigi's Green Missile Start ground -> air Motion State handler
 void ftLg_SpecialSStart_GroundToAir(HSD_GObj* gobj)
@@ -283,7 +284,7 @@ void ftLg_SpecialAirSHold_Coll(HSD_GObj* gobj)
     }
 }
 
-static u32 const transition_flags1 = transition_flags0 | Ft_MF_KeepGfx;
+#define transition_flags1 ((u32) (transition_flags0 | Ft_MF_KeepGfx))
 
 /// Luigi's Green Missile Charge ground -> air Acion State handler
 void ftLg_SpecialSHold_GroundToAir(HSD_GObj* gobj)
@@ -414,10 +415,11 @@ void ftLg_SpecialAirS_Coll(HSD_GObj* gobj)
 }
 
 /// @todo Combine common flags with #transition_flags0.
-static u32 const transition_flags2 =
-    Ft_MF_KeepGfx | Ft_MF_KeepColAnimHitStatus | Ft_MF_SkipMatAnim |
-    Ft_MF_UpdateCmd | Ft_MF_SkipColAnim | Ft_MF_SkipItemVis | Ft_MF_Unk19 |
-    Ft_MF_SkipModelPartVis | Ft_MF_SkipModelFlags | Ft_MF_Unk27;
+#define transition_flags2                                                     \
+    ((u32) (Ft_MF_KeepGfx | Ft_MF_KeepColAnimHitStatus | Ft_MF_SkipMatAnim |  \
+            Ft_MF_UpdateCmd | Ft_MF_SkipColAnim | Ft_MF_SkipItemVis |         \
+            Ft_MF_Unk19 | Ft_MF_SkipModelPartVis | Ft_MF_SkipModelFlags |     \
+            Ft_MF_Unk27))
 
 /// Luigi's Green Missile Launch ground -> air Acion State handler
 void ftLg_SpecialSLaunch_GroundToAir(HSD_GObj* gobj)
@@ -681,10 +683,11 @@ void ftLg_SpecialAirS2_Coll(HSD_GObj* gobj)
 }
 
 /// @todo Combine common flags with #transition_flags0.
-static u32 const transition_flags3 =
-    Ft_MF_KeepGfx | Ft_MF_SkipHit | Ft_MF_SkipMatAnim | Ft_MF_UpdateCmd |
-    Ft_MF_SkipColAnim | Ft_MF_SkipItemVis | Ft_MF_Unk19 |
-    Ft_MF_SkipModelPartVis | Ft_MF_SkipModelFlags | Ft_MF_Unk27;
+#define transition_flags3                                                     \
+    ((u32) (Ft_MF_KeepGfx | Ft_MF_SkipHit | Ft_MF_SkipMatAnim |               \
+            Ft_MF_UpdateCmd | Ft_MF_SkipColAnim | Ft_MF_SkipItemVis |         \
+            Ft_MF_Unk19 | Ft_MF_SkipModelPartVis | Ft_MF_SkipModelFlags |     \
+            Ft_MF_Unk27))
 
 /// Luigi's Green Missile Fly Setup
 void ftLg_SpecialSFly_Enter(HSD_GObj* gobj)

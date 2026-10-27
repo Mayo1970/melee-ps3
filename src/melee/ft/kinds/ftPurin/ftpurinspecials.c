@@ -20,8 +20,8 @@
 #include <sysdolphin/baselib/archive.h>
 #include <sysdolphin/baselib/gobj.h>
 
-static MotionFlags const ftPr_MF_SpecialS_Coll =
-    ftCommon_GroundAirColl_MF | Ft_MF_KeepGfx | Ft_MF_SkipHit;
+#define ftPr_MF_SpecialS_Coll                                                 \
+    ((MotionFlags) (ftCommon_GroundAirColl_MF | Ft_MF_KeepGfx | Ft_MF_SkipHit))
 
 static float calcAngleRadians(HSD_GObj* gobj, float lstick_y)
 {

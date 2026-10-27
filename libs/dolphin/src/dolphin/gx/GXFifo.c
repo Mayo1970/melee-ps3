@@ -621,7 +621,7 @@ void GXRestoreWriteGatherPipe(void)
 #endif
     enabled = OSDisableInterrupts();
     for (i = 0; i < 31; i++) {
-        GXWGFifo.u8 = 0;
+        GX_WG(u8, 0);
     }
     PPCSync();
     while (PPCMfwpar() & 1) {

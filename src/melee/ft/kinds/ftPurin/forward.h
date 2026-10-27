@@ -4,39 +4,39 @@
 #include <melee/ft/forward.h>
 #include <melee/ft/kinds/ftCommon/forward.h>
 
-static MotionFlags const ftPr_MF_Special =
-    Ft_MF_SkipModel | Ft_MF_SkipItemVis | Ft_MF_UnkUpdatePhys |
-    Ft_MF_FreezeState;
+#define ftPr_MF_Special                                                       \
+    ((MotionFlags) (Ft_MF_SkipModel | Ft_MF_SkipItemVis |                     \
+                    Ft_MF_UnkUpdatePhys | Ft_MF_FreezeState))
 
-static MotionFlags const ftPr_MF_SpecialHi =
-    ftPr_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepGfx;
+#define ftPr_MF_SpecialHi                                                     \
+    ((MotionFlags) (ftPr_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepGfx))
 
-static MotionFlags const ftPr_MF_SpecialLw =
-    ftPr_MF_Special | Ft_MF_KeepColAnimHitStatus;
+#define ftPr_MF_SpecialLw                                                     \
+    ((MotionFlags) (ftPr_MF_Special | Ft_MF_KeepColAnimHitStatus))
 
-static MotionFlags const ftPr_MF_SpecialN =
-    ftPr_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepSfx;
+#define ftPr_MF_SpecialN                                                      \
+    ((MotionFlags) (ftPr_MF_Special | Ft_MF_KeepFastFall | Ft_MF_KeepSfx))
 
-static MotionFlags const ftPr_MF_SpecialS =
-    ftPr_MF_Special | Ft_MF_KeepGfx | Ft_MF_KeepSfx;
+#define ftPr_MF_SpecialS                                                      \
+    ((MotionFlags) (ftPr_MF_Special | Ft_MF_KeepGfx | Ft_MF_KeepSfx))
 
-static MotionFlags const ftPr_MF_SpecialAirHi =
-    ftPr_MF_SpecialHi | Ft_MF_SkipParasol;
+#define ftPr_MF_SpecialAirHi                                                  \
+    ((MotionFlags) (ftPr_MF_SpecialHi | Ft_MF_SkipParasol))
 
-static MotionFlags const ftPr_MF_SpecialAirLw =
-    ftPr_MF_SpecialLw | Ft_MF_SkipParasol;
+#define ftPr_MF_SpecialAirLw                                                  \
+    ((MotionFlags) (ftPr_MF_SpecialLw | Ft_MF_SkipParasol))
 
-static MotionFlags const ftPr_MF_SpecialAirN =
-    ftPr_MF_SpecialN | Ft_MF_SkipParasol;
+#define ftPr_MF_SpecialAirN                                                   \
+    ((MotionFlags) (ftPr_MF_SpecialN | Ft_MF_SkipParasol))
 
-static MotionFlags const ftPr_MF_SpecialAirS =
-    ftPr_MF_SpecialS | Ft_MF_SkipParasol;
+#define ftPr_MF_SpecialAirS                                                   \
+    ((MotionFlags) (ftPr_MF_SpecialS | Ft_MF_SkipParasol))
 
-static MotionFlags const ftPr_MF_SpecialNCharged =
-    ftPr_MF_SpecialN | Ft_MF_Unk19;
+#define ftPr_MF_SpecialNCharged                                               \
+    ((MotionFlags) (ftPr_MF_SpecialN | Ft_MF_Unk19))
 
-static MotionFlags const ftPr_SpecialAirNCharged =
-    ftPr_MF_SpecialNCharged | Ft_MF_SkipParasol;
+#define ftPr_SpecialAirNCharged                                               \
+    ((MotionFlags) (ftPr_MF_SpecialNCharged | Ft_MF_SkipParasol))
 
 typedef enum ftPurin_MotionState {
     ftPr_MS_JumpAerialF1 = ftCo_MS_Count,

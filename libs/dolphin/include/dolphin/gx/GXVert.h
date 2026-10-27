@@ -24,8 +24,18 @@ typedef union {
 
 #if defined(__MWERKS__) && !defined(M2CTX)
 volatile PPCWGPipe GXWGFifo : GXFIFO_ADDR;
+#elif defined(TARGET_PS3)
+// No write-gather pipe: each store appends to the port's GP ring, so GXWGFifo stays undefined.
+#include <gx_pipe.h>
 #else
 #define GXWGFifo (*(volatile PPCWGPipe*) GXFIFO_ADDR)
+#endif
+
+// One store into the write-gather pipe; T is a PPCWGPipe member.
+#ifdef TARGET_PS3
+#define GX_WG(T, x) __GXPipe_##T(x)
+#else
+#define GX_WG(T, x) (GXWGFifo.T = (x))
 #endif
 
 #if DEBUG
@@ -46,43 +56,43 @@ volatile PPCWGPipe GXWGFifo : GXFIFO_ADDR;
 #define FUNC_1PARAM(name, T)                                                  \
     static inline void name##1##T(T x)                                        \
     {                                                                         \
-        GXWGFifo.T = x;                                                       \
+        GX_WG(T, x);                                                          \
     }
 
 #define FUNC_2PARAM(name, T)                                                  \
     static inline void name##2##T(T x, T y)                                   \
     {                                                                         \
-        GXWGFifo.T = x;                                                       \
-        GXWGFifo.T = y;                                                       \
+        GX_WG(T, x);                                                          \
+        GX_WG(T, y);                                                          \
     }
 
 #define FUNC_3PARAM(name, T)                                                  \
     static inline void name##3##T(T x, T y, T z)                              \
     {                                                                         \
-        GXWGFifo.T = x;                                                       \
-        GXWGFifo.T = y;                                                       \
-        GXWGFifo.T = z;                                                       \
+        GX_WG(T, x);                                                          \
+        GX_WG(T, y);                                                          \
+        GX_WG(T, z);                                                          \
     }
 
 #define FUNC_4PARAM(name, T)                                                  \
     static inline void name##4##T(T x, T y, T z, T w)                         \
     {                                                                         \
-        GXWGFifo.T = x;                                                       \
-        GXWGFifo.T = y;                                                       \
-        GXWGFifo.T = z;                                                       \
-        GXWGFifo.T = w;                                                       \
+        GX_WG(T, x);                                                          \
+        GX_WG(T, y);                                                          \
+        GX_WG(T, z);                                                          \
+        GX_WG(T, w);                                                          \
     }
 
 #define FUNC_INDEX8(name)                                                     \
     static inline void name##1x8(u8 x)                                        \
     {                                                                         \
-        GXWGFifo.u8 = x;                                                      \
+        GX_WG(u8, x);                                                         \
     }
 
 #define FUNC_INDEX16(name)                                                    \
     static inline void name##1x16(u16 x)                                      \
     {                                                                         \
-        GXWGFifo.u16 = x;                                                     \
+        GX_WG(u16, x);                                                        \
     }
 
 #endif

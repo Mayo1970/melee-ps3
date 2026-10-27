@@ -24,8 +24,8 @@
 #include <melee/it/kinds/itzeldadinfire.h>
 #include <melee/lb/lb_00B0.h>
 
-static MotionFlags const ftZd_MF_SpecialSStart_Coll =
-    ftCommon_GroundAirColl_MF | Ft_MF_KeepGfx;
+#define ftZd_MF_SpecialSStart_Coll                                            \
+    ((MotionFlags) (ftCommon_GroundAirColl_MF | Ft_MF_KeepGfx))
 
 /// 8013B638 - 8013B6D8 (160 bytes)
 void ftZd_SpecialS_Enter(HSD_GObj* gobj)

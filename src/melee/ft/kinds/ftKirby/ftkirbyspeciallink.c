@@ -72,13 +72,14 @@ void ftKb_SpecialNLk800FB444(Fighter_GObj* gobj)
     }
 }
 
-static MotionFlags const ftKb_SpecialNLk_mf =
-    Ft_MF_SkipModel | Ft_MF_SkipItemVis;
+#define ftKb_SpecialNLk_mf                                                    \
+    ((MotionFlags) (Ft_MF_SkipModel | Ft_MF_SkipItemVis))
 
-static MotionFlags const ftKb_SpecialNLk_coll_mf =
-    Ft_MF_SkipModel | Ft_MF_SkipMatAnim | Ft_MF_SkipColAnim | Ft_MF_UpdateCmd |
-    Ft_MF_SkipItemVis | Ft_MF_Unk19 | Ft_MF_SkipModelPartVis |
-    Ft_MF_SkipModelFlags | Ft_MF_Unk27;
+#define ftKb_SpecialNLk_coll_mf                                               \
+    ((MotionFlags) (Ft_MF_SkipModel | Ft_MF_SkipMatAnim | Ft_MF_SkipColAnim | \
+                    Ft_MF_UpdateCmd | Ft_MF_SkipItemVis | Ft_MF_Unk19 |       \
+                    Ft_MF_SkipModelPartVis | Ft_MF_SkipModelFlags |           \
+                    Ft_MF_Unk27))
 
 static inline void ftKb_SpecialNLk_UnsetArrow(Fighter_GObj* gobj)
 {
