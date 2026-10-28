@@ -1456,8 +1456,15 @@ void HSD_SynthPStreamMasterClockCallback(void)
     if (node->flags & 8) {
         return;
     }
+#ifdef TARGET_PS3
+    // 0x1B2 is pb.addr.currentAddressHi on the GameCube; the 64-bit pointers move pb.
+    pos = (*(u32*) &node->voice[0]->pb.addr.currentAddressHi -
+           HSD_Synth_804D7780 * 2) >>
+          0x11;
+#else
     pos = (*(u32*) ((u8*) node->voice[0] + 0x1B2) - HSD_Synth_804D7780 * 2) >>
           0x11;
+#endif
     if (pos != HSD_Synth_804D7774) {
         HSD_Synth_804D7774 = pos;
         for (i = 0; i < node->voice_count; i++) {

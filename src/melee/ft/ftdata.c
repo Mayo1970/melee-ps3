@@ -172,18 +172,32 @@ void ft_8008521C(HSD_GObj* gobj)
 static inline void ft_800852B0_Reset_ft_8045993C(ftData** list, int i)
 {
     /// @todo Bitfields seem off
+#ifdef TARGET_PS3
+    // On the GameCube, ft_8045993C follows gFtDataList; the PS3 layout differs.
+    ft_8045993C[i].pad_x0 = 0;
+    ft_8045993C[i].x6_b0 = 0;
+    ft_8045993C[i].x6_b1_b2 = 0;
+#else
     ((ft_8045993C_t*) &list[Ft_Kind_Max])[i].pad_x0 = 0;
     ((ft_8045993C_t*) &list[Ft_Kind_Max])[i].x6_b0 = 0;
     ((ft_8045993C_t*) &list[Ft_Kind_Max])[i].x6_b1_b2 = 0;
+#endif
 }
 
 void ft_800852B0(void)
 {
     ftData** list;
+#ifdef TARGET_PS3
+    // The GameCube reaches these two by their DOL offsets from CostumeListsForeachCharacter. On the PS3 those
+    // offsets hit ftData_803C1F40, so every fighter file name became NULL.
+    ftData_UnkCountStruct* unk0 = ftData_Table_Unk0;
+    ftData_UnkCountStruct* pairs = ftData_UnkIntPairs;
+#else
     ftData_UnkCountStruct* unk0 =
         (ftData_UnkCountStruct*) &CostumeListsForeachCharacter[Ft_Kind_Max];
     ftData_UnkCountStruct* pairs =
         (ftData_UnkCountStruct*) ((u8*) CostumeListsForeachCharacter + 5940);
+#endif
     int i;
     int new_var = 0;
 

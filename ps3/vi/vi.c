@@ -1,6 +1,8 @@
 // The SDK's VI calls on the PS3 display. Each vertical blank raises the retrace interrupt: the game's callbacks
 // run around it, and a flushed frame buffer goes to the GP thread to be shown (the RSX belongs to that thread).
 #include <stdbool.h>
+#include <stdint.h>
+#include <stdio.h>
 
 #include <dolphin/os.h>
 #include <dolphin/vi.h>
@@ -59,6 +61,40 @@ static void retrace(void)
     }
 }
 
+// The call trace build's main thread: its open calls (outermost first) and its last function entries.
+static void log_calltrace(u32 n)
+{
+    char line[PS3_CALLTRACE_DEPTH * 9 + 1];
+    unsigned calls = ps3_diag.main_calls, depth = ps3_diag.main_depth;
+    unsigned kept = depth < PS3_CALLTRACE_DEPTH ? depth : PS3_CALLTRACE_DEPTH;
+    unsigned i, len = 0;
+
+    // The innermost 40 fit OSReport's 512 bytes.
+    for (i = kept > 40 ? kept - 40 : 0; i < kept; i++) {
+        len += snprintf(line + len, sizeof(line) - len, " %08x", (u32) (uintptr_t) ps3_diag.main_stack[i]);
+    }
+    line[len] = '\0';
+    OSReport("heartbeat %u: main %u calls, depth %u, stack%s\n", n, calls, depth, line);
+    len = 0;
+    for (i = 0; i < PS3_CALLTRACE_RECENT; i++) {
+        len += snprintf(line + len, sizeof(line) - len, " %08x",
+                        (u32) (uintptr_t) ps3_diag.main_recent[(calls + i) % PS3_CALLTRACE_RECENT]);
+    }
+    line[len] = '\0';
+    OSReport("heartbeat %u: main last calls%s\n", n, line);
+    if (ps3_diag.watch_hit) {
+        kept = ps3_diag.watch_depth < PS3_CALLTRACE_DEPTH ? ps3_diag.watch_depth : PS3_CALLTRACE_DEPTH;
+        len = 0;
+        for (i = kept > 32 ? kept - 32 : 0; i < kept; i++) {
+            len += snprintf(line + len, sizeof(line) - len, " %08x", (u32) (uintptr_t) ps3_diag.watch_stack[i]);
+        }
+        line[len] = '\0';
+        OSReport("heartbeat %u: watch %p became %#llx at fn %08x site %08x on %s; main stack%s\n", n,
+                 (void*) ps3_diag.watch, ps3_diag.watch_seen, (u32) (uintptr_t) ps3_diag.watch_fn,
+                 (u32) (uintptr_t) ps3_diag.watch_site, ps3_diag.watch_on_main ? "main" : "another thread", line);
+    }
+}
+
 // Once a second, apart from the interrupts: a log that stops means the process is gone, counts that stop
 // name the part that is stuck (step 3 diagnostics).
 static void heartbeat_main(void* arg)
@@ -95,6 +131,9 @@ static void heartbeat_main(void* arg)
                  n, ps3_diag.vblanks, waits[ps3_diag.gp_wait & 3], ps3_diag.ring_space_wait,
                  owner != NULL ? owner : "free", ps3_diag.intr_site != NULL ? ps3_diag.intr_site : "no handler",
                  rsx, ps3_diag.pads, ps3_diag.pad0_buttons);
+        if (ps3_diag.main_calls != 0) {
+            log_calltrace(n);
+        }
     }
 }
 

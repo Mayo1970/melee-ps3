@@ -30,6 +30,9 @@
 #include <sysdolphin/baselib/objalloc.h>
 #include <sysdolphin/baselib/random.h>
 #include <sysdolphin/baselib/synth.h>
+#ifdef TARGET_PS3
+#include <dolphin/dvd.h>
+#endif
 
 /// Sound object userdata (0x48 bytes, allocated by HSD_ObjAlloc)
 typedef struct {
@@ -2104,6 +2107,11 @@ static inline void lbAudioAx_80027168_inline_2(void)
     int slot = fn_80026650();
     if (slot != -1) {
         strcpy(&cur_ssm_file[ssm_stem_pos], ssm_files[slot]);
+#ifdef TARGET_PS3
+        // The load can finish inside HSD_SynthSFXLoad; fn_80026C04 must find
+        // the entrynum, or it loads the same file into bank 2 again.
+        lbl_80433A64[slot] = DVDConvertPathToEntrynum(cur_ssm_file);
+#endif
         lbl_80433A64[slot] = HSD_SynthSFXLoad(cur_ssm_file, 2, fn_80026C04, 0);
     }
 }

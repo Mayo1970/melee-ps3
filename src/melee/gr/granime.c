@@ -19,6 +19,9 @@
 #include <sysdolphin/baselib/mobj.h>
 #include <sysdolphin/baselib/robj.h>
 #include <sysdolphin/baselib/tobj.h>
+#ifdef TARGET_PS3
+#include <ps3_dat.h>
+#endif
 
 /* 1C6620 */ static void grAnime_801C6620(HSD_PObj* arg0, HSD_ShapeAnim* arg1);
 /* 1C6710 */ static void grAnime_801C6710(HSD_TObj* tobj,
@@ -903,7 +906,12 @@ void grAnime_801C7C1C(HSD_JObj* jobj, s32 map_id, s32 arg2, s32 arg3, s32 arg4,
     if ((arg3 & 1) && (ajp = archive->unk4->unk8[map_id].anims, ajp != NULL) &&
         ((aj = ajp[arg4]) != NULL))
     {
+#ifdef TARGET_PS3
+        // The joints lie in one array in the archive; natively each is its own object.
+        aj = ps3_dat_element(archive->unk0, aj, "HSD_AnimJoint", arg2);
+#else
         aj = &aj[arg2];
+#endif
         req_flags |= 0x81;
         anim_flags |= 0x220;
     } else {
@@ -913,7 +921,11 @@ void grAnime_801C7C1C(HSD_JObj* jobj, s32 map_id, s32 arg2, s32 arg3, s32 arg4,
         (mjp = archive->unk4->unk8[map_id].matanims, mjp != NULL) &&
         ((mj = mjp[arg4]) != NULL))
     {
+#ifdef TARGET_PS3
+        mj = ps3_dat_element(archive->unk0, mj, "HSD_MatAnimJoint", arg2);
+#else
         mj = &mj[arg2];
+#endif
         req_flags |= 0x416;
         anim_flags |= 0x7484;
     } else {
@@ -923,7 +935,11 @@ void grAnime_801C7C1C(HSD_JObj* jobj, s32 map_id, s32 arg2, s32 arg3, s32 arg4,
         (sjp = archive->unk4->unk8[map_id].shapeanims, sjp != NULL) &&
         ((sj = sjp[arg4]) != NULL))
     {
+#ifdef TARGET_PS3
+        sj = ps3_dat_element(archive->unk0, sj, "HSD_ShapeAnimJoint", arg2);
+#else
         sj = &sj[arg2];
+#endif
         req_flags |= 8;
         anim_flags |= 0x100;
     } else {

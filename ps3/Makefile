@@ -162,7 +162,8 @@ GAME_SDK_SRCS := $(SDK_AUDIO_SRCS) $(SDK_GX_SRCS) libs/dolphin/src/dolphin/os/OS
                  libs/dolphin/src/dolphin/mtx/mtx44.c libs/dolphin/src/dolphin/pad/PadClamp.c
 GAME_PORT_SRCS := $(addprefix ps3/,dvd/dvd.c os/intr.c os/globals.c os/os.c os/ostime.c os/heap.c \
                   os/alarm.c os/thread.c os/mem.c os/ppcarch.c audio/sdk_audio.c gx/fifo.c gx/gp.c sdk/mtx.c \
-                  sdk/card.c sdk/stubs.c pad/pad.c vi/vi.c dat/pool.c dat/trace.c) $(GX_RSX_SRCS) $(EXTRA_SRCS)
+                  sdk/card.c sdk/stubs.c pad/pad.c vi/vi.c dat/pool.c dat/trace.c os/calltrace.c) $(GX_RSX_SRCS) \
+                  $(EXTRA_SRCS)
 # The PSL1GHT side, which no SDK header meets.
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_cell.c os/sys_cell.c os/udplog_cell.c audio/audio_cell.c \
                   gx/rsxdev_cell.c pad/pad_cell.c)

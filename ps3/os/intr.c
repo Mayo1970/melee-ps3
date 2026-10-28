@@ -247,6 +247,9 @@ void ps3_intr_init(void)
     if (!started) {
         started = true;
         main_marker = &thread_marker;
+        if (ps3_calltrace_main != NULL) {
+            ps3_calltrace_main();
+        }
         ps_thread_start(intr_main, NULL, "interrupts");
     }
 }

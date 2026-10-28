@@ -146,3 +146,32 @@ void* __wrap_HSD_ArchiveGetPublicAddress(HSD_Archive* archive, const char* name)
         return native;
     }
 }
+
+void* ps3_dat_element(HSD_Archive* archive, const void* native, const char* type_name, int index)
+{
+    DatArchive* a;
+    const DatMap* natives;
+    int32_t type;
+    size_t i;
+
+    if (archive == NULL || archive->native_data == NULL || native == NULL) {
+        return NULL;
+    }
+    a = archive->native_data;
+    type = melee_dat_type(type_name);
+    if (type == DAT_NONE) {
+        return NULL;
+    }
+    natives = &a->natives;
+    // The natives map goes from (offset, type id) to the object; the reverse takes a scan.
+    for (i = 0; i < natives->cap; i++) {
+        if (natives->keys[i] != UINT64_MAX && natives->values[i] == (uintptr_t) native) {
+            uint32_t offset = (uint32_t) (natives->keys[i] >> 32);
+            uint32_t size = dat_reader_T(a, dat_reader_resolve(a, type))->size;
+
+            return dat_at(a, offset + (uint32_t) index * size, type, DAT_COUNT_ONE, 1);
+        }
+    }
+    OSReport("dat: element %d of %s %p: not an object of the archive\n", index, type_name, native);
+    return NULL;
+}

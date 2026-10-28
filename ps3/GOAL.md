@@ -126,12 +126,63 @@ Earlier hardware tests:
   295 (SFX bank 2 overflow) as `/audio/us/fox.ssm` loaded, after several Fox costume loads, then `OSPanic`
   and the exit to the XMB. The user: the picture is at 4:3 with side bars; the movie is green. The green is
   the THP stub (`ps3/sdk/stubs.c` decodes nothing): Y, U and V at 0 through the movie's TEV give green.
+- The SFX bank 2 overflow (2026-10-28): the RPCS3 trace (`build/rpcs3_trace_run.txt`) shows `dk.ssm`,
+  `nr_select.ssm` and `peach.ssm` each loaded twice into bank 2. `lbAudioAx_80027168` starts the background
+  chain with `lbl_80433A64[slot] = HSD_SynthSFXLoad(..., fn_80026C04)`. On the PS3 the DVD thread (1001) runs
+  ahead of the main thread (1100), so the whole load ends in the `OSRestoreInterrupts` of `HSD_SynthSFXLoad`,
+  before the store. `fn_80026C04` then finds no slot with that entrynum, and loads the same file again. The game
+  counts each file once, so bank 2 fills. On the GameCube the disc latency hides this. Fix under `TARGET_PS3` in
+  `lbaudio_ax.c`: the slot gets `DVDConvertPathToEntrynum` before the call. Inside a callback the load only
+  queues, so `fn_80026C04` needs no change. The build passes (`.got` 0x4180, 0 `r2off` stubs).
+- Melee run 14 (2026-10-28, the user's): the bank 2 fix works. Each `.ssm` loads once, and the character
+  select, the stage select and the match load pass with no assertion. After `ItCo.usd` (`itPublicData`) in
+  `fn_8016E730` the main thread stops: from then on it makes 0 `OSDisableInterrupts` calls and 0 retrace waits,
+  and nothing is presented. The other threads run on. The user reports a crash; the log ends 37 s later
+  with no `melee: exit`. From the main menu on, DVD reads (about 940 a second) and ARQ posts (about 750 a
+  second) never stop: about 188 music stream blocks (hako) a second, one per AX frame. Cause: an LP64 fault.
+  `HSD_SynthPStreamMasterClockCallback` reads the voice's play position at byte 0x1B2 of the `AXVPB`, which is
+  `pb.addr.currentAddressHi` on the GameCube. With 64-bit pointers, `pb` is at 0x158 instead of 0x138, so the
+  game read the wrong field and loaded the next block on every AX frame. `HSD_Synth_804D7778` (a block load is
+  in progress) was then set almost all the time. `HSD_SynthPStreamStart` spins on it with interrupts on
+  (`do {} while (HSD_Synth_804D7778 != 0)`), and the match starts the stage music, which fits the stop. The
+  log does not show where the main thread is. Fix under `TARGET_PS3` in `synth.c`: the read uses the field
+  name (offset 0x1D2 in the object). The build passes (`.got` 0x4180, 0 `r2off` stubs).
+
+- Melee run 15 (2026-10-28, the user's): the music plays right, about 5 DVD reads a second. The match still
+  stops: on Green Greens after `PlCo.dat`, on Yoshi's Story (run 16) after `itPublicData`.
+- Call trace build: `./build.sh -j12 game BUILD=build/ppu_calltrace "EXTRA_CFLAGS=-finstrument-functions
+  -finstrument-functions-exclude-file-list=ps3/,tools/,baselib/card.c"` (`card.c`: its dead `CARDRead` calls
+  stay alive). `ps3/os/calltrace.c` keeps the main thread's open calls and last 8 entries; the heartbeat logs
+  them as `.opd` addresses (`ppu-nm -n` into `build/calltrace_syms.txt`).
+- Melee run 17 (2026-10-28, call trace, Yoshi's Story): the main thread stops in `HSD_AObjLoadDesc`, from
+  `grAnime_801C7C1C` (`Stage_8022524C`, `grStory_801E3234`), with no later call: a fault on `aobjdesc`.
+  `grAnime_801C7C1C` takes `&aj[arg2]` (also `mj`, `sj`): the stage's anim joints lie in one array in the
+  archive, but the native reader allocates each joint on its own, so the index left the object. Fix under
+  `TARGET_PS3`: `ps3_dat_element` (`ps3/dat/lookup.c`, `ps3/include/ps3_dat.h`) finds the joint's serialized
+  offset and gives the native object `arg2` elements on. Host check (qemu-ppc64, GrSt, GrGr, GrCs, GrIz, GrMc):
+  each element is the node at that serialized offset, as on the GameCube (DFS order where the data is
+  contiguous; GrMc has one tree with gaps). Both builds pass (`.got` 0x41a0 and 0x4fd8, 0 `r2off` stubs).
+- Melee run 18 (2026-10-28, call trace): Yoshi's Story passes the stage animations, then stops in
+  `lbFileGetFullName` from `Fighter_Create` → `ftData_8008572C`. Run 19 (`ps3/tests/match_trace.c`, `--wrap`
+  on `Player_80031AD0`, `Fighter_Create`, `ftData_8008572C`): player 0 is Peach (character 12, kind 9), and
+  `ftData_803C1F40[9].a` is NULL at that point. The table is static data, so something writes over it. The
+  next trace build watches that word (`ps3_diag.watch`, checked at each traced call on any thread).
+- Run 20 watch (2026-10-28): the writer is `ft_800852B0`, which reaches `ftData_Table_Unk0`,
+  `ftData_UnkIntPairs` and `ft_8045993C` by their DOL offsets from `CostumeListsForeachCharacter` and
+  `gFtDataList`. On the PS3 the first offset lands on `ftData_803C1F40` and clears file names 0-31. Fix under
+  `TARGET_PS3` in `ftdata.c`: the named arrays.
+- Melee run 21 (2026-10-28, normal build): `PlPe.dat`, `EfPeData.dat`, `PlPeNr.dat` load, then the assertion
+  "can't find tobj!" (`ftparts.c` 799) from `ftAnim_80070200` in `Fighter_Create`. Cause: `ftData_x8_x8::xC`
+  is `u16**` with no annotation, so the reader converts one costume list of one index; `x5D0[i]` for i > 0
+  reads past it. Needs annotations and a new schema.
+- `make dattest` no longer links: `ps3/dat/lookup.c` needs `-Wl,--wrap=HSD_ArchiveGetPublicAddress`.
 
 Waiting for the user:
 
 - The title ID. The code uses the placeholder `MELE00001` (`PS3_APP_DIR` in `ps3/dvd/dvd.c`, `EBOOT_APPID` in
   `ps3/Makefile`).
-- The next milestone: the SFX bank 2 overflow at the character select, or THP video decoding in C.
+- Run 18: a match on Yoshi's Story and on Green Greens with the anim joint fix.
+- The next milestone after that: THP video decoding in C.
 
 The UDP log goes to `192.168.178.99`, port 18194 (`ps3/os/udplog_cell.c`). A listener: `nc -ul 18194`, or any
 UDP listener on that port.
