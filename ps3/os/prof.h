@@ -27,8 +27,10 @@ typedef struct Ps3Prof {
     volatile uint64_t ticks[PROF_COUNT];
     // Draws with no CP, XF or BP write since the draw before, with the same VAT: one RSX draw could take both.
     volatile uint32_t batchable;
-    // Draws that converted all XF constants again.
+    // Draws that converted the changed XF constants.
     volatile uint32_t xf_reloads;
+    // GX draws added to the open batch (backend.c), with no state work.
+    volatile uint32_t batched;
     // Draws that kept the last draw's TEV config, vertex program and raster state (backend.c memo).
     volatile uint32_t state_reuses;
     volatile uint64_t upload_bytes;

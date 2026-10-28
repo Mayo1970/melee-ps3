@@ -31,6 +31,18 @@ static inline const u8* gp_fifo_take(u32 n)
 // Gives the bytes taken so far back to the producer.
 void gp_fifo_release(void);
 
+// The read pointer at the last release. A release costs two full barriers, so the GP thread releases in steps.
+#define GP_FIFO_RELEASE_STEP 0x1000
+extern const u8* gp_fifo_released;
+
+// Releases once GP_FIFO_RELEASE_STEP bytes are taken; the slow path releases all before it waits.
+static inline void gp_fifo_release_step(void)
+{
+    if ((u32) (gp_fifo_rp - gp_fifo_released) >= GP_FIFO_RELEASE_STEP) {
+        gp_fifo_release();
+    }
+}
+
 // Work for the GP thread while it waits for the stream: gp_fifo_kick runs fn there once, or soon after.
 void gp_fifo_set_idle_work(void (*fn)(void));
 void gp_fifo_kick(void);

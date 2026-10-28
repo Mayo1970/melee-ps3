@@ -42,8 +42,8 @@ static const u8 color_size[8] = { 2, 3, 4, 2, 3, 4, 0, 0 };
 static GpState state;
 static const GpBackend* backend;
 static GpStats stats;
-// CP, XF and BP writes so far, and at the last draw: draws with none between them could be one RSX draw.
-static u32 reg_writes, draw_writes;
+// The writes and the VAT at the last draw: draws with no write between them could be one RSX draw.
+static u32 draw_writes;
 static int draw_vat = -1;
 
 // Ring source when end is NULL, else a display list in memory.
@@ -151,7 +151,7 @@ static void cp_write(u8 addr, u32 v)
 {
     u32 n = addr & 0xF;
 
-    reg_writes++;
+    state.writes++;
     switch (addr & 0xF0) {
     case CP_MATINDEX_A:
         state.matindex_a = v;
@@ -197,15 +197,10 @@ static void cp_write(u8 addr, u32 v)
 
 static void xf_write(u32 addr, u32 v)
 {
-    reg_writes++;
+    state.writes++;
     if (addr < XF_MEM_SIZE) {
         state.xf_mem[addr] = v;
-        if (state.xf_mem_dirty_lo > addr) {
-            state.xf_mem_dirty_lo = addr;
-        }
-        if (state.xf_mem_dirty_hi < addr + 1) {
-            state.xf_mem_dirty_hi = addr + 1;
-        }
+        state.xf_mem_dirty[addr >> 7] |= 1u << ((addr >> 2) & 31);
     } else if (addr - XF_REG_BASE < XF_REG_COUNT) {
         u32 i = addr - XF_REG_BASE;
 
@@ -248,7 +243,7 @@ static void bp_write(u32 v)
     u32 reg = v >> 24;
     u32 value = v & 0xFFFFFF;
 
-    reg_writes++;
+    state.writes++;
     if (reg == BP_MASK) {
         state.bp_mask = value;
         return;
@@ -341,10 +336,10 @@ static bool run_command(Src* s, bool in_list)
         }
         stats.draws++;
         stats.vertices += count;
-        if (reg_writes == draw_writes && vat == draw_vat) {
+        if (state.writes == draw_writes && vat == draw_vat) {
             ps3_prof.batchable++;
         }
-        draw_writes = reg_writes;
+        draw_writes = state.writes;
         draw_vat = vat;
         ps3_diag.gp_site = "draw";
         backend->draw(&state, (op >> 3) & 7, vat, count, p);
@@ -458,6 +453,53 @@ void gp_post_present(u32 xfb)
     gp_fifo_kick();
 }
 
+static volatile int stop_asked;
+static int stopped;
+static PsMutex stop_lock = PS_MUTEX_INIT;
+static PsCond stop_cond = PS_COND_INIT;
+
+// GP thread: once gp_stop asks, the RSX finishes what it has and the thread waits for the process to end.
+static void run_stop(void)
+{
+    if (!__atomic_load_n(&stop_asked, __ATOMIC_ACQUIRE)) {
+        return;
+    }
+    ps3_diag.gp_site = "stop";
+    if (backend->finish != NULL) {
+        backend->finish(&state);
+    }
+    ps_mutex_lock(&stop_lock);
+    stopped = 1;
+    ps_cond_broadcast(&stop_cond);
+    for (;;) {
+        ps_cond_wait(&stop_cond, &stop_lock);
+    }
+}
+
+static void run_idle(void)
+{
+    run_present();
+    run_stop();
+}
+
+void gp_stop(void)
+{
+    const char* self = ps_thread_name();
+    int i;
+
+    if (backend == NULL || (self != NULL && strcmp(self, "GP") == 0)) {
+        return;
+    }
+    __atomic_store_n(&stop_asked, 1, __ATOMIC_RELEASE);
+    gp_fifo_kick();
+    ps_mutex_lock(&stop_lock);
+    for (i = 0; i < 20 && !stopped; i++) {
+        ps_cond_timedwait(&stop_cond, &stop_lock, 100000);
+    }
+    ps_mutex_unlock(&stop_lock);
+    ps3_log("gp: %s\n", stopped ? "stopped, the RSX is idle" : "did not stop in 2 s");
+}
+
 void gp_post_mem_changed(const void* p, u32 size)
 {
     u32 paddr = OSCachedToPhysical((void*) p);
@@ -474,9 +516,12 @@ static void gp_main(void* arg)
     ps3_log("gp: thread running\n");
     for (;;) {
         run_command(&ring, false);
-        gp_fifo_release();
+        gp_fifo_release_step();
         if (__atomic_load_n(&present_pending, __ATOMIC_RELAXED)) {
             run_present();
+        }
+        if (__atomic_load_n(&stop_asked, __ATOMIC_RELAXED)) {
+            run_stop();
         }
     }
 }
@@ -488,11 +533,10 @@ void gp_init(const GpBackend* b, u32 ring_size)
     }
     backend = b;
     state.bp_mask = 0xFFFFFF;
-    state.xf_mem_dirty_lo = XF_MEM_SIZE;
     invalidate_vtx_sizes();
     ps3_log("gp: ring of %u bytes\n", ring_size);
     gp_fifo_init(ring_size);
-    gp_fifo_set_idle_work(run_present);
+    gp_fifo_set_idle_work(run_idle);
     ps3_log("gp: ring ready, starting the GP thread\n");
     ps3_log("gp: thread start returned %d\n", ps_thread_start(gp_main, NULL, "GP"));
 }

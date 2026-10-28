@@ -13,6 +13,8 @@
 
 #define LOCAL_SIZE (96u << 20)
 #define RING_SIZE (16u << 20)
+// As on the PS3, a reservation ends at a segment end.
+#define RING_SEGMENT (RING_SIZE / 4)
 #define SCREEN_W 640
 #define SCREEN_H 480
 #define MAX_BLOCKS 8192
@@ -40,7 +42,7 @@ static bool mask_rgb = true, mask_alpha = true;
 static bool cull_cw, cull_ccw;
 static float point_size = 1.0f;
 static u32 vp_code[512][4];
-static u32 vp_n;
+static u32 vp_start, vp_n;
 static float vconst[468][4];
 static u32 fp_offset;
 static DevTexture tex[16];
@@ -149,19 +151,39 @@ void dev_write_local(void* dst, const void* src, u32 size)
     memcpy(dst, src, size);
 }
 
-void* dev_ring_alloc(u32 size, u32* io_offset)
+void* dev_ring_reserve(u32 min, u32* avail, u32* io_offset)
 {
-    u32 pos = (ring_pos + 15) & ~15u;
+    u32 pos = (ring_pos + 15) & ~15u, end;
 
-    if (size > RING_SIZE) {
+    if (min > RING_SEGMENT) {
         return NULL;
     }
-    if (pos + size > RING_SIZE) {
-        pos = 0;
+    pos = pos >= RING_SIZE ? 0 : pos;
+    end = (pos / RING_SEGMENT + 1) * RING_SEGMENT;
+    if (pos + min > end) {
+        pos = end % RING_SIZE;
+        end = pos + RING_SEGMENT;
     }
-    ring_pos = pos + size;
+    ring_pos = pos;
+    *avail = end - pos;
     *io_offset = pos;
     return ring + pos;
+}
+
+void dev_ring_commit(u32 size)
+{
+    ring_pos += size;
+}
+
+void* dev_ring_alloc(u32 size, u32* io_offset)
+{
+    u32 avail;
+    void* p = dev_ring_reserve(size, &avail, io_offset);
+
+    if (p != NULL) {
+        dev_ring_commit(size);
+    }
+    return p;
 }
 
 void dev_target(const DevTarget* t)
@@ -227,9 +249,16 @@ void dev_line_width(float width)
     (void) width;
 }
 
-void dev_vertex_program(const u32 (*ucode)[4], u32 n, u32 input_mask, u32 output_mask, u32 regs)
+void dev_vertex_program(const u32 (*ucode)[4], u32 n, u32 start, u32 input_mask, u32 output_mask, u32 regs)
 {
-    memcpy(vp_code, ucode, 16u * n);
+    if (start + n > 512) {
+        fprintf(stderr, "rsxdev_soft: program of %u instructions at slot %u\n", n, start);
+        abort();
+    }
+    if (ucode != NULL) {
+        memcpy(vp_code[start], ucode, 16u * n);
+    }
+    vp_start = start;
     vp_n = n;
 }
 
@@ -516,12 +545,28 @@ static void transform(u32 index, Vert* v)
 
     fetch(index, in);
     memset(v->out, 0, sizeof(v->out));
-    vp_run((const u32(*)[4]) vp_code, (int) vp_n, (const float(*)[4]) vconst, (const float(*)[4]) in, v->out);
+    vp_run((const u32(*)[4]) vp_code[vp_start], (int) vp_n, (const float(*)[4]) vconst, (const float(*)[4]) in, v->out);
     w = v->out[0][3];
     v->iw = w != 0.0f ? 1.0f / w : 0.0f;
     v->x = v->out[0][0] * v->iw * vp_scale[0] + vp_offset[0];
     v->y = v->out[0][1] * v->iw * vp_scale[1] + vp_offset[1];
     v->z = v->out[0][2] * v->iw * vp_scale[2] + vp_offset[2];
+}
+
+// Points, and lines too: squares of the point size.
+static void point(const Vert* v)
+{
+    float h = point_size * 0.5f;
+    Vert q[4];
+    int k;
+
+    for (k = 0; k < 4; k++) {
+        q[k] = *v;
+        q[k].x += (k == 1 || k == 2) ? h : -h;
+        q[k].y += (k >= 2) ? h : -h;
+    }
+    triangle(&q[0], &q[1], &q[2]);
+    triangle(&q[0], &q[2], &q[3]);
 }
 
 void dev_draw(u32 prim, u32 count)
@@ -564,22 +609,44 @@ void dev_draw(u32 prim, u32 count)
         }
         break;
     default:
-        // Points: squares of the point size.
         for (i = 0; i < count; i++) {
-            float h = point_size * 0.5f;
-            Vert q[4];
-            int k;
-
-            for (k = 0; k < 4; k++) {
-                q[k] = v[i];
-                q[k].x += (k == 1 || k == 2) ? h : -h;
-                q[k].y += (k >= 2) ? h : -h;
-            }
-            triangle(&q[0], &q[1], &q[2]);
-            triangle(&q[0], &q[2], &q[3]);
+            point(&v[i]);
         }
         break;
     }
+    free(v);
+}
+
+void dev_draw_indexed(u32 prim, u32 io_offset, u32 count)
+{
+    const u8* p = ring + io_offset;
+    u32 n = 0, i;
+    Vert* v;
+
+    soft_draws++;
+    if (dropping()) {
+        return;
+    }
+    for (i = 0; i < count; i++) {
+        u32 k = (u32) (p[2 * i] << 8 | p[2 * i + 1]);
+
+        n = k + 1 > n ? k + 1 : n;
+    }
+    v = malloc(sizeof(Vert) * (n ? n : 1));
+    for (i = 0; i < n; i++) {
+        transform(i, &v[i]);
+    }
+#define IDX(j) ((u32) (p[2 * (j)] << 8 | p[2 * (j) + 1]))
+    if (prim == DEV_PRIM_TRIANGLES) {
+        for (i = 0; i + 2 < count; i += 3) {
+            triangle(&v[IDX(i)], &v[IDX(i + 1)], &v[IDX(i + 2)]);
+        }
+    } else {
+        for (i = 0; i < count; i++) {
+            point(&v[IDX(i)]);
+        }
+    }
+#undef IDX
     free(v);
 }
 
@@ -612,18 +679,6 @@ void dev_barrier(void) {}
 void dev_flush(void) {}
 
 void dev_finish(void) {}
-
-static u32 marked;
-
-void dev_mark(u32 n)
-{
-    marked = n;
-}
-
-u32 dev_marked(void)
-{
-    return marked;
-}
 
 void dev_set_present_programs(const u32 (*vp)[4], u32 vp_n, u32 vp_inputs, u32 vp_outputs, u32 fp_offset,
                               u32 fp_regs, u16 fp_texcoords)

@@ -61,7 +61,11 @@ void __wrap_gm_LoadAnnouncer(void)
         start->players[i].color = strchr(c, ':') != NULL ? (u8) atoi(strchr(c, ':') + 1) : 0;
         // A trailing 'h' makes a human (idle, without a pad script) of the others too.
         start->players[i].slot_type = i == 0 || strchr(c, 'h') != NULL ? Gm_PKind_Human : Gm_PKind_Cpu;
-        start->players[i].cpu_level = 9;
+        // "kN": CPU kind N (training mode's CPU is 0); "lN": CPU level N.
+        if (strchr(c, 'k') != NULL) {
+            start->players[i].cpu_kind = atoi(strchr(c, 'k') + 1);
+        }
+        start->players[i].cpu_level = strchr(c, 'l') != NULL ? atoi(strchr(c, 'l') + 1) : 9;
     }
     if (stage != NULL) {
         start->rules.stkind = (u16) atoi(stage);

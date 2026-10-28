@@ -54,6 +54,7 @@ typedef struct FpEntry {
 
 typedef struct VpEntry {
     bool used;
+    s16 slot; // first RSX program slot, -1 when not loaded
     u32 hash;
     XfKey key;
     u32 (*ucode)[4];
@@ -95,8 +96,9 @@ static DevTarget efb_target;
 static bool efb_bound, textures_bound;
 static const TexEntry* bound[8];
 
+// The constants as the RSX has them (float bits), and the rows changed since the last upload.
 static float vc[C_COUNT][4];
-static float vc_new[C_COUNT][4];
+static u32 vc_changed[(C_COUNT + 31) / 32];
 static bool vc_valid;
 
 static FpEntry fp_cache[FP_CACHE];
@@ -108,6 +110,9 @@ static VpEntry vp_cache[VP_CACHE];
 static VpProg vp_scratch;
 static const VpEntry* vp_current;
 static VpEntry copy_vp;
+// The program starting at each slot. Programs are placed one after the other, so one never overlaps another.
+static VpEntry* vp_slots[DEV_VP_SLOTS];
+static u32 vp_slot_next;
 
 static VtxLayout layouts[LAYOUTS];
 static int nlayouts, layout_next;
@@ -128,20 +133,21 @@ static u32 frame;
 static Xfb xfbs[XFBS];
 static int xfb_next;
 
-// Step 3 diagnostics: the last RSX draws. The RSX marks each one done, so a hang names its draw.
-typedef struct DrawRecord {
-    u32 seq;
-    const char* kind;
-    u32 prim, count, attrs, out_size;
-    u8 attr[16][3]; // offset, count, type
-    const VpEntry* vp;
-    const FpEntry* fp;
-    u32 target, target_w, target_h, tex_on;
-    DevTexture tex[8];
-} DrawRecord;
+// Consecutive GX draws with no register write between them and the same VAT: one indexed RSX draw. The vertices
+// and then the indices go into one ring reservation; the indices wait in batch_idx.
+#define BATCH_INDICES 0x8000
+#define BATCH_VERTICES 0xFFFF
 
-static DrawRecord records[16];
-static u32 draw_seq;
+static struct {
+    bool open;
+    u32 family; // DEV_PRIM_TRIANGLES, DEV_PRIM_LINES or DEV_PRIM_POINTS
+    u32 writes;
+    int vat;
+    const VtxLayout* l;
+    u8* base;
+    u32 io, avail, verts, nidx;
+} batch;
+static u16 batch_idx[BATCH_INDICES];
 
 // What the last draw derived from the registers, valid while the GpState generations it read stay.
 static struct {
@@ -156,7 +162,7 @@ static struct {
     u32 vp_xf;
     u16 vp_attrs, vp_tev;
     bool vp_pos3;
-    const VpEntry* v;
+    VpEntry* v;
     // The RSX raster state as apply_state left it, and its result.
     u32 state_bp, state_xf;
     bool state_pass;
@@ -260,7 +266,7 @@ static const FpEntry* fp_get(const TevConfig* cfg)
     return fp_get(cfg);
 }
 
-static const VpEntry* vp_get(const XfKey* key)
+static VpEntry* vp_get(const XfKey* key)
 {
     u32 h = hash_bytes(key, sizeof(*key), 2166136261u), i;
 
@@ -278,6 +284,7 @@ static const VpEntry* vp_get(const XfKey* key)
             }
             memcpy(e->ucode, vp_scratch.w, 16u * vp_scratch.n);
             e->n = (u16) vp_scratch.n;
+            e->slot = -1;
             e->regs = (u16) (vp_scratch.max_temp + 1);
             e->inputs = vp_scratch.input_mask;
             e->outputs = vp_scratch.output_mask;
@@ -295,13 +302,35 @@ static const VpEntry* vp_get(const XfKey* key)
     return NULL;
 }
 
-static void use_vp(const VpEntry* v)
+static void use_vp(VpEntry* v)
 {
-    if (v != vp_current) {
-        dev_vertex_program((const u32(*)[4]) v->ucode, v->n, v->inputs, v->outputs, v->regs);
-        vp_current = v;
-        stats.vp_loads++;
+    u32 at = vp_slot_next, i;
+
+    if (v == vp_current) {
+        return;
     }
+    vp_current = v;
+    if (v->slot >= 0 && !(ps3_diag.gx_ab & 2)) {
+        dev_vertex_program(NULL, v->n, (u32) v->slot, v->inputs, v->outputs, v->regs);
+        return;
+    }
+    if (at + v->n > DEV_VP_SLOTS) {
+        at = 0;
+    }
+    for (i = at; i < at + v->n && i < DEV_VP_SLOTS; i++) {
+        if (vp_slots[i] != NULL) {
+            vp_slots[i]->slot = -1;
+            vp_slots[i] = NULL;
+        }
+    }
+    // A longer program runs over the present pass's slots, which loads its own each time: it stays unloaded.
+    if (v->n <= DEV_VP_SLOTS) {
+        v->slot = (s16) at;
+        vp_slots[at] = v;
+    }
+    vp_slot_next = at + v->n;
+    dev_vertex_program((const u32(*)[4]) v->ucode, v->n, at, v->inputs, v->outputs, v->regs);
+    stats.vp_loads++;
 }
 
 static void use_fp(const FpEntry* f)
@@ -633,61 +662,84 @@ static bool apply_state(const GpState* s)
 
 // Constants
 
-static void upload_rows(int first, int count)
+// Words, not floats: a float load of a value just stored as an integer waits for the store (load-hit-store).
+static void set_row(int r, u32 x, u32 y, u32 z, u32 w)
 {
-    int i = first, end = first + count;
+    u32* d = (u32*) vc[r];
 
-    while (i < end) {
-        int j;
+    if (d[0] != x || d[1] != y || d[2] != z || d[3] != w) {
+        d[0] = x;
+        d[1] = y;
+        d[2] = z;
+        d[3] = w;
+        vc_changed[r >> 5] |= 1u << (r & 31);
+    }
+}
 
-        if (memcmp(vc[i], vc_new[i], 16) == 0) {
-            i++;
+// Each run of changed rows in one upload.
+static void upload_changed(void)
+{
+    int r = 0, e;
+
+    while (r < C_COUNT) {
+        u32 rest = vc_changed[r >> 5] >> (r & 31);
+
+        if (rest == 0) {
+            r = (r | 31) + 1;
             continue;
         }
-        for (j = i + 1; j < end && memcmp(vc[j], vc_new[j], 16) != 0; j++) {
+        if (!(rest & 1)) {
+            r++;
+            continue;
         }
-        dev_vp_constants((u32) i, (u32) (j - i), &vc_new[i][0]);
-        memcpy(vc[i], vc_new[i], 16u * (j - i));
-        i = j;
+        for (e = r + 1; e < C_COUNT && ((vc_changed[e >> 5] >> (e & 31)) & 1); e++) {
+        }
+        dev_vp_constants((u32) r, (u32) (e - r), vc[r]);
+        r = e;
     }
+    memset(vc_changed, 0, sizeof(vc_changed));
 }
 
 static void update_constants(GpState* s, const VtxLayout* l, float tev[XF_TEV_CONSTS][4], u16 tev_mask)
 {
-    bool xf_dirty = !vc_valid || s->xf_mem_dirty_hi > s->xf_mem_dirty_lo || s->xf_reg_dirty[0] ||
-                    s->xf_reg_dirty[1] || s->xf_reg_dirty[2];
-    int i;
+    const u32* q = (const u32*) l->dq;
+    u32 mem = 0, i;
+    bool xf_dirty;
 
+    if (ps3_diag.gx_ab & 4) {
+        vc_valid = false;
+    }
+    for (i = 0; i < XF_MEM_SIZE / 128; i++) {
+        mem |= s->xf_mem_dirty[i];
+    }
+    xf_dirty = !vc_valid || mem != 0 || (s->xf_reg_dirty[0] & XF_CONST_REGS_0) ||
+               (s->xf_reg_dirty[1] & XF_CONST_REGS_1);
     // The same layout and TEV values as the last upload: the DQ and TEV rows are on the RSX.
     if (!xf_dirty && memo.consts_ok) {
         return;
     }
-    if (xf_dirty) {
-        ps3_prof.xf_reloads++;
-        xf_constants(s, vc_new);
-        s->xf_mem_dirty_lo = XF_MEM_SIZE;
-        s->xf_mem_dirty_hi = 0;
-        s->xf_reg_dirty[0] = s->xf_reg_dirty[1] = s->xf_reg_dirty[2] = 0;
-    }
-    for (i = 0; i < 12; i++) {
-        vc_new[C_DQ + i / 4][i % 4] = i < 10 ? l->dq[i] : 0.0f;
-    }
-    for (i = 0; i < XF_TEV_CONSTS; i++) {
-        if ((tev_mask >> i) & 1) {
-            memcpy(vc_new[C_TEV + i], tev[i], 16);
-        }
-    }
     if (!vc_valid) {
         // The shadow starts unlike every value, so all of it goes up once.
         memset(vc, 0xFF, sizeof(vc));
+        xf_constants(s, NULL, NULL, vc, vc_changed);
         vc_valid = true;
+    } else if (xf_dirty) {
+        ps3_prof.xf_reloads++;
+        xf_constants(s, s->xf_mem_dirty, s->xf_reg_dirty, vc, vc_changed);
     }
-    if (xf_dirty) {
-        upload_rows(0, C_COUNT);
-    } else {
-        upload_rows(C_DQ, 3);
-        upload_rows(C_TEV, XF_TEV_CONSTS);
+    memset(s->xf_mem_dirty, 0, sizeof(s->xf_mem_dirty));
+    memset(s->xf_reg_dirty, 0, sizeof(s->xf_reg_dirty));
+    set_row(C_DQ, q[0], q[1], q[2], q[3]);
+    set_row(C_DQ + 1, q[4], q[5], q[6], q[7]);
+    set_row(C_DQ + 2, q[8], q[9], 0, 0);
+    for (i = 0; i < XF_TEV_CONSTS; i++) {
+        if ((tev_mask >> i) & 1) {
+            const u32* t = (const u32*) tev[i];
+
+            set_row(C_TEV + (int) i, t[0], t[1], t[2], t[3]);
+        }
     }
+    upload_changed();
     memo.consts_ok = true;
 }
 
@@ -1007,19 +1059,169 @@ static u32 prim_type(int prim)
     return types[prim & 7];
 }
 
-static DrawRecord* record_draw(const char* kind, u32 prim, u32 count, const DevTarget* target)
+// The RSX family of GX primitive prim: batches draw triangles, lines or points.
+static u32 prim_family(int prim)
 {
-    DrawRecord* r = &records[++draw_seq % 16];
+    return prim <= GP_TRIANGLE_FAN ? DEV_PRIM_TRIANGLES : prim == GP_POINTS ? DEV_PRIM_POINTS : DEV_PRIM_LINES;
+}
 
-    memset(r, 0, sizeof(*r));
-    r->seq = draw_seq;
-    r->kind = kind;
-    r->prim = prim;
-    r->count = count;
-    r->target = target->color_offset;
-    r->target_w = target->width;
-    r->target_h = target->height;
-    return r;
+// Indices of count vertices of GX primitive prim in its family.
+static u32 index_count(int prim, u32 count)
+{
+    switch (prim) {
+    case GP_QUADS:
+    case GP_QUADS2:
+        return count / 4 * 6;
+    case GP_TRIANGLES:
+        return count / 3 * 3;
+    case GP_TRIANGLE_STRIP:
+    case GP_TRIANGLE_FAN:
+        return count >= 3 ? 3 * (count - 2) : 0;
+    case GP_LINES:
+        return count / 2 * 2;
+    case GP_LINE_STRIP:
+        return count >= 2 ? 2 * (count - 1) : 0;
+    default:
+        return count;
+    }
+}
+
+// The triangles as the RSX splits quads, strips and fans: each keeps the facing it had.
+static void put_indices(u16* d, int prim, u32 b, u32 count)
+{
+    u32 i, n;
+
+    switch (prim) {
+    case GP_QUADS:
+    case GP_QUADS2:
+        for (i = 0; i + 3 < count; i += 4, d += 6) {
+            d[0] = (u16) (b + i);
+            d[1] = (u16) (b + i + 1);
+            d[2] = (u16) (b + i + 2);
+            d[3] = (u16) (b + i);
+            d[4] = (u16) (b + i + 2);
+            d[5] = (u16) (b + i + 3);
+        }
+        break;
+    case GP_TRIANGLE_STRIP:
+        // Odd triangles swap their first two vertices.
+        for (i = 0; i + 2 < count; i++, d += 3) {
+            d[0] = (u16) (b + i + (i & 1));
+            d[1] = (u16) (b + i + 1 - (i & 1));
+            d[2] = (u16) (b + i + 2);
+        }
+        break;
+    case GP_TRIANGLE_FAN:
+        for (i = 1; i + 1 < count; i++, d += 3) {
+            d[0] = (u16) b;
+            d[1] = (u16) (b + i);
+            d[2] = (u16) (b + i + 1);
+        }
+        break;
+    case GP_LINE_STRIP:
+        for (i = 0; i + 1 < count; i++, d += 2) {
+            d[0] = (u16) (b + i);
+            d[1] = (u16) (b + i + 1);
+        }
+        break;
+    default:
+        // Triangles, lines and points in order, whole primitives only.
+        n = index_count(prim, count);
+        for (i = 0; i < n; i++) {
+            d[i] = (u16) (b + i);
+        }
+        break;
+    }
+}
+
+static void bind_attribs(const VtxLayout* l, u32 io)
+{
+    u32 i;
+
+    for (i = 0; i < 16; i++) {
+        if ((l->attrs >> i) & 1) {
+            dev_attrib((int) i, io + l->attr[i].offset, l->out_size, l->attr[i].count, l->attr[i].type);
+        } else {
+            dev_attrib((int) i, 0, 0, 0, VTX_F32);
+        }
+    }
+}
+
+// Sends the open batch. Each backend call that sends other RSX commands, or waits for the RSX, calls it first.
+static void batch_flush(void)
+{
+    u32 at;
+
+    if (!batch.open) {
+        return;
+    }
+    batch.open = false;
+    at = (batch.verts * batch.l->out_size + 15) & ~15u;
+    if (batch.nidx == 0) {
+        dev_ring_commit(0);
+        return;
+    }
+    memcpy(batch.base + at, batch_idx, batch.nidx * 2);
+    dev_ring_commit(at + batch.nidx * 2);
+    bind_attribs(batch.l, batch.io);
+    dev_draw_indexed(batch.family, batch.io + at, batch.nidx);
+    stats.rsx_draws++;
+    if (ps3_diag.gx_ab & 8) {
+        dev_finish();
+    }
+}
+
+static bool batch_open(const GpState* s, const VtxLayout* l, int vat, u32 count, u32 family, u32 nidx)
+{
+    batch.base = dev_ring_reserve(count * l->out_size + 16 + nidx * 2, &batch.avail, &batch.io);
+    if (batch.base == NULL) {
+        return false;
+    }
+    batch.open = true;
+    batch.family = family;
+    batch.writes = s->writes;
+    batch.vat = vat;
+    batch.l = l;
+    batch.verts = 0;
+    batch.nidx = 0;
+    return true;
+}
+
+// False when the draw does not fit in the open batch.
+static bool batch_add(const GpState* s, int prim, u32 count, const u8* data, u32 nidx)
+{
+    u32 verts = batch.verts + count, total = batch.nidx + nidx;
+
+    if (verts > BATCH_VERTICES || total > BATCH_INDICES ||
+        ((verts * batch.l->out_size + 15) & ~15u) + total * 2 > batch.avail) {
+        return false;
+    }
+    if (!vtx_convert(batch.l, s, data, count, batch.base + batch.verts * batch.l->out_size)) {
+        stats.dropped_draws++;
+        return true;
+    }
+    put_indices(batch_idx + batch.nidx, prim, batch.verts, count);
+    batch.verts = verts;
+    batch.nidx = total;
+    return true;
+}
+
+// A draw too large for a batch, as it is.
+static void draw_direct(const GpState* s, const VtxLayout* l, int prim, u32 count, const u8* data)
+{
+    u32 io;
+    u8* out = dev_ring_alloc(count * l->out_size, &io);
+
+    if (out == NULL || !vtx_convert(l, s, data, count, out)) {
+        stats.dropped_draws++;
+        return;
+    }
+    bind_attribs(l, io);
+    dev_draw(prim_type(prim), count);
+    stats.rsx_draws++;
+    if (ps3_diag.gx_ab & 8) {
+        dev_finish();
+    }
 }
 
 
@@ -1028,16 +1230,36 @@ static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
     static TevConfig cfg;
     VtxLayout* l;
     const FpEntry* f;
-    const VpEntry* v;
-    DrawRecord* r;
+    VpEntry* v;
     XfKey key;
-    u32 io, i, numtexgens = s->xf_regs[0x3F] & 0xF;
-    u8* out;
+    u32 numtexgens = s->xf_regs[0x3F] & 0xF, family = prim_family(prim), nidx = index_count(prim, count);
     bool tev_hit, reused = true;
     uint64_t t0 = ps3_prof_now(), t = t0;
 
     stats.draws++;
     stats.vertices += count;
+    if (nidx == 0) {
+        return;
+    }
+    ps3_diag.gp_draw = stats.draws;
+    if (batch.open && batch.writes == s->writes && batch.vat == vat && batch.family == family &&
+        !(ps3_diag.gx_ab & 1)) {
+        ps3_diag.gp_site = "draw: batch";
+        ps3_prof.batched++;
+        if (!batch_add(s, prim, count, data, nidx)) {
+            // The reservation is full: the batch so far goes, the state stays for the next one.
+            const VtxLayout* bl = batch.l;
+
+            batch_flush();
+            if (!batch_open(s, bl, vat, count, family, nidx) || !batch_add(s, prim, count, data, nidx)) {
+                stats.dropped_draws++;
+            }
+        }
+        ps3_prof_lap(PROF_DRAW_VTX, &t);
+        ps3_prof.ticks[PROF_DRAW] += t - t0;
+        return;
+    }
+    batch_flush();
     if (!memo.layout_ok || memo.layout_cp != s->cp_gen || memo.layout_vat != vat) {
         memo.layout = get_layout(s, vat);
         memo.layout_cp = s->cp_gen;
@@ -1051,7 +1273,6 @@ static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
         return;
     }
     numtexgens = numtexgens > 8 ? 8 : numtexgens;
-    ps3_diag.gp_draw = stats.draws;
     ps3_diag.gp_site = "draw: TEV";
     tev_hit = memo.tev_ok && memo.tev_bp == s->bp_gen && memo.tev_xf == s->xf_gen;
     if (!tev_hit) {
@@ -1104,13 +1325,6 @@ static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
         ps3_prof.state_reuses++;
     }
     ps3_prof_lap(PROF_DRAW_STATE, &t);
-    ps3_diag.gp_site = "draw: vertices";
-    out = dev_ring_alloc(count * l->out_size, &io);
-    if (out == NULL || !vtx_convert(l, s, data, count, out)) {
-        stats.dropped_draws++;
-        return;
-    }
-    ps3_prof_lap(PROF_DRAW_VTX, &t);
     ps3_diag.gp_site = "draw: constants";
     update_constants(s, l, memo.tev, memo.tev_mask);
     ps3_prof_lap(PROF_DRAW_CONST, &t);
@@ -1127,38 +1341,19 @@ static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
         memo.tex_ok = true;
     }
     ps3_prof_lap(PROF_DRAW_TEX, &t);
-    ps3_diag.gp_site = "draw: RSX commands";
-    for (i = 0; i < 16; i++) {
-        if ((l->attrs >> i) & 1) {
-            dev_attrib((int) i, io + l->attr[i].offset, l->out_size, l->attr[i].count, l->attr[i].type);
-        } else {
-            dev_attrib((int) i, 0, 0, 0, VTX_F32);
-        }
-    }
     if (trace_left != 0) {
         trace_left--;
         ps3_log("backend: draw %u prim %d vat %d count %u attrs %#x size %u vp %u fp %u\n", stats.draws, prim,
                 vat, count, l->attrs, l->out_size, v->n, f->offset);
     }
-    r = record_draw("GX draw", prim_type(prim), count, &efb_target);
-    r->attrs = l->attrs;
-    r->out_size = l->out_size;
-    for (i = 0; i < 16; i++) {
-        r->attr[i][0] = l->attr[i].offset;
-        r->attr[i][1] = l->attr[i].count;
-        r->attr[i][2] = l->attr[i].type;
+    ps3_diag.gp_site = "draw: vertices";
+    if (count > BATCH_VERTICES || nidx > BATCH_INDICES || (ps3_diag.gx_ab & 1)) {
+        draw_direct(s, l, prim, count, data);
+    } else if (!batch_open(s, l, vat, count, family, nidx) || !batch_add(s, prim, count, data, nidx)) {
+        stats.dropped_draws++;
     }
-    r->vp = v;
-    r->fp = f;
-    for (i = 0; i < 8; i++) {
-        if (bound[i] != NULL) {
-            r->tex_on |= 1u << i;
-            r->tex[i] = tex_memo[i].d;
-        }
-    }
-    dev_draw(prim_type(prim), count);
-    dev_mark(r->seq);
-    ps3_prof.ticks[PROF_DRAW] += ps3_prof_now() - t0;
+    ps3_prof_lap(PROF_DRAW_VTX, &t);
+    ps3_prof.ticks[PROF_DRAW] += t - t0;
 }
 
 // EFB copies
@@ -1277,7 +1472,6 @@ static void copy_pass(const DevTarget* dst, u32 sx, u32 sy, u32 sw, u32 sh, cons
     float v0 = (float) sy / EFB_HEIGHT, v1 = (float) (sy + sh) / EFB_HEIGHT;
     const float tc[4][2] = { { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } };
     CopyVertex* q;
-    DrawRecord* r;
     DevTexture t;
     u32 io;
     int i;
@@ -1322,18 +1516,7 @@ static void copy_pass(const DevTarget* dst, u32 sx, u32 sy, u32 sw, u32 sh, cons
     }
     dev_attrib(VA_POS, io, sizeof(CopyVertex), 4, VTX_F32);
     dev_attrib(VA_TEX0, io + 16, sizeof(CopyVertex), 2, VTX_F32);
-    r = record_draw("EFB copy", DEV_PRIM_QUADS, 4, dst);
-    r->attrs = (1u << VA_POS) | (1u << VA_TEX0);
-    r->out_size = sizeof(CopyVertex);
-    r->attr[VA_POS][1] = 4;
-    r->attr[VA_TEX0][0] = 16;
-    r->attr[VA_TEX0][1] = 2;
-    r->vp = &copy_vp;
-    r->fp = fp;
-    r->tex_on = 1;
-    r->tex[0] = t;
     dev_draw(DEV_PRIM_QUADS, 4);
-    dev_mark(r->seq);
     // Later draws may sample dst.
     dev_barrier();
 }
@@ -1367,6 +1550,7 @@ static void efb_copy(GpState* s)
     u32 addr = (s->bp[0x4B] & 0xFFFFFF) << 5;
     uint64_t t = ps3_prof_now();
 
+    batch_flush();
     stats.efb_copies++;
     if (trace_left != 0) {
         trace_left--;
@@ -1487,6 +1671,7 @@ static void mem_changed(GpState* s, u32 addr, u32 size)
     int i;
 
     (void) s;
+    batch_flush();
     for (i = 0; i < TEX_CACHE; i++) {
         TexEntry* e = &tex_cache[i];
 
@@ -1511,6 +1696,7 @@ static void mem_changed(GpState* s, u32 addr, u32 size)
 static void finish(GpState* s)
 {
     (void) s;
+    batch_flush();
     if (trace_left != 0) {
         ps3_log("backend: finish %u waits for the RSX\n", frame);
     }
@@ -1569,6 +1755,7 @@ bool gx_rsx_init(void)
     copy_vp.ucode = malloc(16u * vp_scratch.n);
     memcpy(copy_vp.ucode, vp_scratch.w, 16u * vp_scratch.n);
     copy_vp.n = (u16) vp_scratch.n;
+    copy_vp.slot = -1;
     copy_vp.regs = 1;
     copy_vp.inputs = vp_scratch.input_mask;
     copy_vp.outputs = vp_scratch.output_mask;
@@ -1596,6 +1783,7 @@ void gx_rsx_present(u32 xfb)
     uint64_t t = ps3_prof_now();
     int i;
 
+    batch_flush();
     for (i = 0; i < XFBS; i++) {
         if (xfbs[i].mem != NULL && xfbs[i].addr == xfb) {
             dev_barrier();
@@ -1605,7 +1793,6 @@ void gx_rsx_present(u32 xfb)
             }
 #endif
             dev_present(xfbs[i].offset, EFB_PITCH, xfbs[i].width, xfbs[i].height);
-            dev_mark(record_draw("present", DEV_PRIM_QUADS, 4, &(DevTarget){ xfbs[i].offset })->seq);
             stats.presents++;
             // The present pass leaves its own state on the RSX.
             efb_bound = false;
@@ -1623,66 +1810,4 @@ void gx_rsx_present(u32 xfb)
 void gx_rsx_get_stats(GxRsxStats* out)
 {
     *out = stats;
-}
-
-void gx_rsx_debug_hang(void)
-{
-    u32 done = dev_marked(), i;
-    const DrawRecord* r = &records[(done + 1) % 16];
-
-    if (r->seq != done + 1) {
-        ps3_log("backend: the RSX finished draw %u of %u; the next one is not kept\n", done, draw_seq);
-        return;
-    }
-    ps3_log("backend: the RSX finished draw %u of %u; draw %u is a %s: prim %u, %u vertices of %u bytes, "
-            "attributes %#x, target %08x %ux%u\n",
-            done, draw_seq, r->seq, r->kind, r->prim, r->count, r->out_size, r->attrs, r->target, r->target_w,
-            r->target_h);
-    for (i = 0; i < 16; i++) {
-        if ((r->attrs >> i) & 1) {
-            ps3_log("backend:  attribute %u: offset %u, %u of type %u\n", i, r->attr[i][0], r->attr[i][1],
-                    r->attr[i][2]);
-        }
-    }
-    for (i = 0; i < 8; i++) {
-        const DevTexture* t = &r->tex[i];
-
-        if ((r->tex_on >> i) & 1) {
-            ps3_log("backend:  texture %u: %08x %ux%u, pitch %u, %u levels, swizzled %u, wrap %u %u, filter %u %u, "
-                    "lod %u to %u, bias %d\n",
-                    i, t->offset, t->width, t->height, t->pitch, t->levels, t->swizzled, t->wrap_s, t->wrap_t,
-                    t->min_filter, t->mag_filter, t->min_lod, t->max_lod, t->lod_bias);
-        }
-    }
-    if (r->fp != NULL) {
-        const TevConfig* c = &r->fp->cfg;
-        // Local memory: slow to read on the PPE, and the program stays where the draw used it.
-        const volatile u32* w = r->fp->mem;
-
-        ps3_log("backend:  fragment program at %08x: %u words, %u registers, texcoords %#x (%#x with 4), TEV %u "
-                "stages, fog %u, konst inputs %d %d %d %d, register inputs %d %d %d %d\n",
-                r->fp->offset, r->fp->words, r->fp->regs, r->fp->texcoords, r->fp->texcoords4, c->nstages, c->fog,
-                c->kin[0], c->kin[1], c->kin[2], c->kin[3], c->rin[0], c->rin[1], c->rin[2], c->rin[3]);
-        for (i = 0; i < c->nstages; i++) {
-            const TevStage* s = &c->st[i];
-
-            ps3_log("backend:  stage %u: tex %d coord %u proj %u ras %u konst %u %u; colour %u %u %u %u op %u "
-                    "bias %u scale %u clamp %u dest %u; alpha %u %u %u %u op %u bias %u scale %u clamp %u dest %u\n",
-                    i, s->tex, s->texcoord, s->proj, s->ras, s->kcsel, s->kasel, s->col.a, s->col.b, s->col.c,
-                    s->col.d, s->col.op, s->col.bias, s->col.scale, s->col.clamp, s->col.dest, s->alp.a, s->alp.b,
-                    s->alp.c, s->alp.d, s->alp.op, s->alp.bias, s->alp.scale, s->alp.clamp, s->alp.dest);
-        }
-        for (i = 0; i < r->fp->words; i += 8) {
-            ps3_log("backend:  fp %3u: %08x %08x %08x %08x %08x %08x %08x %08x\n", i, w[i], w[i + 1], w[i + 2],
-                    w[i + 3], w[i + 4], w[i + 5], w[i + 6], w[i + 7]);
-        }
-    }
-    if (r->vp != NULL) {
-        ps3_log("backend:  vertex program: %u instructions, inputs %#x, outputs %#x, %u registers\n", r->vp->n,
-                r->vp->inputs, r->vp->outputs, r->vp->regs);
-        for (i = 0; i < r->vp->n; i++) {
-            ps3_log("backend:  vp %3u: %08x %08x %08x %08x\n", i, r->vp->ucode[i][0], r->vp->ucode[i][1],
-                    r->vp->ucode[i][2], r->vp->ucode[i][3]);
-        }
-    }
 }

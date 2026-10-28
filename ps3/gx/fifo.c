@@ -25,6 +25,7 @@ u8* __GXPipeLimit;
 
 const u8* gp_fifo_rp;
 const u8* gp_fifo_avail;
+const u8* gp_fifo_released;
 
 static u8* ring;
 static u32 ring_size;
@@ -62,6 +63,7 @@ void gp_fifo_init(u32 size)
     __GXPipeLimit = ring;
     gp_fifo_rp = ring;
     gp_fifo_avail = ring;
+    gp_fifo_released = ring;
 }
 
 static u64 load(u64* p)
@@ -160,6 +162,7 @@ static u64 cons_pos(void)
 
 void gp_fifo_release(void)
 {
+    gp_fifo_released = gp_fifo_rp;
     __atomic_store_n(&consumed, cons_pos(), __ATOMIC_SEQ_CST);
     if (__atomic_load_n(&prod_waiting, __ATOMIC_SEQ_CST)) {
         ps_mutex_lock(&lock);

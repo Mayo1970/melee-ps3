@@ -58,6 +58,7 @@ static void retrace(void)
     OSWakeupThread(&retrace_queue);
     ps3_diag.intr_site = "VI XMB poll";
     if (ps3_sys_poll()) {
+        gp_stop();
         ps3_sys_exit();
     }
 }
@@ -101,6 +102,7 @@ static void log_profile(u32 n, const GpStats* gs, const GxRsxStats* rs)
 {
     static uint64_t last_now, last[PROF_COUNT], last_bytes;
     static u32 last_draws, last_batchable, last_reuses, last_reloads, last_vp, last_uploads, last_presents;
+    static u32 last_batched, last_rsx;
     uint64_t now = ps3_prof_now(), d[PROF_COUNT], span = now - last_now, other;
     u32 pm[PROF_COUNT], i;
 
@@ -119,19 +121,22 @@ static void log_profile(u32 n, const GpStats* gs, const GxRsxStats* rs)
         OSReport("heartbeat %u: GP per mille: draws %u (TEV %u, XF %u, state %u, vertices %u, constants %u, "
                  "textures %u, RSX commands %u), EFB copies %u, presents %u (flip waits %u); waits for data %u, "
                  "for RSX labels %u; main: asleep %u, ring full %u; per second: %u presents, %u draws, %u with no "
-                 "register write since the last, %u with the last draw's state, %u XF reloads, %u VP loads, %u "
-                 "texture uploads of %u KB\n",
+                 "register write since the last, %u batched, %u RSX draws, %u with the last draw's state, %u XF "
+                 "reloads, %u VP loads, %u texture uploads of %u KB\n",
                  n, pm[PROF_DRAW], pm[PROF_DRAW_TEV], pm[PROF_DRAW_XF], pm[PROF_DRAW_STATE], pm[PROF_DRAW_VTX],
                  pm[PROF_DRAW_CONST], pm[PROF_DRAW_TEX], (u32) (span != 0 ? other * 1000 / span : 0),
                  pm[PROF_COPY], pm[PROF_PRESENT], pm[PROF_GP_FLIP], pm[PROF_GP_IDLE], pm[PROF_GP_RSX],
                  pm[PROF_MAIN_SLEEP], pm[PROF_MAIN_RING], rs->presents - last_presents, gs->draws - last_draws,
-                 ps3_prof.batchable - last_batchable, ps3_prof.state_reuses - last_reuses,
+                 ps3_prof.batchable - last_batchable, ps3_prof.batched - last_batched, rs->rsx_draws - last_rsx,
+                 ps3_prof.state_reuses - last_reuses,
                  ps3_prof.xf_reloads - last_reloads, rs->vp_loads - last_vp,
                  rs->texture_uploads - last_uploads, (u32) ((ps3_prof.upload_bytes - last_bytes) >> 10));
     }
     last_now = now;
     last_draws = gs->draws;
     last_batchable = ps3_prof.batchable;
+    last_batched = ps3_prof.batched;
+    last_rsx = rs->rsx_draws;
     last_reuses = ps3_prof.state_reuses;
     last_reloads = ps3_prof.xf_reloads;
     last_vp = rs->vp_loads;
@@ -168,9 +173,7 @@ static void heartbeat_main(void* arg)
                  ps3_diag.card_calls, ps3_diag.dvd_reads, ps3_diag.dvd_callbacks, ps3_diag.arq_posts,
                  ps3_diag.arq_callbacks);
         dev_debug_state(rsx, sizeof(rsx));
-        if (dev_debug_dump_stall()) {
-            gx_rsx_debug_hang();
-        }
+        dev_debug_dump_stall();
         OSReport("heartbeat %u: %u vblanks; GP waits for %s; producer waits for ring space %u; "
                  "interrupt lock: %s, at %s; %s; %u pads, buttons %#x\n",
                  n, ps3_diag.vblanks, waits[ps3_diag.gp_wait & 3], ps3_diag.ring_space_wait,

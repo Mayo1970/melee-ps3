@@ -31,7 +31,7 @@ static bool parse_input(const char* name, Step* s)
     } names[] = {
         { "A", PS3_PAD_CROSS },   { "B", PS3_PAD_SQUARE },  { "X", PS3_PAD_CIRCLE },  { "Y", PS3_PAD_TRIANGLE },
         { "Z", PS3_PAD_R1 },      { "START", PS3_PAD_START }, { "UP", PS3_PAD_UP },   { "DOWN", PS3_PAD_DOWN },
-        { "LEFT", PS3_PAD_LEFT }, { "RIGHT", PS3_PAD_RIGHT },
+        { "LEFT", PS3_PAD_LEFT }, { "RIGHT", PS3_PAD_RIGHT }, { "SELECT", PS3_PAD_SELECT },
     };
     size_t i;
 

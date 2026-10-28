@@ -9,6 +9,7 @@
 #include <dolphin/os.h>
 
 #include "../dat/pool.h"
+#include "../gx/gp.h"
 #include "intr.h"
 #include "mem.h"
 #include "ostime.h"
@@ -108,6 +109,7 @@ unsigned long OSGetResetCode(void)
 void OSResetSystem(int reset, u32 resetCode, BOOL forceMenu)
 {
     OSReport("OSResetSystem(%d, %u, %d)\n", reset, resetCode, forceMenu);
+    gp_stop();
     ps3_sys_exit();
 }
 

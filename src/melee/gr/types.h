@@ -2096,12 +2096,21 @@ struct GroundJointPair {
 struct Ground_801C34AC_entry {
     /* +0 */ HSD_Joint* joint;
     /* +4 */ struct GroundJointPair* pairs DAT_COUNT(pair_count);
+#ifdef TARGET_PS3
+    // newlib's ssize_t is an int on the PS3; the .dat schema writes it as a long, as glibc has it.
+    /* +8 */ long pair_count;
+#else
     /* +8 */ ssize_t pair_count;
+#endif
 };
 
 struct UnkStageDat {
     struct Ground_801C34AC_entry* unk0 DAT_COUNT(count);
+#ifdef TARGET_PS3
+    long count;
+#else
     ssize_t count;
+#endif
 
     // Suspect this may not be a consistent type based on un_802FD708 callers
     struct UnkStageDat_x8_t* unk8 DAT_COUNT(unkC);

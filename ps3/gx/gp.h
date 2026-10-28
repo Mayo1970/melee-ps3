@@ -62,11 +62,12 @@ typedef struct GpState {
     u32 bp_mask;
     // Bytes per vertex for each VAT; 0xFFFF when VCD or VAT changed since.
     u16 vtx_size[8];
-    // Set on each write, for the backend to clear: one bit per BP register, per XF register, and the
-    // XF memory range written.
+    // Set on each write, for the backend to clear: one bit per BP register, per XF register, per 4 XF memory words.
     u32 bp_dirty[8];
     u32 xf_reg_dirty[3];
-    u32 xf_mem_dirty_lo, xf_mem_dirty_hi;
+    u32 xf_mem_dirty[XF_MEM_SIZE / 128];
+    // CP, XF and BP writes so far: a draw with none since the draw before has its registers.
+    u32 writes;
     // Bumped when a value changes: BP (with the TEV register sets), XF registers but the matrix indices and the
     // projection, VCD and VAT. The backend keeps what it derived while the generations it read stay.
     u32 bp_gen, xf_gen, cp_gen;
@@ -94,6 +95,9 @@ u32 gp_vertex_size(GpState* s, int vat);
 // Any thread: the GP thread presents xfb between two commands, or while it waits. A later post replaces one
 // not yet run.
 void gp_post_present(u32 xfb);
+// Not on the GP thread: the GP thread lets the RSX finish its work and stops for good, waiting at most 2 s.
+// Before the exit, so the process does not end with the RSX busy.
+void gp_stop(void);
 // The GX thread only: tells the backend, in stream order, that the CPU rewrote memory a texture may come from.
 void gp_post_mem_changed(const void* p, u32 size);
 // The registers, for tests and logs: read them only while the GP thread is idle (after gp_fifo_sync).

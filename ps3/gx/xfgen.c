@@ -368,14 +368,6 @@ void xf_make_key(const GpState* s, u16 attrs, bool pos3, u16 tev_consts, XfKey* 
     }
 }
 
-static float bits_float(u32 v)
-{
-    float f;
-
-    memcpy(&f, &v, 4);
-    return f;
-}
-
 static void rgba8(u32 v, float out[4])
 {
     out[0] = (float) (v >> 24) / 255.0f;
@@ -384,72 +376,130 @@ static void rgba8(u32 v, float out[4])
     out[3] = (float) (v & 0xFF) / 255.0f;
 }
 
-void xf_constants(const GpState* s, float c[C_COUNT][4])
+// Row r gets (x, y, z, w) when it differs; words compare and copy without a trip through the FPU.
+static void row_words(float c[C_COUNT][4], u32* changed, int r, u32 x, u32 y, u32 z, u32 w)
+{
+    u32* d = (u32*) c[r];
+
+    if (d[0] != x || d[1] != y || d[2] != z || d[3] != w) {
+        d[0] = x;
+        d[1] = y;
+        d[2] = z;
+        d[3] = w;
+        changed[r >> 5] |= 1u << (r & 31);
+    }
+}
+
+static void row_floats(float c[C_COUNT][4], u32* changed, int r, const float v[4])
+{
+    float* d = c[r];
+
+    if (d[0] != v[0] || d[1] != v[1] || d[2] != v[2] || d[3] != v[3]) {
+        memcpy(d, v, 16);
+        changed[r >> 5] |= 1u << (r & 31);
+    }
+}
+
+// The float bits of k < 64, in integer registers: a conversion through the FPU stores and loads.
+static u32 small_bits(u32 k)
+{
+    u32 e;
+
+    if (k == 0) {
+        return 0;
+    }
+    e = 31 - (u32) __builtin_clz(k);
+    return (127 + e) << 23 | ((k << (23 - e)) & 0x7FFFFF);
+}
+
+#define F_ONE 0x3F800000u
+#define F_MINUS_ONE 0xBF800000u
+
+// Memory words 4g to 4g + 3: the rows they feed.
+static void mem_group(const GpState* s, u32 g, float c[C_COUNT][4], u32* changed, u32* lights)
+{
+    const u32* m = s->xf_mem;
+    u32 a = 4 * g, r;
+
+    if (a < 0x100) {
+        row_words(c, changed, C_MTX + (int) g, m[a], m[a + 1], m[a + 2], m[a + 3]);
+    } else if (a >= XF_NRM_MTX && a < XF_NRM_MTX + 96) {
+        for (r = (a - XF_NRM_MTX) / 3; r <= (a + 3 - XF_NRM_MTX) / 3 && r < 32; r++) {
+            const u32* n = &m[XF_NRM_MTX + 3 * r];
+
+            row_words(c, changed, C_NRM + (int) r, n[0], n[1], n[2], 0);
+        }
+    } else if (a >= XF_DUALTEX_MTX && a < XF_LIGHTS) {
+        row_words(c, changed, C_POST + (int) ((a - XF_DUALTEX_MTX) / 4), m[a], m[a + 1], m[a + 2], m[a + 3]);
+    } else if (a >= XF_LIGHTS) {
+        *lights |= 1u << ((a - XF_LIGHTS) / 16);
+    }
+}
+
+void xf_constants(const GpState* s, const u32* mem_dirty, const u32* reg_dirty, float c[C_COUNT][4], u32* changed)
 {
     const u32* x = s->xf_regs;
-    float p[6];
-    int i, k;
+    u32 lights = 0, regs0 = reg_dirty != NULL ? reg_dirty[0] : ~0u, regs1 = reg_dirty != NULL ? reg_dirty[1] : ~0u;
+    u32 i, k;
+    float v[4];
 
-    for (i = 0; i < 64 * 4; i++) {
-        c[C_MTX + i / 4][i % 4] = bits_float(s->xf_mem[i]);
-    }
-    for (i = 0; i < 32; i++) {
-        for (k = 0; k < 3; k++) {
-            c[C_NRM + i][k] = bits_float(s->xf_mem[XF_NRM_MTX + i * 3 + k]);
+    for (i = 0; i < XF_MEM_SIZE / 128; i++) {
+        u32 bits = mem_dirty != NULL ? mem_dirty[i] : ~0u;
+
+        while (bits != 0) {
+            k = 31 - (u32) __builtin_clz(bits);
+            bits &= ~(1u << k);
+            mem_group(s, i * 32 + k, c, changed, &lights);
         }
-        c[C_NRM + i][3] = 0.0f;
-    }
-    for (i = 0; i < 64 * 4; i++) {
-        c[C_POST + i / 4][i % 4] = bits_float(s->xf_mem[XF_DUALTEX_MTX + i]);
     }
     for (i = 0; i < 8; i++) {
         const u32* l = &s->xf_mem[XF_LIGHTS + i * 16];
-        float* d = c[C_LIGHT + LIGHT_STRIDE * i];
+        int r = C_LIGHT + LIGHT_STRIDE * (int) i;
 
-        rgba8(l[3], d);
-        for (k = 0; k < 3; k++) {
-            d[4 + k] = bits_float(l[4 + k]);
-            d[8 + k] = bits_float(l[7 + k]);
-            d[12 + k] = bits_float(l[10 + k]);
-            d[16 + k] = bits_float(l[13 + k]);
+        if (!((lights >> i) & 1)) {
+            continue;
         }
-        d[7] = d[11] = d[19] = 0.0f;
-        d[15] = 1.0f;
+        rgba8(l[3], v);
+        row_floats(c, changed, r, v);
+        row_words(c, changed, r + 1, l[4], l[5], l[6], 0);
+        row_words(c, changed, r + 2, l[7], l[8], l[9], 0);
+        row_words(c, changed, r + 3, l[10], l[11], l[12], F_ONE);
+        row_words(c, changed, r + 4, l[13], l[14], l[15], 0);
     }
-    for (i = 0; i < 6; i++) {
-        p[i] = bits_float(x[0x20 + i]);
+    if (regs1 & XF_CONST_REGS_1) {
+        const u32* p = &x[0x20];
+
+        // GX_ORTHOGRAPHIC in bit 0 of 0x26.
+        if (x[0x26] & 1) {
+            row_words(c, changed, C_PROJ, p[0], 0, 0, p[1]);
+            row_words(c, changed, C_PROJ + 1, 0, p[2], 0, p[3]);
+            row_words(c, changed, C_PROJ + 3, 0, 0, 0, F_ONE);
+        } else {
+            row_words(c, changed, C_PROJ, p[0], 0, p[1], 0);
+            row_words(c, changed, C_PROJ + 1, 0, p[2], p[3], 0);
+            row_words(c, changed, C_PROJ + 3, 0, 0, F_MINUS_ONE, 0);
+        }
+        row_words(c, changed, C_PROJ + 2, 0, 0, p[4], p[5]);
     }
-    memset(c[C_PROJ], 0, sizeof(float) * 16);
-    c[C_PROJ][0] = p[0];
-    c[C_PROJ + 1][1] = p[2];
-    c[C_PROJ + 2][2] = p[4];
-    c[C_PROJ + 2][3] = p[5];
-    if (x[0x26] & 1) {
-        c[C_PROJ][3] = p[1];
-        c[C_PROJ + 1][3] = p[3];
-        c[C_PROJ + 3][3] = 1.0f;
-    } else {
-        c[C_PROJ][2] = p[1];
-        c[C_PROJ + 1][2] = p[3];
-        c[C_PROJ + 3][2] = -1.0f;
+    if (regs0 & 0x3C00) {
+        for (i = 0; i < 4; i++) {
+            rgba8(x[0x0A + i], v);
+            row_floats(c, changed, C_CHAN + (int) i, v);
+        }
     }
-    for (i = 0; i < 4; i++) {
-        rgba8(x[0x0A + i], c[C_CHAN + i]);
+    if (regs0 & 0x03000000) {
+        u32 a = x[0x18], b = x[0x19];
+
+        row_words(c, changed, C_MIDX, small_bits(a & 0x3F), small_bits((a >> 6) & 0x3F), small_bits((a >> 12) & 0x3F),
+                  small_bits((a >> 18) & 0x3F));
+        row_words(c, changed, C_MIDX + 1, small_bits((a >> 24) & 0x3F), small_bits(b & 0x3F),
+                  small_bits((b >> 6) & 0x3F), small_bits((b >> 12) & 0x3F));
+        row_words(c, changed, C_MIDX + 2, small_bits((b >> 18) & 0x3F), 0, 0, 0);
     }
-    c[C_MIDX][0] = (float) (x[0x18] & 0x3F);
-    for (i = 0; i < 3; i++) {
-        c[C_MIDX][1 + i] = (float) ((x[0x18] >> (6 + 6 * i)) & 0x3F);
+    if (mem_dirty == NULL) {
+        // (0, 1, 0.5, 2)
+        row_words(c, changed, C_MISC, 0, F_ONE, 0x3F000000u, 0x40000000u);
     }
-    c[C_MIDX + 1][0] = (float) ((x[0x18] >> 24) & 0x3F);
-    for (i = 0; i < 3; i++) {
-        c[C_MIDX + 1][1 + i] = (float) ((x[0x19] >> (6 * i)) & 0x3F);
-    }
-    c[C_MIDX + 2][0] = (float) ((x[0x19] >> 18) & 0x3F);
-    c[C_MIDX + 2][1] = c[C_MIDX + 2][2] = c[C_MIDX + 2][3] = 0.0f;
-    c[C_MISC][0] = 0.0f;
-    c[C_MISC][1] = 1.0f;
-    c[C_MISC][2] = 0.5f;
-    c[C_MISC][3] = 2.0f;
 }
 
 // The reference, step by step as the program.

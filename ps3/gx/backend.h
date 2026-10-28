@@ -17,13 +17,11 @@ bool gx_rsx_init(void);
 void gx_rsx_present(u32 xfb);
 
 typedef struct GxRsxStats {
-    u32 draws, vertices, dropped_draws;
+    u32 draws, vertices, dropped_draws, rsx_draws;
     u32 vertex_programs, fragment_programs, vp_loads;
     u32 textures, texture_uploads, efb_copies, xfb_copies, presents;
     u32 unsupported; // bit per feature the backend does not draw (see backend.c)
 } GxRsxStats;
 void gx_rsx_get_stats(GxRsxStats* out);
-// Logs the first draw the RSX has not finished, with its programs and textures (step 3 diagnostics).
-void gx_rsx_debug_hang(void);
 
 #endif

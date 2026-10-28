@@ -22,7 +22,6 @@
 // Labels below 64 belong to the system.
 #define LABEL_SYNC 200
 #define LABEL_RING 201
-#define LABEL_DRAW 202
 #define FB_COUNT 3
 #define WAIT_US 2000000
 // Unverified on hardware: the GCM front face whose triangles are clockwise on the screen (window y down).
@@ -97,16 +96,6 @@ bool dev_debug_dump_stall(void)
     return now;
 }
 
-void dev_mark(u32 n)
-{
-    rsxSetWriteBackendLabel(ctx, LABEL_DRAW, n);
-}
-
-u32 dev_marked(void)
-{
-    return *(volatile u32*) gcmGetLabelAddress(LABEL_DRAW);
-}
-
 static void on_vblank(const u32 head)
 {
     if (vblank_fn != NULL) {
@@ -171,16 +160,16 @@ void dev_write_local(void* dst, const void* src, u32 size)
     }
 }
 
-void* dev_ring_alloc(u32 size, u32* io_offset)
+void* dev_ring_reserve(u32 min, u32* avail, u32* io_offset)
 {
     const u32 seg = RING_SIZE / RING_SEGMENTS;
     // Vertex streams start 16-byte aligned: a misaligned float attribute wedges the vertex fetch.
     u32 pos = (ring_pos + 15) & ~15u;
 
-    if (size > seg) {
+    if (min > seg) {
         return NULL;
     }
-    if (pos + size > (ring_seg + 1) * seg) {
+    if (pos + min > (ring_seg + 1) * seg) {
         u32 next = (ring_seg + 1) % RING_SEGMENTS;
 
         // A backend label: the RSX writes it once the draws that read this segment have left the pipeline.
@@ -193,9 +182,26 @@ void* dev_ring_alloc(u32 size, u32* io_offset)
         ring_seg = next;
         pos = next * seg;
     }
-    ring_pos = pos + size;
+    ring_pos = pos;
+    *avail = (ring_seg + 1) * seg - pos;
     *io_offset = ring_off + pos;
     return ring + pos;
+}
+
+void dev_ring_commit(u32 size)
+{
+    ring_pos += size;
+}
+
+void* dev_ring_alloc(u32 size, u32* io_offset)
+{
+    u32 avail;
+    void* p = dev_ring_reserve(size, &avail, io_offset);
+
+    if (p != NULL) {
+        dev_ring_commit(size);
+    }
+    return p;
 }
 
 static void set_surface(u32 format, u32 color_offset, u32 color_pitch, u32 depth_offset, u32 depth_pitch, u32 w,
@@ -315,13 +321,15 @@ void dev_line_width(float width)
     (void) width;
 }
 
-void dev_vertex_program(const u32 (*ucode)[4], u32 n, u32 input_mask, u32 output_mask, u32 regs)
+void dev_vertex_program(const u32 (*ucode)[4], u32 n, u32 start, u32 input_mask, u32 output_mask, u32 regs)
 {
     rsxVertexProgram vp;
 
     memset(&vp, 0, sizeof(vp));
     vp.num_regs = (u16) regs;
-    vp.num_insn = (u16) n;
+    // With no instructions PSL1GHT only sets the load and start slots, the attribute masks and the register count.
+    vp.num_insn = (u16) (ucode != NULL ? n : 0);
+    vp.insn_start = (u16) start;
     vp.input_mask = input_mask;
     vp.output_mask = output_mask;
     rsxLoadVertexProgramBlock(ctx, &vp, ucode);
@@ -397,6 +405,13 @@ void dev_draw(u32 prim, u32 count)
     // The ring is reused: the vertex cache must not keep old data at these offsets.
     rsxInvalidateVertexCache(ctx);
     rsxDrawVertexArray(ctx, prim, 0, count);
+}
+
+void dev_draw_indexed(u32 prim, u32 io_offset, u32 count)
+{
+    // rsxDrawIndexArray writes 0x1714 once; the full invalidate (0x1710, then 0x1714 three times) as dev_draw.
+    rsxInvalidateVertexCache(ctx);
+    rsxDrawIndexArray(ctx, (u8) prim, io_offset, count, GCM_INDEX_TYPE_16B, GCM_LOCATION_CELL);
 }
 
 void dev_clear(bool color, bool alpha, bool depth, u32 argb, u32 z24)
@@ -575,7 +590,8 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
     }
     dev_attrib(0, io, sizeof(Vertex), 4, GCM_VERTEX_DATA_TYPE_F32);
     dev_attrib(8, io + 16, sizeof(Vertex), 2, GCM_VERTEX_DATA_TYPE_F32);
-    dev_vertex_program((const u32(*)[4]) present_vp, present_vp_n, present_vp_in, present_vp_out, 1);
+    dev_vertex_program((const u32(*)[4]) present_vp, present_vp_n, DEV_VP_SLOTS, present_vp_in, present_vp_out,
+                       1);
     dev_fragment_program(present_fp_off, present_fp_regs, present_fp_tc, 0);
     dev_draw(GCM_TYPE_QUADS, 4);
     // No gcmSetWaitFlip: it would hold the GX draws until the vblank. A buffer with a flip pending is not drawn.

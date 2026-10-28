@@ -2,6 +2,7 @@
 // lie on the GameCube pad; R1 is Z, L2 and R2 the analog L and R, the right stick the C stick.
 #include <string.h>
 
+#include <dolphin/os.h>
 #include <dolphin/pad.h>
 #include <dolphin/vi.h>
 
@@ -79,6 +80,23 @@ u32 PADRead(PADStatus* status)
         s->analogB = p->square;
         s->err = PAD_ERR_NONE;
         connected |= PAD_CHAN0_BIT >> chan;
+    }
+    {
+        // All on, all on with an RSX wait per draw, then each change alone, then none.
+        static const unsigned modes[] = { 0, 8, 6, 5, 3, 7 };
+        static unsigned held, mode;
+
+        // Select is no GameCube button: each press moves the backend to the next A/B mode.
+        if ((pads[0].buttons & PS3_PAD_SELECT) && !held) {
+            unsigned m;
+
+            mode = (mode + 1) % 6;
+            m = modes[mode];
+            ps3_diag.gx_ab = m;
+            OSReport("gx A/B: mode %u: batching %s, VP slots %s, constants %s, RSX wait per draw %s\n", mode,
+                     m & 1 ? "off" : "on", m & 2 ? "off" : "on", m & 4 ? "all" : "changed", m & 8 ? "on" : "off");
+        }
+        held = pads[0].buttons & PS3_PAD_SELECT;
     }
 #ifdef PS3_PAD_AUTOPRESS
     // For RPCS3 runs without a pad: channel 0 holds A for 10 retraces from retrace PS3_PAD_AUTOPRESS.

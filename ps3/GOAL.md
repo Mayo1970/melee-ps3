@@ -396,6 +396,7 @@ Waiting for the user:
 - Run 29: the call trace package, Peach and DK on Yoshi's Story until the stop, and what was on the screen at
   the stop and in the movie.
 - Run 30: the normal package with step 1 (dirty tracking), a match, and the heartbeat's fourth line.
+- Run 38: the second A/B package (6 modes, below): in which modes does the z-fighting stay?
 
 The UDP log goes to `192.168.178.99`, port 18194 (`ps3/os/udplog_cell.c`). A listener: `nc -ul 18194`, or any
 UDP listener on that port.
@@ -427,6 +428,8 @@ The plan, in this order, measured on the console after each step:
    Not per draw (a mailbox round trip each; the ioq3 port measured per-draw SPU jobs as a loss), and not the
    whole GP thread (sequential, branchy, its caches do not fit 256 KB). The main and GP threads share the one
    PPE core, so work moved to an SPE also helps the game logic, which was busy 30% of the time at 12 presents.
+
+Steps 1, 2 and 4 are done (below). Steps 3 and 5 are now part 2 of the plan, at the end of this section.
 
 Step 1, dirty tracking (2026-10-28): `GpState` has three generations (`gp.c`), bumped only when a value
 changes: `bp_gen` (BP and the TEV register sets), `xf_gen` (XF registers but the matrix indices 0x18-0x19 and
@@ -491,11 +494,105 @@ adds "with the last draw's state" (`ps3_prof.state_reuses`).
     (`build/hostmatch_audit.txt`, items at 4): 46 of 46 run their time: the 13 pairs on Final Destination, Mario
     and Fox on stages 2-31 but 21, Peach and DK, and a human DK doing down B 24 times by pad script.
 
+Steps 2 and 4 (2026-10-28):
+- Batching (`backend.c`): a GX draw with no CP, XF or BP write since the draw before (`GpState.writes`), the same
+  VAT and the same family (triangles, lines, points) joins the open batch with no state work. Quads, strips and
+  fans become triangle indices as the RSX splits them, line strips line indices. The vertices, then the u16
+  indices, go into one ring reservation up to the segment end (`dev_ring_reserve`, `dev_ring_commit`). A batch is
+  one `rsxDrawIndexArray` (`dev_draw_indexed`; PSL1GHT invalidates the vertex cache in it) and one set of
+  attribute binds. EFB copies, finish, present and memory changes send the open batch first. A draw over 65,535
+  vertices or 32,768 indices goes alone, as before.
+- Constants: `xf_constants` converts only the rows that the written XF memory (`xf_mem_dirty`, a bit per 4
+  words) and the written registers feed, as word copies, and marks the rows that differ; the backend uploads each
+  run of marked rows. Against the old full conversion (`build/cmp/consts_test.c`): 20,000 random write sets, all
+  rows equal.
+- FIFO: the GP thread releases ring space every 4 KB (`gp_fifo_release_step`) and before it waits, not after
+  each command.
+- Vertex programs stay in the RSX program slots 0-503 (the present pass loads its own at 504-511). A loaded
+  program only sets its start slot again (`rsxLoadVertexProgramBlock` with no instructions). Programs are placed
+  one after the other, over the oldest.
+- The per-draw backend label and draw record (step 3 diagnostics) are gone, with `gx_rsx_debug_hang`; at a stall
+  the heartbeat still logs the commands before GET. The fourth heartbeat line adds batched GX draws and RSX draws.
+- Host: `scenetest` PASS with frames bit for bit as before (31 RSX draws instead of 71); `gx_test` 3 of 3 PASS;
+  `progtest` PASS; the boot's memory card notice bit for bit as before. Captain Falcon and DK on Final
+  Destination: about 80,000 GX draws a second in 15,000 RSX draws (5.3 to 1), about 1,950 VP loads a second at
+  57 presents; the match frames look as before. Host matches (`build/hostmatch_step2.txt`, items at 4, 45 s):
+  18 of 18 run their time with 0 dropped draws (the 13 pairs on Final Destination, Peach and DK on Yoshi's
+  Story, Mario and Fox on 4 other stages).
+- Normal package rebuilt: `.got` 0x4480, 0 `r2off` stubs. The call trace package is not rebuilt.
+- Melee run 34 (2026-10-28, `build/run34_udp.txt`): matches at 36-47 presents a second (run 30: 18-29), about
+  82,000 GX draws in 16,000 RSX draws; no stop in 167 s, 0 dropped draws. The user: some textures flicker
+  (surfaces, menus, the movie), and the console froze after the quit (the log reached `exit()`, with the GP
+  thread drawing and the RSX busy; in run 33 the GP was idle at the quit). Fixes:
+  - `rsxDrawIndexArray` writes the vertex cache invalidate 0x1714 once; `rsxInvalidateVertexCache` writes 0x1710
+    and then 0x1714 three times. `dev_draw_indexed` now does the full invalidate first, as `dev_draw` does, so a
+    reused ring address cannot give old vertices or indices.
+  - `gp_stop` (`gp.c`), before the exit on the XMB quit (`vi.c`) and in `OSResetSystem`: the GP thread sends its
+    open batch, waits for the RSX and stops for good (at most 2 s). Host: "gp: stopped, the RSX is idle", exit 0.
+  - Package: `.got` 0x44c0, 0 `r2off` stubs.
+- Melee run 35 (2026-10-28, `build/run35_udp.txt`, training mode, Kirby against a CPU Zelda on Green Greens,
+  Fountain of Dreams and Hyrule Temple): 36-44 presents a second at 74,000-87,000 GX draws (17,000-18,000 RSX
+  draws), GP busy 83-85%; 24-28 at about 100,000 draws. The quit logged "gp: stopped, the RSX is idle". The
+  user: artifacts on the floor (flickering triangles, spikes, z-fighting), a wrong camera (zoom, position, start),
+  all players at one spawn point, and the CPU Zelda transforms while she stands still.
+  - Spawns and camera: each stage logged "use dummy CamRange" and "use dummy DeadRange" (also runs 30 and 33,
+    never on the host). newlib makes `ssize_t` an int on the PS3, glibc a long; the schema from `datgen` writes
+    it as a long. So `UnkStageDat.count` read 0 on the console, no stage position joint was registered
+    (`Ground_801C34AC`), and the spawn points, camera range and blast zones fell back to one point and dummies.
+    Fix under `TARGET_PS3` in `gr/types.h`: the two `ssize_t` fields (`count`, `pair_count`) are `long`. These are
+    the only `ssize_t` fields in the game's structs, and `ssize_t` is the only schema type whose size differs.
+    The console code now loads both as 64-bit.
+  - Zelda: training mode's CPU "stop" is CPU kind 0, which starts in behavior 1 (`ftCo_800A101C`'s default case,
+    `ftCo_0A01.c`). Every 400 frames that behavior sets the transform flag with chance 0.5
+    (`ftCo_800ADE48`), and `ftCo_800ABA34` then transforms Zelda or Sheik. The file is Matching, so the GameCube
+    does the same. The host shows it (`MELEE_HOST_MATCH=1h,18k0l1/32/0`; `tests/host_start.c` takes `kN` for the
+    CPU kind and `lN` for the level). Not changed.
+  - Package: `.got` 0x44c0, 0 `r2off` stubs.
+- Melee run 36 (2026-10-28, `build/run36_udp.txt`, Green Greens and Great Bay): no "use dummy" line; the user:
+  spawns and camera right, the floor artifacts are z-fighting. Matches at 33-37 presents a second, about 81,000
+  GX draws in 16,700 RSX draws. GP per mille: draws 842 (vertices 390, textures 235, TEV 148, constants 40,
+  state 17); main thread asleep about 45%.
+- A/B package for the z-fighting: Select (no GameCube button, `pad.c`) moves through 5 modes in
+  `ps3_diag.gx_ab`: 0 as built; 1 no batching (each GX draw alone, non-indexed, as before step 2); 2 a vertex
+  program load at each switch; 4 all constants at each update; 7 all three. Host: a match through all modes,
+  0 dropped draws; `MELEE_HOST_PAD` takes `SELECT`. Package: `.got` 0x4500, 0 `r2off` stubs.
+- Melee run 37 (2026-10-28): the z-fighting stays in the logged modes 1, 2 and 3 (one change off each) and
+  goes only in mode 4, all three off (13 presents a second; batching off alone 31, all on 35). So no single change causes it, or it
+  depends on the timing between the GP thread and the RSX.
+- Second A/B package: bit 8 waits for the RSX after each RSX draw (`dev_finish`). Select cycles 6 modes: 0 all
+  on; 8 all on with the wait (a race test); 6, 5 and 3, one change on alone (batching, VP slots, changed
+  constants); 7 all off. Host: all modes, 0 dropped draws. Package: `.got` 0x4500, 0 `r2off` stubs.
+
+### Part 2 of the plan
+
+Set by the user on 2026-10-28, after run 36: all four steps, in this order, each measured on the console. The
+done condition of this goal stays: a match at 60 presents a second, with no stop.
+
+The budget at run 36 (Green Greens, 33-37 presents a second, 81,000 GX draws and 16,700 RSX draws a second): GP
+per mille: draws 842, of which vertex conversion 390, texture checks 235 (no uploads in a match), TEV 148,
+constants 40, state 17. The main thread sleeps about 45% of the time. Estimate after steps 1 and 2: twice the GP
+headroom, near 60 presents; then the game logic on the main thread is the next limit.
+
+1. Display list vertex cache: convert the vertices of a display list once, keep them where the RSX reads them,
+   and draw later calls of that list from the cache. Key: the list's address and size, VCD and VAT, the array
+   bases and strides it reads, the default matrix indices. Invalidation: the game calls `DCFlushRange` or
+   `DCStoreRange` (`os/os.c`, now only a `sync`) after it writes vertex data, so a flushed range drops the
+   entries that read from it.
+2. Texture checks: a hash table by address and format, instead of two scans of the 512-entry cache per lookup.
+   A texture is hashed again only when a `DCFlushRange` or `DCStoreRange` covered it or a TLUT load changed its
+   palette, with a word-wise hash instead of the byte-wise FNV.
+3. TEV setup: find the fragment program by a word compare of the TEV registers it reads, instead of a full
+   `TevConfig` rebuild and its byte-wise hash at each BP change.
+4. SPUs, if still short of 60: vertex conversion and texture decoding as SPU jobs, one per batch or ring
+   segment, with an RSX label wait before the draws that use them. Indexed attributes need gather DMA (each GX
+   attribute has its own index). Not per draw: a mailbox round trip each, and the ioq3 port measured per-draw
+   SPU jobs as a loss.
+
 ## Not done for the game
 
 | Part | Size or note |
 |---|---|
-| GX on RSX | Not drawn yet: indirect textures, TEV compare stages, two-compare alpha tests, logic ops, z textures, depth copies, emboss texgen, constant destination alpha, line width, a texcoord 7 matrix index in the vertex (the backend logs each once). Speed: a changed vertex program is uploaded again, vertices are de-indexed on the PPE for every draw (no display list cache), textures are hashed once per frame |
+| GX on RSX | Not drawn yet: indirect textures, TEV compare stages, two-compare alpha tests, logic ops, z textures, depth copies, emboss texgen, constant destination alpha, line width, a texcoord 7 matrix index in the vertex (the backend logs each once). Speed: vertices are de-indexed on the PPE for every draw (no display list cache), textures are hashed once per frame |
 | CARD | Saves on the HDD; the stubs report no card in either slot |
 | OS threads | `OSSuspendThread` only counts; thread queues (`OSSleepThread`) are the minimal ones in `ps3/os/intr.c` |
 

@@ -53,8 +53,13 @@ typedef struct XfKey {
 void xf_make_key(const GpState* s, u16 attrs, bool pos3, u16 tev_consts, XfKey* key);
 // Returns the instruction count, or -1.
 int xf_gen(const XfKey* key, VpProg* p);
-// The XF part of the constants (C_MTX to C_MISC) from the registers; C_DQ and C_TEV are left as they are.
-void xf_constants(const GpState* s, float c[C_COUNT][4]);
+// The XF registers the constants read: 0x0A-0x0D and 0x18-0x19 in xf_reg_dirty[0], 0x20-0x26 in xf_reg_dirty[1].
+#define XF_CONST_REGS_0 0x03003C00u
+#define XF_CONST_REGS_1 0x0000007Fu
+
+// The XF part of the constants (C_MTX to C_MISC) as GpState's dirty bits mem_dirty and reg_dirty mark, or all of it
+// when they are NULL. Rows that differ are written as float bits and marked in changed; C_DQ and C_TEV stay.
+void xf_constants(const GpState* s, const u32* mem_dirty, const u32* reg_dirty, float c[C_COUNT][4], u32* changed);
 
 // CPU reference of the program, for the tests: attributes as the RSX hands them (before dequantization).
 typedef struct XfIn {

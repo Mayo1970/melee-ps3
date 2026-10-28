@@ -36,6 +36,8 @@
 #define DEV_FILTER_LINEAR_MIP_NEAREST 4
 #define DEV_FILTER_NEAREST_MIP_LINEAR 5
 #define DEV_FILTER_LINEAR_MIP_LINEAR 6
+// Vertex program slots for the backend; the present pass loads its program into the 8 after them (512 in all).
+#define DEV_VP_SLOTS 504
 
 typedef struct DevTarget {
     uint32_t color_offset, color_pitch;
@@ -61,6 +63,10 @@ void dev_local_free(void* ptr);
 void dev_write_local(void* dst, const void* src, uint32_t size);
 // The vertex ring in main memory the RSX reads. Returns NULL when size does not fit; may wait for the RSX.
 void* dev_ring_alloc(uint32_t size, uint32_t* io_offset);
+// The free ring space up to the end of its segment, at least min bytes, 16-byte aligned; it may wait for the RSX.
+// dev_ring_commit then keeps the first size bytes. No other ring call between the two.
+void* dev_ring_reserve(uint32_t min, uint32_t* avail, uint32_t* io_offset);
+void dev_ring_commit(uint32_t size);
 
 void dev_target(const DevTarget* t);
 void dev_viewport(const float scale[4], const float offset[4]);
@@ -73,9 +79,10 @@ void dev_color_mask(bool rgb, bool alpha);
 void dev_cull(bool cull_cw, bool cull_ccw);
 void dev_point_size(float size);
 void dev_line_width(float width);
-// regs: temps used. The program stays valid until the next call.
-void dev_vertex_program(const uint32_t (*ucode)[4], uint32_t n, uint32_t input_mask, uint32_t output_mask,
-                        uint32_t regs);
+// Runs the n instructions at program slot start; ucode loads them there first, NULL means they are there.
+// regs: temps used.
+void dev_vertex_program(const uint32_t (*ucode)[4], uint32_t n, uint32_t start, uint32_t input_mask,
+                        uint32_t output_mask, uint32_t regs);
 void dev_vp_constants(uint32_t first, uint32_t count, const float* v);
 // texcoords4: texcoords read with more than two components.
 void dev_fragment_program(uint32_t offset, uint32_t regs, uint16_t texcoords, uint16_t texcoords4);
@@ -84,6 +91,8 @@ void dev_texture(int unit, const DevTexture* t);
 // A ring attribute (IO offset); count 0 disables it.
 void dev_attrib(int slot, uint32_t io_offset, uint32_t stride, uint32_t count, uint32_t type);
 void dev_draw(uint32_t prim, uint32_t count);
+// count u16 indices at ring IO offset io_offset, into the vertices of the bound attributes.
+void dev_draw_indexed(uint32_t prim, uint32_t io_offset, uint32_t count);
 // Clears the scissor rectangle of the target.
 void dev_clear(bool color, bool alpha, bool depth, uint32_t argb, uint32_t z24);
 // Later draws wait until the RSX has finished all earlier work (render to texture, then sample it).
@@ -103,9 +112,6 @@ void dev_debug_state(char* buf, unsigned size);
 // Logs the 512 bytes of commands before GET once, when GET has not moved since the last call and differs from PUT.
 // Returns true on that call.
 bool dev_debug_dump_stall(void);
-// The RSX writes n to the draw label once the work queued before it is done (step 3 diagnostics).
-void dev_mark(uint32_t n);
-uint32_t dev_marked(void);
 #ifdef PS3_DUMP_FRAMES
 // RPCS3 builds only: waits for the RSX, then writes the w x h pixels at mem to /dev_hdd0/tmp as raw XRGB.
 void dev_debug_dump(const char* name, uint32_t n, const void* mem, uint32_t pitch, uint32_t w, uint32_t h);
