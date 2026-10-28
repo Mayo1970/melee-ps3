@@ -1,6 +1,5 @@
 // The audio backend on the PS3: a 2-channel lv2 audio port, the audio program on one SPU, and a thread
 // that turns the program's events into calls to ps3_audio_spu_event.
-#include <pthread.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -10,6 +9,7 @@
 #include <sys/event_queue.h>
 #include <sys/spu.h>
 
+#include "../os/sync.h"
 #include "audio_backend.h"
 
 // PSL1GHT's u64 is unsigned long and the SDK's is unsigned long long, so no SDK header comes in here.
@@ -23,14 +23,13 @@ static sys_spu_group_t group;
 static sys_spu_thread_t thread;
 static sys_event_queue_t queue;
 static u32 port;
-static pthread_t event_thread;
 
-static void* event_main(void* arg)
+static void event_main(void* arg)
 {
     for (;;) {
         sys_event_t ev;
         if (sysEventQueueReceive(queue, &ev, 0) != 0) {
-            return NULL;
+            return;
         }
         // An SPU user event carries the program's data0 in the low 24 bits of data_2.
         ps3_audio_spu_event((uint32_t) ev.data_2 & 0xFFFFFF);
@@ -90,7 +89,11 @@ bool ps3_audio_backend_start(AxShared* shared)
         OSReport("audio: SPU setup failed (%08x)\n", (u32) r);
         return false;
     }
-    pthread_create(&event_thread, NULL, event_main, NULL);
+    r = ps_thread_start(event_main, NULL, "axspu events");
+    if (r != 0) {
+        OSReport("audio: the event thread did not start (%08x)\n", (u32) r);
+        return false;
+    }
     r = sysSpuThreadGroupStart(group);
     if (r != 0) {
         OSReport("audio: sysSpuThreadGroupStart failed (%08x)\n", (u32) r);

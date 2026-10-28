@@ -10,6 +10,7 @@
 enum {
     OP_COPY,     // n bytes
     OP_S8_S16,   // n components
+    OP_U8_S16,   // n components
     OP_U16_F32,  // n components
     OP_RGB565,
     OP_RGB8,
@@ -73,9 +74,9 @@ static void add_vector(Builder* b, int slot, int fmt, u8 count, u32 src, u8 arra
         b->dst += 2u * count;
         break;
     case FMT_U8:
-        open_attr(b, slot, VTX_U8, count, count);
-        add_step(b, OP_COPY, src, count, array, idx16, elem_off);
-        b->dst += count;
+        open_attr(b, slot, VTX_S16, count, 2u * count);
+        add_step(b, OP_U8_S16, src, count, array, idx16, elem_off);
+        b->dst += 2u * count;
         break;
     case FMT_S8:
         open_attr(b, slot, VTX_S16, count, 2u * count);
@@ -306,6 +307,12 @@ bool vtx_convert(const VtxLayout* l, const GpState* s, const u8* in, u32 count, 
             case OP_S8_S16:
                 for (k = 0; k < st->n; k++) {
                     d[2 * k] = (p[k] & 0x80) ? 0xFF : 0;
+                    d[2 * k + 1] = p[k];
+                }
+                break;
+            case OP_U8_S16:
+                for (k = 0; k < st->n; k++) {
+                    d[2 * k] = 0;
                     d[2 * k + 1] = p[k];
                 }
                 break;

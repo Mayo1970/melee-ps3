@@ -5,6 +5,7 @@
 #include <stdbool.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 typedef char mutex_fits[sizeof(pthread_mutex_t) <= sizeof(((PsMutex*) 0)->storage) ? 1 : -1];
 typedef char cond_fits[sizeof(pthread_cond_t) <= sizeof(((PsCond*) 0)->storage) ? 1 : -1];
@@ -59,6 +60,20 @@ void ps_cond_wait(PsCond* c, PsMutex* m)
     pthread_cond_wait(cond(c), mutex(m));
 }
 
+void ps_cond_timedwait(PsCond* c, PsMutex* m, unsigned long long usec)
+{
+    struct timespec ts;
+
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec += (time_t) (usec / 1000000);
+    ts.tv_nsec += (long) (usec % 1000000) * 1000;
+    if (ts.tv_nsec >= 1000000000) {
+        ts.tv_sec++;
+        ts.tv_nsec -= 1000000000;
+    }
+    pthread_cond_timedwait(cond(c), mutex(m), &ts);
+}
+
 void ps_cond_signal(PsCond* c)
 {
     pthread_cond_signal(cond(c));
@@ -72,13 +87,22 @@ void ps_cond_broadcast(PsCond* c)
 typedef struct Start {
     void (*fn)(void*);
     void* arg;
+    const char* name;
 } Start;
+
+static __thread const char* thread_name;
+
+const char* ps_thread_name(void)
+{
+    return thread_name;
+}
 
 static void* entry(void* arg)
 {
     Start s = *(Start*) arg;
 
     free(arg);
+    thread_name = s.name;
     s.fn(s.arg);
     return NULL;
 }
@@ -95,6 +119,7 @@ int ps_thread_start(void (*fn)(void* arg), void* arg, const char* name)
     }
     s->fn = fn;
     s->arg = arg;
+    s->name = name;
     err = pthread_create(&t, NULL, entry, s);
     if (err != 0) {
         free(s);

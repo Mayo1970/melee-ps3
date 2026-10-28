@@ -552,6 +552,18 @@ void dev_flush(void) {}
 
 void dev_finish(void) {}
 
+static u32 marked;
+
+void dev_mark(u32 n)
+{
+    marked = n;
+}
+
+u32 dev_marked(void)
+{
+    return marked;
+}
+
 void dev_set_present_programs(const u32 (*vp)[4], u32 vp_n, u32 vp_inputs, u32 vp_outputs, u32 fp_offset,
                               u32 fp_regs, u16 fp_texcoords)
 {

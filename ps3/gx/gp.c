@@ -390,6 +390,24 @@ static void run_list(u32 paddr, u32 size)
     }
 }
 
+static volatile int present_pending;
+static volatile u32 present_xfb;
+
+// GP thread only.
+static void run_present(void)
+{
+    if (__atomic_exchange_n(&present_pending, 0, __ATOMIC_ACQ_REL) && backend->present != NULL) {
+        backend->present(&state, __atomic_load_n(&present_xfb, __ATOMIC_ACQUIRE));
+    }
+}
+
+void gp_post_present(u32 xfb)
+{
+    __atomic_store_n(&present_xfb, xfb, __ATOMIC_RELEASE);
+    __atomic_store_n(&present_pending, 1, __ATOMIC_RELEASE);
+    gp_fifo_kick();
+}
+
 static void gp_main(void* arg)
 {
     Src ring = { NULL, NULL };
@@ -398,6 +416,9 @@ static void gp_main(void* arg)
     for (;;) {
         run_command(&ring, false);
         gp_fifo_release();
+        if (__atomic_load_n(&present_pending, __ATOMIC_RELAXED)) {
+            run_present();
+        }
     }
 }
 
@@ -412,6 +433,7 @@ void gp_init(const GpBackend* b, u32 ring_size)
     invalidate_vtx_sizes();
     ps3_log("gp: ring of %u bytes\n", ring_size);
     gp_fifo_init(ring_size);
+    gp_fifo_set_idle_work(run_present);
     ps3_log("gp: ring ready, starting the GP thread\n");
     ps3_log("gp: thread start returned %d\n", ps_thread_start(gp_main, NULL, "GP"));
 }

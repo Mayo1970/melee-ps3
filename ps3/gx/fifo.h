@@ -31,6 +31,10 @@ static inline const u8* gp_fifo_take(u32 n)
 // Gives the bytes taken so far back to the producer.
 void gp_fifo_release(void);
 
+// Work for the GP thread while it waits for the stream: gp_fifo_kick runs fn there once, or soon after.
+void gp_fifo_set_idle_work(void (*fn)(void));
+void gp_fifo_kick(void);
+
 // Producer side: publishes the pipe and waits until the GP thread has run every published byte.
 void gp_fifo_sync(void);
 

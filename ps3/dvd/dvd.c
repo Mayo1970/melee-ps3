@@ -3,7 +3,6 @@
 #include "dvd.h"
 
 #include <dirent.h>
-#include <pthread.h>
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -14,7 +13,9 @@
 #include <dolphin/dvd.h>
 #include <dolphin/os.h>
 
+#include "../os/diag.h"
 #include "../os/intr.h"
+#include "../os/sync.h"
 
 #ifndef PS3_APP_DIR
 // Placeholder until the package sets the title ID.
@@ -58,7 +59,7 @@ static struct {
 } disc;
 
 // Serializes the file position of image and open_file between threads.
-static pthread_mutex_t io_lock = PTHREAD_MUTEX_INITIALIZER;
+static PsMutex io_lock = PS_MUTEX_INIT;
 
 static struct {
     DVDFileInfo* file;
@@ -343,10 +344,10 @@ bool ps3_dvd_mount(const char* path)
     struct stat st;
     bool ok;
 
-    pthread_mutex_lock(&io_lock);
+    ps_mutex_lock(&io_lock);
     unmount();
     if (stat(path, &st) != 0) {
-        pthread_mutex_unlock(&io_lock);
+        ps_mutex_unlock(&io_lock);
         OSReport("dvd: %s not found\n", path);
         return false;
     }
@@ -354,12 +355,12 @@ bool ps3_dvd_mount(const char* path)
     ok = ok && be32(header + 0x1C) == DISC_MAGIC && load_fst();
     if (!ok) {
         unmount();
-        pthread_mutex_unlock(&io_lock);
+        ps_mutex_unlock(&io_lock);
         OSReport("dvd: %s is not a GameCube disc\n", path);
         return false;
     }
     memcpy(&disc.id, header, sizeof(disc.id));
-    pthread_mutex_unlock(&io_lock);
+    ps_mutex_unlock(&io_lock);
 
     OSReport("dvd: %s: %.4s%.2s revision %d, %u entries\n", path, disc.id.gameName,
              disc.id.company, disc.id.gameVersion, disc.entries);
@@ -525,6 +526,8 @@ void ps3_dvd_dispatch(void)
         pending_head++;
         file->cb.state = DVD_STATE_END;
         OSRestoreInterrupts(enabled);
+        ps3_diag.dvd_callbacks++;
+        ps3_diag.intr_site = "DVD callback";
         callback(result, file);
     }
 }
@@ -564,7 +567,7 @@ void DVDInit(void)
     }
 }
 
-s32 DVDConvertPathToEntrynum(const char* path)
+static s32 path_to_entry(const char* path)
 {
     u32 cur = 0;
 
@@ -608,6 +611,15 @@ s32 DVDConvertPathToEntrynum(const char* path)
     return (s32) cur;
 }
 
+// Each path in the log, as a trail of what the game loads (step 3 diagnostics).
+s32 DVDConvertPathToEntrynum(const char* path)
+{
+    s32 entry = path_to_entry(path);
+
+    OSReport("dvd: %s -> %d\n", path, entry);
+    return entry;
+}
+
 BOOL DVDFastOpen(s32 entrynum, DVDFileInfo* fileInfo)
 {
     if (disc.source == SRC_NONE || entrynum <= 0 || (u32) entrynum >= disc.entries ||
@@ -635,12 +647,13 @@ BOOL DVDReadAsyncPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset,
     bool ok = disc.source != SRC_NONE && length >= 0 && offset >= 0 &&
               (u32) offset <= fileInfo->length;
 
+    ps3_diag.dvd_reads++;
     if (ok) {
-        pthread_mutex_lock(&io_lock);
+        ps_mutex_lock(&io_lock);
         ok = disc.source == SRC_FOLDER
                  ? folder_read(fileInfo->startAddr, (u32) offset, addr, (u32) length)
                  : image_read((u64) fileInfo->startAddr + (u32) offset, addr, (u32) length);
-        pthread_mutex_unlock(&io_lock);
+        ps_mutex_unlock(&io_lock);
     }
     if (!ok) {
         OSReport("dvd: reading %d bytes at %d failed\n", length, offset);

@@ -3,12 +3,14 @@
 #include "rsxdev.h"
 
 #include <malloc.h>
+#include <stdio.h>
 #include <string.h>
 #include <unistd.h>
 
 #include <rsx/rsx.h>
 #include <sysutil/video.h>
 
+#include "../os/diag.h"
 #include "../os/udplog.h"
 
 // Main memory mapped for the RSX: the command buffer, then the vertex ring. The samples' 32 MB wastes RAM.
@@ -19,6 +21,7 @@
 // Labels below 64 belong to the system.
 #define LABEL_SYNC 200
 #define LABEL_RING 201
+#define LABEL_DRAW 202
 #define FB_COUNT 3
 #define WAIT_US 2000000
 // Unverified on hardware: the GCM front face whose triangles are clockwise on the screen (window y down).
@@ -36,6 +39,7 @@ static bool cull_cw_on, cull_ccw_on;
 
 static u32 disp_w, disp_h, disp_pitch, disp_aspect;
 static u32 disp_off[FB_COUNT], disp_depth_off;
+static void* disp_mem[FB_COUNT];
 static volatile u32 flips_done;
 static u32 flips_queued, disp_next;
 static u32 present_vp[8][4];
@@ -43,9 +47,76 @@ static u32 present_vp_n, present_vp_in, present_vp_out;
 static u32 present_fp_off, present_fp_regs;
 static u16 present_fp_tc;
 
+static void (*vblank_fn)(void);
+
 static void on_flip(const u32 head)
 {
     flips_done++;
+}
+
+void dev_debug_state(char* buf, unsigned size)
+{
+    gcmControlRegister* reg = gcmGetControlRegister();
+    u32 get = reg->get, put = reg->put;
+    int n = snprintf(buf, size, "flips %u queued, %u done; RSX get %08x put %08x; labels sync %u of %u, ring %u of %u",
+                     flips_queued, flips_done, get, put, *(volatile u32*) gcmGetLabelAddress(LABEL_SYNC), sync_value,
+                     *(volatile u32*) gcmGetLabelAddress(LABEL_RING), ring_value);
+
+    // The command buffer is the start of the IO-mapped host region, so GET is an offset into host.
+    if (get != put && get >= 16 && get + 16 <= CB_SIZE && n > 0 && (unsigned) n < size) {
+        const volatile u32* w = (const volatile u32*) (host + get - 16);
+
+        snprintf(buf + n, size - (unsigned) n, "; commands at get-16: %08x %08x %08x %08x | %08x %08x %08x %08x",
+                 w[0], w[1], w[2], w[3], w[4], w[5], w[6], w[7]);
+    }
+}
+
+bool dev_debug_dump_stall(void)
+{
+    static u32 last_get = ~0u;
+    static bool dumped;
+    gcmControlRegister* reg = gcmGetControlRegister();
+    u32 get = reg->get, put = reg->put;
+    bool now = false;
+
+    if (get != put && get == last_get && !dumped && get >= 512 && get <= CB_SIZE) {
+        const volatile u32* w = (const volatile u32*) (host + get - 512);
+        int i;
+
+        dumped = true;
+        now = true;
+        for (i = 0; i < 128; i += 16) {
+            ps3_log("rsxdev: stall at %08x, commands at %08x: %08x %08x %08x %08x %08x %08x %08x %08x %08x %08x "
+                    "%08x %08x %08x %08x %08x %08x\n",
+                    get, get - 512 + 4 * i, w[i], w[i + 1], w[i + 2], w[i + 3], w[i + 4], w[i + 5], w[i + 6],
+                    w[i + 7], w[i + 8], w[i + 9], w[i + 10], w[i + 11], w[i + 12], w[i + 13], w[i + 14], w[i + 15]);
+        }
+    }
+    last_get = get;
+    return now;
+}
+
+void dev_mark(u32 n)
+{
+    rsxSetWriteBackendLabel(ctx, LABEL_DRAW, n);
+}
+
+u32 dev_marked(void)
+{
+    return *(volatile u32*) gcmGetLabelAddress(LABEL_DRAW);
+}
+
+static void on_vblank(const u32 head)
+{
+    if (vblank_fn != NULL) {
+        vblank_fn();
+    }
+}
+
+void dev_set_vblank(void (*fn)(void))
+{
+    vblank_fn = fn;
+    gcmSetVBlankHandler(on_vblank);
 }
 
 static bool wait_label(u8 index, u32 value)
@@ -53,14 +124,17 @@ static bool wait_label(u8 index, u32 value)
     volatile u32* label = (volatile u32*) gcmGetLabelAddress(index);
     u32 waited = 0;
 
+    ps3_diag.gp_wait = 3;
     while ((s32) (*label - value) < 0) {
         if (waited > WAIT_US) {
+            ps3_diag.gp_wait = 0;
             ps3_log("rsxdev: label %u not at %u after 2 s (it is %u)\n", index, value, *label);
             return false;
         }
         usleep(30);
         waited += 30;
     }
+    ps3_diag.gp_wait = 0;
     return true;
 }
 
@@ -382,7 +456,8 @@ static bool init_display(void)
     gcmSetFlipMode(GCM_FLIP_VSYNC);
     gcmSetFlipHandler(on_flip);
     for (i = 0; i < FB_COUNT; i++) {
-        if (dev_local_alloc(64, disp_pitch * disp_h, &disp_off[i]) == NULL) {
+        disp_mem[i] = dev_local_alloc(64, disp_pitch * disp_h, &disp_off[i]);
+        if (disp_mem[i] == NULL) {
             return false;
         }
         gcmSetDisplayBuffer((u8) i, disp_off[i], disp_pitch, disp_w, disp_h);
@@ -442,7 +517,7 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
     } Vertex;
     float tv_aspect = disp_aspect == VIDEO_ASPECT_16_9 ? 16.0f / 9.0f : 4.0f / 3.0f;
     float iw = (float) disp_w * (4.0f / 3.0f) / tv_aspect, left = (float) (u32) (((float) disp_w - iw) / 2.0f);
-    float x0 = left / disp_w * 2.0f - 1.0f, x1 = 1.0f - x0;
+    float x0 = left / disp_w * 2.0f - 1.0f, x1 = -x0;
     float scale[4] = { disp_w * 0.5f, disp_h * -0.5f, 0.5f, 0.0f };
     float offset[4] = { disp_w * 0.5f, disp_h * 0.5f, 0.5f, 0.0f };
     const float px[4] = { x0, x1, x1, x0 }, py[4] = { 1, 1, -1, -1 }, tu[4] = { 0, 1, 1, 0 }, tv[4] = { 0, 0, 1, 1 };
@@ -452,9 +527,11 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
     int i;
 
     // Three buffers: wait only while two flips are still pending.
+    ps3_diag.gp_wait = 2;
     while ((s32) (flips_queued - flips_done) > FB_COUNT - 2) {
         usleep(100);
     }
+    ps3_diag.gp_wait = 0;
     v = dev_ring_alloc(4 * sizeof(Vertex), &io);
     if (v == NULL) {
         return;
@@ -503,5 +580,32 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
         ps3_log("rsxdev: present %u queued (buffer %u, source %08x %ux%u), %u flips done\n", flips_queued, b,
                 src_offset, w, h, flips_done);
     }
+#ifdef PS3_DUMP_FRAMES
+    if (flips_queued % PS3_DUMP_FRAMES == 0 && flips_queued <= 6 * PS3_DUMP_FRAMES) {
+        dev_debug_dump("display", flips_queued, disp_mem[b], disp_pitch, disp_w, disp_h);
+    }
+#endif
     disp_next = (b + 1) % FB_COUNT;
 }
+
+#ifdef PS3_DUMP_FRAMES
+void dev_debug_dump(const char* name, u32 n, const void* mem, u32 pitch, u32 w, u32 h)
+{
+    char path[128];
+    FILE* f;
+    u32 y;
+
+    dev_finish();
+    snprintf(path, sizeof(path), "/dev_hdd0/tmp/melee_%s_%u_%ux%u.raw", name, n, w, h);
+    f = fopen(path, "wb");
+    if (f == NULL) {
+        ps3_log("rsxdev: cannot write %s\n", path);
+        return;
+    }
+    for (y = 0; y < h; y++) {
+        fwrite((const u8*) mem + y * pitch, 4, w, f);
+    }
+    fclose(f);
+    ps3_log("rsxdev: wrote %s\n", path);
+}
+#endif

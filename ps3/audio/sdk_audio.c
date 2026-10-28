@@ -10,6 +10,7 @@
 #include <dolphin/dsp.h>
 #include <dolphin/os.h>
 
+#include "../os/diag.h"
 #include "../os/intr.h"
 #include "audio_backend.h"
 #include "ax_shared.h"
@@ -66,11 +67,13 @@ static void dsp_interrupt(void)
     if (__atomic_exchange_n(&init_pending, 0, __ATOMIC_ACQ_REL) && dsp_task != NULL &&
         dsp_task->init_cb != NULL)
     {
+        ps3_diag.intr_site = "DSP init callback";
         dsp_task->init_cb(dsp_task);
     }
     // Each finished command list is one DSP yield; AX resumes its frame logic from it.
     for (n = __atomic_exchange_n(&dsp_pending, 0, __ATOMIC_ACQ_REL); n != 0; n--) {
         if (dsp_task != NULL && dsp_task->res_cb != NULL) {
+            ps3_diag.intr_site = "DSP resume callback (AX)";
             dsp_task->res_cb(dsp_task);
         }
     }
@@ -82,6 +85,7 @@ static void ai_interrupt(void)
 
     for (n = __atomic_exchange_n(&ai_pending, 0, __ATOMIC_ACQ_REL); n != 0; n--) {
         if (ai_callback != NULL) {
+            ps3_diag.intr_site = "AI callback";
             ai_callback();
         }
     }
@@ -100,6 +104,8 @@ static void aram_interrupt(void)
         request = arq_pending[arq_head++ % MAX_ARQ_PENDING].request;
         OSRestoreInterrupts(enabled);
         if (request->callback != NULL) {
+            ps3_diag.arq_callbacks++;
+            ps3_diag.intr_site = "ARQ callback";
             request->callback(request);
         }
     }
@@ -192,7 +198,11 @@ DSPTaskInfo* __DSPGetCurrentTask(void)
 
 void DSPSendMailToDSP(u32 mail)
 {
+    const char* site = ps3_diag.intr_site;
+
+    ps3_diag.intr_site = "DSP mail to the SPU";
     ps3_audio_backend_mail(mail);
+    ps3_diag.intr_site = site;
 }
 
 // The backend's mail call returns once the mailbox took the mail.
@@ -441,6 +451,7 @@ void ARQPostRequest(ARQRequest* request, uintptr_t owner, u32 type, u32 priority
 {
     BOOL enabled;
 
+    ps3_diag.arq_posts++;
     request->next = NULL;
     request->owner = owner;
     request->type = type;

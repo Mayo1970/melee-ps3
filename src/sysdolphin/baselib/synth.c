@@ -15,6 +15,12 @@ OSHeapHandle HSD_Synth_804D6018 = -1; // audio heap
 
 struct SfxLoadStreamNode;
 
+#ifdef TARGET_PS3
+// The SFX data keeps its GameCube layout, whose links are 32-bit addresses; pointers are 64-bit here.
+#define SFX_PTR(link) ((void*) (uintptr_t) (link))
+#define SFX_LINK(ptr) ((u32) (uintptr_t) (ptr))
+#endif
+
 /// Named after the assertion text pooled in this TU's `.data`.
 struct HSD_SynthSFXGroup {
     int arsize;
@@ -131,8 +137,13 @@ void HSD_AudioFree(void* ptr)
 static int HSD_Synth_804D6028[2] = { 0 };
 static float HSD_Synth_804D6030 = 1.0f;
 
+// The SFX code also views these nodes as AXVPBs (next, prev, next1, priority, callback, userContext).
 struct SfxLoadStreamNode {
+#ifdef TARGET_PS3
+    /* 0x00 */ u32 x0;
+#else
     /* 0x00 */ struct SfxLoadStreamNode* x0;
+#endif
     /* 0x04 */ s32 x4;
     /* 0x08 */ s32 x8;
     /* 0x0C */ s32 xC;
@@ -178,6 +189,21 @@ static void HSD_SynthSFXSampleLoadCallback(int result, uintptr_t args,
         HSD_Synth_804D7734 = (u32*) ((u8*) HSD_Synth_804D7730 + (dnw & ~3));
 
         bankID = HSD_Synth_804C2A60[0].bankID;
+#ifdef TARGET_PS3
+        (void) pp;
+        if (HSD_Synth_804C2AE0[bankID] == NULL) {
+            HSD_Synth_804C2AE0[bankID] = (AXVPB*) HSD_Synth_804D7730;
+        } else {
+            struct SfxLoadStreamNode* last =
+                (struct SfxLoadStreamNode*) HSD_Synth_804C2AE0[bankID];
+            while (last->x0 != 0) {
+                last = SFX_PTR(last->x0);
+            }
+            last->x0 = SFX_LINK(HSD_Synth_804D7730);
+        }
+
+        HSD_Synth_804D7730->x0 = 0;
+#else
         pp = &HSD_Synth_804C2AE0[bankID];
         while (*pp != NULL) {
             pp = &(*pp)->next;
@@ -185,6 +211,7 @@ static void HSD_SynthSFXSampleLoadCallback(int result, uintptr_t args,
         *pp = (AXVPB*) HSD_Synth_804D7730;
 
         HSD_Synth_804D7730->x0 = NULL;
+#endif
         HSD_Synth_804D7730->x4 = HSD_Synth_804C2A60[0].entrynum;
         HSD_Synth_804D7730->x10 = hsd_SynthSFXBank[bankID];
         HSD_Synth_804D7730->x14 = hsd_SynthSFXLoadBuf[1];
@@ -220,7 +247,11 @@ static void HSD_SynthSFXSampleLoadCallback(int result, uintptr_t args,
             HSD_Synth_804D7730->x4 = id;
             id &= 0x1F;
             bucket = &hsd_SynthSFXDataHash[id];
+#ifdef TARGET_PS3
+            HSD_Synth_804D7730->x0 = SFX_LINK(*bucket);
+#else
             HSD_Synth_804D7730->x0 = (struct SfxLoadStreamNode*) *bucket;
+#endif
             *bucket = HSD_Synth_804D7730;
             HSD_Synth_804D7734 += (u32) nbytes >> 2;
             HSD_Synth_804D7730 =
@@ -394,9 +425,17 @@ static void order_data_0(void)
 static void HSD_SynthSFXGroupDataUnlink(AXVPB* vpb)
 {
     int i;
+#ifdef TARGET_PS3
+    struct SfxLoadStreamNode* group = (struct SfxLoadStreamNode*) vpb;
+
+    for (i = 0; i < group->xC; i++) {
+        HSD_SynthSFXDataUnlink(group->x8 + i);
+    }
+#else
     for (i = 0; i < vpb->priority; i++) {
         HSD_SynthSFXDataUnlink((int) vpb->next1 + i);
     }
+#endif
 }
 
 void HSD_SynthSFXUnloadBank(int bank_id)
@@ -408,7 +447,11 @@ void HSD_SynthSFXUnloadBank(int bank_id)
         AXVPB* cur;
         HSD_SynthSFXGroupDataUnlink(*head);
         cur = *head;
+#ifdef TARGET_PS3
+        *head = SFX_PTR(((struct SfxLoadStreamNode*) cur)->x0);
+#else
         *head = (*head)->next;
+#endif
         HSD_AudioFree(cur);
     }
     hsd_SynthSFXBank[bank_id] = hsd_SynthSFXBankHead[bank_id];
@@ -419,6 +462,22 @@ void HSD_SynthSFXDataUnlink(int sfx_id)
     void* cur;
     void** pcur = &hsd_SynthSFXDataHash[sfx_id & 0x1F];
 
+#ifdef TARGET_PS3
+    u32* link = NULL;
+
+    for (cur = *pcur; cur != NULL; cur = SFX_PTR(*(u32*) cur)) {
+        if (((int*) cur)[1] == sfx_id) {
+            if (link != NULL) {
+                *link = *(u32*) cur;
+            } else {
+                *pcur = SFX_PTR(*(u32*) cur);
+            }
+            return;
+        }
+        link = (u32*) cur;
+    }
+    return;
+#endif
     while ((cur = *pcur) != NULL) {
         if (((int*) cur)[1] == sfx_id) {
             *pcur = *(void**) cur;
@@ -434,6 +493,30 @@ void HSD_SynthSFXGroupDataRemove(int sfx_id)
     AXVPB** pcur;
     int i;
 
+#ifdef TARGET_PS3
+    for (i = 0; i < 0x20; i++) {
+        struct SfxLoadStreamNode* prev = NULL;
+        struct SfxLoadStreamNode* group;
+
+        for (group = (struct SfxLoadStreamNode*) HSD_Synth_804C2AE0[i]; group != NULL;
+             prev = group, group = SFX_PTR(group->x0))
+        {
+            if (group->x4 == sfx_id) {
+                HSD_SynthSFXGroupDataUnlink((AXVPB*) group);
+                if (prev != NULL) {
+                    prev->x0 = group->x0;
+                } else {
+                    HSD_Synth_804C2AE0[i] = SFX_PTR(group->x0);
+                }
+                HSD_AudioFree(group);
+                return;
+            }
+        }
+    }
+    (void) cur;
+    (void) pcur;
+    return;
+#endif
     for (i = 0; i < 0x20; i++) {
         pcur = &HSD_Synth_804C2AE0[i];
         while (*pcur != NULL) {
@@ -475,6 +558,17 @@ void HSD_SynthSFXGroupDataReaddress(AXVPB* arg0, void* callback)
     u8* p;
     int j;
 
+#ifdef TARGET_PS3
+    struct SfxLoadStreamNode* group = (struct SfxLoadStreamNode*) arg0;
+
+    p = (u8*) arg0 + sizeof(*group);
+    sfxGroupDataReaddressCounter += 1;
+    HSD_DevComRequest(0, (uintptr_t) group->x10, (uintptr_t) callback, group->x14, 0x1B, 0,
+                      HSD_SynthSFXGroupDataReaddressCallback, 0);
+    i = 0;
+    delta = ((s32) (intptr_t) callback - group->x10) * 2;
+    while (i < group->xC) {
+#else
     p = (u8*) arg0 + 0x18;
     sfxGroupDataReaddressCounter += 1;
     HSD_DevComRequest(0, (uintptr_t) arg0->callback, (uintptr_t) callback,
@@ -483,6 +577,7 @@ void HSD_SynthSFXGroupDataReaddress(AXVPB* arg0, void* callback)
     i = 0;
     delta = ((u8*) callback - (u8*) arg0->callback) * 2;
     while (i < arg0->priority) {
+#endif
         count = *(int*) (p + 8);
         q = p;
         for (j = 0; j < count; j++) {
@@ -497,7 +592,11 @@ void HSD_SynthSFXGroupDataReaddress(AXVPB* arg0, void* callback)
         p += 0x10;
         i++;
     }
+#ifdef TARGET_PS3
+    group->x10 = (s32) (intptr_t) callback;
+#else
     arg0->callback = (void (*)(void*)) callback;
+#endif
 }
 
 void HSD_SynthSFXBankDeflag(int bank_id)
@@ -508,6 +607,20 @@ void HSD_SynthSFXBankDeflag(int bank_id)
     HSD_SynthSFXStopRange(bank_id);
     vpb = HSD_Synth_804C2AE0[bank_id];
     offset = hsd_SynthSFXBankHead[bank_id];
+#ifdef TARGET_PS3
+    while (vpb != NULL) {
+        struct SfxLoadStreamNode* group = (struct SfxLoadStreamNode*) vpb;
+
+        if (group->x10 != offset) {
+            HSD_SynthSFXGroupDataReaddress(vpb, (void*) offset);
+        }
+        offset += group->x14;
+        vpb = SFX_PTR(group->x0);
+    }
+    // The GameCube writes past HSD_Synth_804C2AE0 into the next array, hsd_SynthSFXBank.
+    hsd_SynthSFXBank[bank_id] = (int) offset;
+    return;
+#endif
     while (vpb != NULL) {
         if ((intptr_t) vpb->callback != offset) {
             HSD_SynthSFXGroupDataReaddress(vpb, (void*) offset);
@@ -607,7 +720,11 @@ void dropcallback(void* dropped)
 }
 
 struct foo {
+#ifdef TARGET_PS3
+    u32 next;
+#else
     void* next;
+#endif
     int unk4; // sound ID
     int unk8; // voice count
     int unkC; // audio parameter
@@ -728,7 +845,11 @@ int HSD_Synth_80389334(int sfx_id, u8 vol, u8 vol2, u8 pan, int priority,
             OSRestoreInterrupts(saved_interrupts);
             return sfx_node->x0;
         }
+#ifdef TARGET_PS3
+        sfx_entry = SFX_PTR(sfx_entry->next);
+#else
         sfx_entry = sfx_entry->next;
+#endif
     }
 
     OSRestoreInterrupts(saved_interrupts);

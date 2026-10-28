@@ -1,13 +1,19 @@
 // The GameCube interrupt model on PS3 threads. Disabling interrupts takes one lock, and handlers run
 // only while holding it, so a handler never runs inside a disabled section of any thread.
 #include "intr.h"
+#include "diag.h"
 #include "sync.h"
 
 #include <stdbool.h>
 
 #include <dolphin/os.h>
 
+Ps3Diag ps3_diag;
+
 static PsMutex intr_lock = PS_MUTEX_INIT;
+// Its address differs per thread; ps3_intr_init keeps the main thread's.
+static __thread int thread_marker;
+static int* main_marker;
 // Per thread, as MSR[EE] was saved and restored per thread on the GameCube.
 static __thread bool disabled;
 
@@ -15,6 +21,7 @@ static PsMutex wake_lock = PS_MUTEX_INIT;
 static PsCond wake_cond = PS_COND_INIT;
 static unsigned raised;
 static Ps3IntrHandler handlers[PS3_INTR_COUNT];
+static const char* const source_names[PS3_INTR_COUNT] = { "DVD", "ARAM", "DSP", "AI", "PE token", "PE finish", "VI" };
 
 static unsigned take_raised(void)
 {
@@ -36,7 +43,12 @@ static void run_raised(void)
         int i;
         for (i = 0; i < PS3_INTR_COUNT; i++) {
             if ((bits & (1u << i)) && handlers[i] != NULL) {
+                ps3_diag.intr_site = source_names[i];
+                if (ps3_diag.trace) {
+                    OSReport("intr: %s\n", source_names[i]);
+                }
                 handlers[i]();
+                ps3_diag.intr_site = NULL;
                 // A handler may enable interrupts; the rest still run disabled.
                 OSDisableInterrupts();
             }
@@ -46,11 +58,15 @@ static void run_raised(void)
 
 BOOL OSDisableInterrupts(void)
 {
+    if (&thread_marker == main_marker) {
+        ps3_diag.main_disables++;
+    }
     if (disabled) {
         return FALSE;
     }
     ps_mutex_lock(&intr_lock);
     disabled = true;
+    ps3_diag.intr_owner = &thread_marker == main_marker ? "main" : ps_thread_name() ? ps_thread_name() : "other";
     return TRUE;
 }
 
@@ -64,6 +80,7 @@ BOOL OSEnableInterrupts(void)
         run_raised();
     }
     disabled = false;
+    ps3_diag.intr_owner = NULL;
     ps_mutex_unlock(&intr_lock);
     return FALSE;
 }
@@ -204,7 +221,12 @@ void OSSleepThread(OSThreadQueue* queue)
     u32 seen = *wakeups;
 
     while (*wakeups == seen) {
+        const char* owner = ps3_diag.intr_owner;
+
+        // The wait gives the lock up.
+        ps3_diag.intr_owner = NULL;
         ps_cond_wait(&sleep_cond, &intr_lock);
+        ps3_diag.intr_owner = owner;
     }
     OSRestoreInterrupts(level);
 }
@@ -224,6 +246,7 @@ void ps3_intr_init(void)
 
     if (!started) {
         started = true;
+        main_marker = &thread_marker;
         ps_thread_start(intr_main, NULL, "interrupts");
     }
 }

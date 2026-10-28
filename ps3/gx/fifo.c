@@ -9,6 +9,7 @@
 
 #include <gx_pipe.h>
 
+#include "../os/diag.h"
 #include "../os/sync.h"
 
 // The producer publishes at least this often, so the GP works while the game still writes.
@@ -38,6 +39,8 @@ static PsCond space_cond = PS_COND_INIT;
 static PsCond idle_cond = PS_COND_INIT;
 static int cons_waiting;
 static int prod_waiting;
+static int kicked;
+static void (*idle_work)(void);
 
 static u8* scratch;
 static u32 scratch_size;
@@ -72,9 +75,11 @@ static void wait_consumed(u64 pos)
     }
     ps_mutex_lock(&lock);
     __atomic_store_n(&prod_waiting, 1, __ATOMIC_SEQ_CST);
+    ps3_diag.ring_space_wait = 1;
     while (load(&consumed) < pos) {
         ps_cond_wait(&space_cond, &lock);
     }
+    ps3_diag.ring_space_wait = 0;
     __atomic_store_n(&prod_waiting, 0, __ATOMIC_SEQ_CST);
     ps_mutex_unlock(&lock);
 }
@@ -168,10 +173,22 @@ static u64 wait_published(u64 pos)
     }
     ps_mutex_lock(&lock);
     __atomic_store_n(&cons_waiting, 1, __ATOMIC_SEQ_CST);
+    ps3_diag.gp_wait = 1;
     while ((pub = load(&published)) <= pos) {
+        // Not idle while it runs, for gp_fifo_sync.
+        if (kicked) {
+            kicked = 0;
+            __atomic_store_n(&cons_waiting, 0, __ATOMIC_SEQ_CST);
+            ps_mutex_unlock(&lock);
+            idle_work();
+            ps_mutex_lock(&lock);
+            __atomic_store_n(&cons_waiting, 1, __ATOMIC_SEQ_CST);
+            continue;
+        }
         ps_cond_broadcast(&idle_cond);
         ps_cond_wait(&data_cond, &lock);
     }
+    ps3_diag.gp_wait = 0;
     __atomic_store_n(&cons_waiting, 0, __ATOMIC_SEQ_CST);
     ps_mutex_unlock(&lock);
     return pub;
@@ -243,6 +260,19 @@ const u8* gp_fifo_take_slow(u32 n)
     wrap_reader();
     update_avail(load(&published));
     return scratch;
+}
+
+void gp_fifo_set_idle_work(void (*fn)(void))
+{
+    idle_work = fn;
+}
+
+void gp_fifo_kick(void)
+{
+    ps_mutex_lock(&lock);
+    kicked = idle_work != NULL;
+    ps_cond_signal(&data_cond);
+    ps_mutex_unlock(&lock);
 }
 
 void gp_fifo_sync(void)

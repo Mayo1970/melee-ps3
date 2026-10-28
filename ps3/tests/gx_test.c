@@ -407,13 +407,13 @@ static void test_textures_copies(void)
     GXCopyDisp(xfb, GX_TRUE);
     gp_fifo_sync();
     s = gp_get_state();
-    check(OSPhysicalToCached((s->bp[0x97] & 0x1FFFFF) << 5) == tex, "texmap 3 image", s->bp[0x97], 0);
+    check(OSPhysicalToCached((s->bp[0x97] & 0xFFFFFF) << 5) == tex, "texmap 3 image", s->bp[0x97], 0);
     check_eq("texmap 3 size", s->bp[0x8B] & 0xFFFFF, (63 << 10) | 63);
-    check(OSPhysicalToCached((s->bp[0x64] & 0x1FFFFF) << 5) == lut, "TLUT address", s->bp[0x64], 0);
+    check(OSPhysicalToCached((s->bp[0x64] & 0xFFFFFF) << 5) == lut, "TLUT address", s->bp[0x64], 0);
     check_eq("TLUT loads", rec.tlut_loads, 1);
     check(rec.tex_invalidates >= 1, "texture invalidates", rec.tex_invalidates, 1);
     check_eq("EFB copies", rec.efb_copies, 1);
-    check(OSPhysicalToCached((s->bp[0x4B] & 0x1FFFFF) << 5) == xfb, "XFB address", s->bp[0x4B], 0);
+    check(OSPhysicalToCached((s->bp[0x4B] & 0xFFFFFF) << 5) == xfb, "XFB address", s->bp[0x4B], 0);
     check_eq("copy size", s->bp[0x4A], (479 << 10) | 639);
 }
 

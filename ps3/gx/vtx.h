@@ -1,11 +1,12 @@
-// GX vertices to RSX vertex attributes. Each component keeps its GX type where the RSX has one (f32, s16, u8),
-// so the vertex program dequantizes; indexed attributes are fetched from their arrays.
+// GX vertices to RSX vertex attributes. Each component keeps its GX type where the RSX has one (f32, s16; u8
+// and s8 as s16), so the vertex program dequantizes; indexed attributes are fetched from their arrays.
 #ifndef PS3_GX_VTX_H
 #define PS3_GX_VTX_H
 
 #include "gp.h"
 
 // RSX vertex data types. PSL1GHT names only F32 and U8; 5 and 7 are the NV40's s16 and u8, unnormalized.
+// Type 7 only with 4 components (nouveau's NV30 table): a 2-component one stopped the RSX in Melee run 12.
 #define VTX_F32 2
 #define VTX_U8_NORM 4
 #define VTX_S16 5

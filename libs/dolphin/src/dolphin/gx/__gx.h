@@ -11,6 +11,14 @@
 #define __sync() __asm__ volatile("sync" ::: "memory")
 #endif
 
+// Address fields in 32-byte units: 21 bits for the GameCube's 64 MB. TARGET_PS3: the 24 bits the registers
+// have room for, as the port's physical addresses span more (ps3/os/mem.h).
+#ifdef TARGET_PS3
+#define GX_ADDR_BITS 24
+#else
+#define GX_ADDR_BITS 21
+#endif
+
 #define GX_WRITE_U8(ub) GX_WG(u8, (u8) (ub))
 
 #define GX_WRITE_U16(us) GX_WG(u16, (u16) (us))

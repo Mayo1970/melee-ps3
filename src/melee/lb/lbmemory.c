@@ -47,7 +47,13 @@ Handle* lbMemory_80014E24(void* arenaLo, void* arenaHi)
     Handle* h;
     HSD_ASSERT(0x7B, _p(free_heap));
 
+#ifdef TARGET_PS3
+    // ARAM addresses end at ARGetSize(); PS3 main memory is below 0x80000000
+    // too.
+    if ((uintptr_t) arenaLo < ARGetSize() && (uintptr_t) arenaHi <= ARGetSize())
+#else
     if ((uintptr_t) arenaLo < 0x80000000U && (uintptr_t) arenaHi < 0x80000000U)
+#endif
     {
 #ifdef MUST_MATCH
         // The retail assert string spells the u32 casts.
@@ -256,7 +262,11 @@ static void lbMemory_80015320(int arg0, uintptr_t arg1, void* arg2,
             block->addr = current;
             _p(compact_cursor) = (uintptr_t) block->addr + block->size;
 
+#ifdef TARGET_PS3
+            if ((uintptr_t) block->addr < ARGetSize()) {
+#else
             if ((uintptr_t) block->addr < 0x80000000U) {
+#endif
                 HSD_DevComRequest(0, (uintptr_t) src, (uintptr_t) current,
                                   OSRoundUp32B(block->size), 0x1B, 1,
                                   lbMemory_80015320, (uintptr_t) block->next);

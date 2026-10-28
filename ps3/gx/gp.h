@@ -79,11 +79,16 @@ typedef struct GpBackend {
     void (*tex_invalidate)(GpState* s);
     // A draw done or token follows: the work so far must be finished.
     void (*finish)(GpState* s);
+    // Show the display copy made to physical address xfb (gp_post_present).
+    void (*present)(GpState* s, u32 xfb);
 } GpBackend;
 
 // Starts the GP thread over a ring of ring_size bytes (a power of two). backend lives until exit.
 void gp_init(const GpBackend* backend, u32 ring_size);
 u32 gp_vertex_size(GpState* s, int vat);
+// Any thread: the GP thread presents xfb between two commands, or while it waits. A later post replaces one
+// not yet run.
+void gp_post_present(u32 xfb);
 // The registers, for tests and logs: read them only while the GP thread is idle (after gp_fifo_sync).
 GpState* gp_get_state(void);
 

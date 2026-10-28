@@ -232,7 +232,7 @@ void GXInitTexObj(GXTexObj* obj, void* image_ptr, u16 width, u16 height,
 #else
     imageBase = (u32) ((u32) image_ptr >> 5) & 0x01FFFFFF;
 #endif
-    SET_REG_FIELD(0x24A, t->image3, 21, 0, imageBase);
+    SET_REG_FIELD(0x24A, t->image3, GX_ADDR_BITS, 0, imageBase);
     switch (format & 0xF) {
     case 0:
     case 8:
@@ -352,7 +352,7 @@ void GXInitTexObjData(GXTexObj* obj, void* image_ptr)
 #else
     imageBase = ((u32) image_ptr >> 5) & 0x01FFFFFF;
 #endif
-    SET_REG_FIELD(0x301, t->image3, 21, 0, imageBase);
+    SET_REG_FIELD(0x301, t->image3, GX_ADDR_BITS, 0, imageBase);
 }
 
 void GXInitTexObjWrapMode(GXTexObj* obj, GXTexWrapMode sm, GXTexWrapMode tm)
@@ -636,7 +636,7 @@ void GXInitTlutObj(GXTlutObj* tlut_obj, void* lut, GXTlutFmt fmt,
     t->tlut = 0;
     SET_REG_FIELD(0x45B, t->tlut, 2, 10, fmt);
 #ifdef TARGET_PS3
-    SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, OSCachedToPhysical(lut) >> 5);
+    SET_REG_FIELD(0x45C, t->loadTlut0, GX_ADDR_BITS, 0, OSCachedToPhysical(lut) >> 5);
 #else
     SET_REG_FIELD(0x45C, t->loadTlut0, 21, 0, ((u32) lut & 0x3FFFFFFF) >> 5);
 #endif

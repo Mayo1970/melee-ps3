@@ -11,12 +11,18 @@ struct DebugContext {
 
 static ReportCallback reportCallback;
 static PanicCallback panicCallback;
+#ifndef TARGET_PS3
 static __io_proc logFunc;
+#endif
 
 #ifdef MUST_MATCH
 #pragma peephole off
 #endif
 
+#ifdef TARGET_PS3
+// newlib's stdout has no write hook; OSReport goes to the port's log.
+void HSD_LogInit(void) {}
+#else
 static int report_func(__file_handle arg0, unsigned char* arg1, size_t* arg2,
                        __idle_proc arg3)
 {
@@ -35,6 +41,7 @@ void HSD_LogInit(void)
     stdout->write_proc = report_func;
     stdout->state.error = 0;
 }
+#endif
 
 void __assert(const char* str, u32 arg1, const char* arg2)
 {

@@ -52,7 +52,7 @@ CFLAGS := -std=gnu11 -O2 $(ARCH) -ffunction-sections -fdata-sections -fno-strict
           -DTARGET_PC -DTARGET_PS3 -Iinclude -I$(ROOT)/src -I$(ROOT)/libs/doldecomp/include -I$(ROOT)/libs/dolphin/include \
           $(EXTRA_CFLAGS)
 
-.PHONY: check report toc dvdtest audiotest gxtest scenetest progtest gxeboot spu clean
+.PHONY: check report toc dvdtest audiotest gxtest scenetest progtest dattest gxeboot spu game clean
 check: $(OBJS)
 
 $(BUILD)/ps3/%.o: CFLAGS += $(PORT_INCS)
@@ -150,6 +150,101 @@ $(BUILD)/spu/ax_spu.elf: $(SPU_SRCS) $(wildcard $(ROOT)/ps3/audio/*.h)
 	@mkdir -p $(dir $@)
 	$(SPU_CC) $(SPU_CFLAGS) -Wl,--gc-sections -s $(SPU_SRCS) -L$(PS3DEV)/spu/lib -lsputhread -o $@
 	@$(PS3DEV)/spu/bin/spu-size $@
+
+# Melee as an EBOOT (ppu toolchain): the game, the SDK libraries the port builds, the port, the SPU program and
+# the native .dat readers over the schema from tools/datgen. Game and schema objects get -mminimal-toc.
+GAME_TITLE := Melee
+GAME_DIR := $(BUILD)/game
+DOL := $(ROOT)/orig/GALE01/sys/main.dol
+DAT_SCHEMA := ps3/build/datgen/schema
+GAME_SRCS := $(sort $(shell cd $(ROOT) && find src/melee src/sysdolphin -name '*.c')) src/MSL/float.c
+GAME_SDK_SRCS := $(SDK_AUDIO_SRCS) $(SDK_GX_SRCS) libs/dolphin/src/dolphin/os/OSArena.c \
+                 libs/dolphin/src/dolphin/mtx/mtx44.c libs/dolphin/src/dolphin/pad/PadClamp.c
+GAME_PORT_SRCS := $(addprefix ps3/,dvd/dvd.c os/intr.c os/globals.c os/os.c os/ostime.c os/heap.c \
+                  os/alarm.c os/thread.c os/mem.c os/ppcarch.c audio/sdk_audio.c gx/fifo.c gx/gp.c sdk/mtx.c \
+                  sdk/card.c sdk/stubs.c pad/pad.c vi/vi.c dat/pool.c dat/trace.c) $(GX_RSX_SRCS) $(EXTRA_SRCS)
+# The PSL1GHT side, which no SDK header meets.
+GAME_CELL_SRCS := $(addprefix ps3/,os/sync_cell.c os/sys_cell.c os/udplog_cell.c audio/audio_cell.c \
+                  gx/rsxdev_cell.c pad/pad_cell.c)
+DAT_SRCS := $(addprefix tools/dat-cli/native/src/,archive.c reader.c hsd.c) ps3/dat/lookup.c \
+            $(sort $(shell cd $(ROOT) && find $(DAT_SCHEMA) -name '*.c' 2> /dev/null))
+# Their allocations come from the .dat pool; GeoTypes.h stands in for Aurora's.
+DAT_FLAGS := -include $(ROOT)/ps3/dat/redirect.h -I$(ROOT)/tools/dat-cli/native/include -I$(ROOT)/$(DAT_SCHEMA) \
+             -I$(ROOT)/ps3/dat/include -DVERSION_GALE01 -DBUILD_VERSION=0
+GAME_OBJ = $(patsubst %.c,$(GAME_DIR)/%.o,$(1))
+GAME_OBJS := $(call GAME_OBJ,$(GAME_SRCS) $(GAME_SDK_SRCS) $(GAME_PORT_SRCS) $(GAME_CELL_SRCS) $(DAT_SRCS)) \
+             $(GAME_DIR)/ps3/os/setjmp.o $(GAME_DIR)/ax_spu_elf.o
+# Untyped lookups become typed ones (ps3/dat/lookup.c); the trace logs parses and typed lookups (step 3).
+GAME_WRAP := -Wl,--wrap=HSD_ArchiveParse,--wrap=HSD_ArchiveGetPublicAddress,--wrap=HSD_ArchiveGetPublicTyped
+GAME_LIBS := -L$(PS3DEV)/ppu/lib -lrsx -lgcm_sys -lio -laudio -lsysutil -lsysmodule -lnet -llv2 -lrt -lm
+FONT_INCS := $(addprefix $(GAME_DIR)/include/sysdolphin/baselib/,debug_font.inc sislib_font.inc)
+
+$(GAME_DIR)/src/%.o: GAME_FLAGS := -mminimal-toc
+$(call GAME_OBJ,$(GAME_CELL_SRCS)): GAME_FLAGS := $(PORT_INCS)
+$(call GAME_OBJ,$(DAT_SRCS)): GAME_FLAGS := -mminimal-toc $(DAT_FLAGS)
+
+# -fno-common: uninitialized globals get their own .bss sections too, which melee.ld aligns to 32 bytes.
+$(GAME_DIR)/%.o: $(ROOT)/%.c
+	@mkdir -p $(dir $@)
+	@$(CC) $(CFLAGS) -fno-common -I$(GAME_DIR)/include $(GAME_FLAGS) -MMD -MP -c $< -o $@ 2> $@.log || \
+	    (cat $@.log; false)
+
+$(GAME_DIR)/ps3/os/setjmp.o: $(ROOT)/ps3/os/setjmp.S
+	@mkdir -p $(dir $@)
+	$(CC) $(ARCH) -c $< -o $@
+
+$(GAME_DIR)/ax_spu_elf.o: $(BUILD)/spu/ax_spu.elf
+	@mkdir -p $(GAME_DIR)
+	cd $(dir $<) && bin2s -a 128 ax_spu.elf > $(CURDIR)/$(GAME_DIR)/ax_spu_elf.S
+	$(CC) $(ARCH) -x assembler-with-cpp -c $(GAME_DIR)/ax_spu_elf.S -o $@
+
+# The two fonts the game reads from its DOL's data, as the matching build extracts them (config.yml).
+$(GAME_DIR)/include/sysdolphin/baselib/debug_font.inc: $(DOL)
+	@mkdir -p $(dir $@)
+	python3 tools/dol_inc.py $< 0x804088B8 0x1C00 $@
+$(GAME_DIR)/include/sysdolphin/baselib/sislib_font.inc: $(DOL)
+	@mkdir -p $(dir $@)
+	python3 tools/dol_inc.py $< 0x8040CD40 0x23E00 $@
+$(call GAME_OBJ,src/sysdolphin/baselib/hsd_3915.c src/sysdolphin/baselib/sislib_font.c): $(FONT_INCS)
+
+-include $(GAME_OBJS:.o=.d)
+
+game: $(GAME_DIR)/melee.pkg
+$(GAME_DIR)/melee.elf: $(GAME_OBJS) melee.ld
+	$(CC) $(ARCH) -T melee.ld $(GAME_WRAP) -Wl,--no-multi-toc -Wl,--gc-sections -Wl,-Map,$(GAME_DIR)/melee.map \
+	    $(EXTRA_LDFLAGS) $(GAME_OBJS) $(GAME_LIBS) -o $@
+	@echo "r2off stubs: $$($(PREFIX)nm $@ | grep -c r2off)"
+	@$(PREFIX)readelf -SW $@ | grep -E ' \.(got|toc|text|rodata|data|bss) '
+	@$(PREFIX)readelf -lW $@ | grep LOAD
+
+$(GAME_DIR)/melee.pkg: $(GAME_DIR)/melee.elf
+	$(PREFIX)strip $< -o $(GAME_DIR)/melee.strip.elf
+	sprxlinker $(GAME_DIR)/melee.strip.elf
+	fself $(GAME_DIR)/melee.strip.elf $(GAME_DIR)/EBOOT.BIN
+	@mkdir -p $(GAME_DIR)/pkg/USRDIR
+	cp $(PS3DEV)/bin/ICON0.PNG $(GAME_DIR)/pkg/ICON0.PNG
+	make_self_npdrm $(GAME_DIR)/melee.strip.elf $(GAME_DIR)/pkg/USRDIR/EBOOT.BIN $(EBOOT_CONTENTID) > /dev/null
+	sfo --title "$(GAME_TITLE)" --appid "$(EBOOT_APPID)" -f $(PS3DEV)/bin/sfo.xml $(GAME_DIR)/pkg/PARAM.SFO
+	pkg --contentid $(EBOOT_CONTENTID) $(GAME_DIR)/pkg/ $@ > /dev/null
+	@ls -l $(GAME_DIR)/EBOOT.BIN $@
+
+# The native .dat readers as the EBOOT builds them, under upstream's HSD test over the game's files
+# (TOOLCHAIN=linux): docker run ... ppc64-qemu-test:2 qemu-ppc64 build/linux/dattest/dat_test ../orig/GALE01/files
+DAT_TEST_DIR := $(BUILD)/dattest
+DAT_TEST_SRCS := $(DAT_SRCS) tools/dat-cli/native/tests/hsd.c $(addprefix ps3/,tests/dat_test_init.c tests/gx_stubs.c \
+                 tests/udplog_host.c dat/pool.c os/heap.c os/mem.c os/sync_host.c)
+DAT_TEST_OBJS := $(patsubst %.c,$(DAT_TEST_DIR)/%.o,$(DAT_TEST_SRCS))
+$(patsubst %.c,$(DAT_TEST_DIR)/%.o,$(DAT_SRCS)): TEST_FLAGS := $(DAT_FLAGS)
+$(DAT_TEST_DIR)/tools/dat-cli/native/tests/hsd.o: TEST_FLAGS := -I$(ROOT)/tools/dat-cli/native/include \
+    -I$(ROOT)/$(DAT_SCHEMA) -I$(ROOT)/ps3/dat/include -DVERSION_GALE01 -DBUILD_VERSION=0
+
+$(DAT_TEST_DIR)/%.o: $(ROOT)/%.c
+	@mkdir -p $(dir $@)
+	@$(CC) $(CFLAGS) $(TEST_FLAGS) -c $< -o $@ 2> $@.log || (cat $@.log; false)
+
+dattest: $(DAT_TEST_DIR)/dat_test
+$(DAT_TEST_DIR)/dat_test: $(DAT_TEST_OBJS)
+	$(CC) $(CFLAGS) -static -o $@ $(DAT_TEST_OBJS) -lpthread -lm
 
 report:
 	@sh tools/report.sh $(BUILD)

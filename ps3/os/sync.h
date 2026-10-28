@@ -22,9 +22,13 @@ void ps_mutex_lock(PsMutex* m);
 void ps_mutex_unlock(PsMutex* m);
 // The caller holds m; it holds it again on return.
 void ps_cond_wait(PsCond* c, PsMutex* m);
+// As ps_cond_wait, for at most usec microseconds; a wakeup may also come early, so recheck the condition.
+void ps_cond_timedwait(PsCond* c, PsMutex* m, unsigned long long usec);
 void ps_cond_signal(PsCond* c);
 void ps_cond_broadcast(PsCond* c);
 // A detached thread running fn(arg). Returns 0, or an error code.
 int ps_thread_start(void (*fn)(void* arg), void* arg, const char* name);
+// The name ps_thread_start gave the calling thread; NULL for other threads.
+const char* ps_thread_name(void);
 
 #endif

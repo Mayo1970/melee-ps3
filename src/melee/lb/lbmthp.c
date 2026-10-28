@@ -242,7 +242,12 @@ size_t fn_8001EBF0(THPDecComp* data)
     data->unk_AA = data->height;
     data->unk_AC = 0;
 
+#ifdef TARGET_PS3
+    // frame_buffers holds unk_104 pointers, 8 bytes here.
+    size += ALIGN_32(data->unk_104 * sizeof(THPFrameBuffer*));
+#else
     size += ALIGN_32(data->unk_104 * 4);
+#endif
     size += ALIGN_32(data->unk_40 * 4);
 
     return size;
@@ -266,7 +271,11 @@ static void fn_8001ECF4(THPDecComp* data, void* buf)
     count = data->unk_104;
     data->unk_64 = 0;
     uv_size = (width * height) >> 2U;
+#ifdef TARGET_PS3
+    var_r29 = (u8*) buf + (((count * sizeof(THPFrameBuffer*)) + 0x1F) & ~(size_t) 0x1F);
+#else
     var_r29 = (u8*) buf + (((count * 4) + 0x1F) & 0xFFFFFFE0);
+#endif
     if ((data->unk_6C != 0) && (data->unk_11C != 0)) {
         var_r24 = data->first_frame_size;
         csizep = (u8*) &data->first_frame_size;

@@ -62,7 +62,8 @@ void ps_mutex_unlock(PsMutex* m)
     sysLwMutexUnlock((sys_lwmutex_t*) m->storage);
 }
 
-void ps_cond_wait(PsCond* c, PsMutex* m)
+// timeout in microseconds, 0 for none.
+static void cond_wait(PsCond* c, PsMutex* m, u64 timeout)
 {
     sys_lwcond_t* lw = (sys_lwcond_t*) c->storage;
 
@@ -76,7 +77,17 @@ void ps_cond_wait(PsCond* c, PsMutex* m)
         }
         __atomic_store_n(&c->state, 2, __ATOMIC_RELEASE);
     }
-    sysLwCondWait(lw, 0);
+    sysLwCondWait(lw, timeout);
+}
+
+void ps_cond_wait(PsCond* c, PsMutex* m)
+{
+    cond_wait(c, m, 0);
+}
+
+void ps_cond_timedwait(PsCond* c, PsMutex* m, unsigned long long usec)
+{
+    cond_wait(c, m, usec != 0 ? usec : 1);
 }
 
 void ps_cond_signal(PsCond* c)
@@ -97,13 +108,22 @@ void ps_cond_broadcast(PsCond* c)
 typedef struct Start {
     void (*fn)(void*);
     void* arg;
+    const char* name;
 } Start;
+
+static __thread const char* thread_name;
+
+const char* ps_thread_name(void)
+{
+    return thread_name;
+}
 
 static void entry(void* arg)
 {
     Start s = *(Start*) arg;
 
     free(arg);
+    thread_name = s.name;
     s.fn(s.arg);
     sysThreadExit(0);
 }
@@ -120,6 +140,7 @@ int ps_thread_start(void (*fn)(void* arg), void* arg, const char* name)
     }
     s->fn = fn;
     s->arg = arg;
+    s->name = name;
     strncpy(buf, name, sizeof(buf) - 1);
     buf[sizeof(buf) - 1] = 0;
     err = sysThreadCreate(&tid, entry, s, THREAD_PRIORITY, THREAD_STACK_SIZE, 0, buf);

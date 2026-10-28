@@ -624,7 +624,12 @@ int HSD_AudioSFXStartParam(int sound_id, u8 volume, u8 pan, int track,
     }
 
     v->x16 = sound_id;
+#ifdef TARGET_PS3
+    // The file's table holds 32-bit addresses (relocated in AXDriver_8038DA70); pointers are 64-bit here.
+    v->cmd_stream = (u32*) (uintptr_t) ((u32*) AXDriver_804D77BC)[sample_idx];
+#else
     v->cmd_stream = AXDriver_804D77BC[sample_idx];
+#endif
     v->x1A = 0xFF;
     v->volume = volume;
     v->x1C = 0x80;

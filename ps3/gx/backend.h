@@ -23,5 +23,7 @@ typedef struct GxRsxStats {
     u32 unsupported; // bit per feature the backend does not draw (see backend.c)
 } GxRsxStats;
 void gx_rsx_get_stats(GxRsxStats* out);
+// Logs the first draw the RSX has not finished, with its programs and textures (step 3 diagnostics).
+void gx_rsx_debug_hang(void);
 
 #endif

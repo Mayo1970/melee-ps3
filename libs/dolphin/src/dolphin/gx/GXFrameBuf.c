@@ -728,7 +728,7 @@ void GXCopyDisp(void* dest, GXBool clear)
     phyAddr = (u32) dest & 0x3FFFFFFF;
 #endif
     reg = 0;
-    SET_REG_FIELD(0x5D8, reg, 21, 0, phyAddr >> 5);
+    SET_REG_FIELD(0x5D8, reg, GX_ADDR_BITS, 0, phyAddr >> 5);
     SET_REG_FIELD(0x5D9, reg, 8, 24, 0x4B);
     GX_WRITE_RAS_REG(reg);
 
@@ -795,7 +795,7 @@ void GXCopyTex(void* dest, GXBool clear)
     phyAddr = (u32) dest & 0x3FFFFFFF;
 #endif
     reg = 0;
-    SET_REG_FIELD(0x635, reg, 21, 0, phyAddr >> 5);
+    SET_REG_FIELD(0x635, reg, GX_ADDR_BITS, 0, phyAddr >> 5);
     SET_REG_FIELD(0x636, reg, 8, 24, 0x4B);
     GX_WRITE_RAS_REG(reg);
 

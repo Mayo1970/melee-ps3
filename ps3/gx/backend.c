@@ -47,7 +47,7 @@ typedef struct FpEntry {
     TevConfig cfg;
     void* mem;
     u32 offset;
-    u16 regs, texcoords, texcoords4;
+    u16 regs, texcoords, texcoords4, words;
 } FpEntry;
 
 typedef struct VpEntry {
@@ -125,6 +125,21 @@ static u32 frame;
 static Xfb xfbs[XFBS];
 static int xfb_next;
 
+// Step 3 diagnostics: the last RSX draws. The RSX marks each one done, so a hang names its draw.
+typedef struct DrawRecord {
+    u32 seq;
+    const char* kind;
+    u32 prim, count, attrs, out_size;
+    u8 attr[16][3]; // offset, count, type
+    const VpEntry* vp;
+    const FpEntry* fp;
+    u32 target, target_w, target_h, tex_on;
+    DevTexture tex[8];
+} DrawRecord;
+
+static DrawRecord records[16];
+static u32 draw_seq;
+
 static void unsupported(u32 bit, const char* what)
 {
     if (!(stats.unsupported & bit)) {
@@ -190,6 +205,7 @@ static FpEntry* fp_build(FpEntry* e, int slots)
         return NULL;
     }
     e->regs = (u16) fp_num_regs(&fp_scratch);
+    e->words = (u16) words;
     e->texcoords = fp_scratch.texcoords;
     e->texcoords4 = fp_scratch.texcoords4;
     e->used = true;
@@ -812,7 +828,7 @@ static const TexEntry* tex_get(const GpState* s, int unit, DevTexture* d)
     };
     static const u8 wrap[4] = { DEV_WRAP_CLAMP, DEV_WRAP_REPEAT, DEV_WRAP_MIRROR, DEV_WRAP_CLAMP };
     u32 mode0 = s->bp[ids[0][unit]], mode1 = s->bp[ids[1][unit]], image0 = s->bp[ids[2][unit]];
-    u32 addr = (s->bp[ids[3][unit]] & 0x1FFFFF) << 5, tlut_reg = s->bp[ids[4][unit]];
+    u32 addr = (s->bp[ids[3][unit]] & 0xFFFFFF) << 5, tlut_reg = s->bp[ids[4][unit]];
     u32 w = (image0 & 0x3FF) + 1, h = ((image0 >> 10) & 0x3FF) + 1, fmt = (image0 >> 20) & 0xF;
     u32 minf = (mode0 >> 5) & 7, maxlod = (mode1 >> 8) & 0xFF, levels = 1, hash, tlut_hash = 0, tlut_fmt = 0;
     u32 tlut_entries = 0, i;
@@ -958,6 +974,21 @@ static u32 prim_type(int prim)
     return types[prim & 7];
 }
 
+static DrawRecord* record_draw(const char* kind, u32 prim, u32 count, const DevTarget* target)
+{
+    DrawRecord* r = &records[++draw_seq % 16];
+
+    memset(r, 0, sizeof(*r));
+    r->seq = draw_seq;
+    r->kind = kind;
+    r->prim = prim;
+    r->count = count;
+    r->target = target->color_offset;
+    r->target_w = target->width;
+    r->target_h = target->height;
+    return r;
+}
+
 static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
 {
     static TevConfig cfg;
@@ -965,6 +996,7 @@ static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
     VtxLayout* l = get_layout(s, vat);
     const FpEntry* f;
     const VpEntry* v;
+    DrawRecord* r;
     XfKey key;
     u16 tev_mask;
     u32 io, i, numtexgens = s->xf_regs[0x3F] & 0xF;
@@ -1007,7 +1039,24 @@ static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
         ps3_log("backend: draw %u prim %d vat %d count %u attrs %#x size %u vp %u fp %u\n", stats.draws, prim,
                 vat, count, l->attrs, l->out_size, v->n, f->offset);
     }
+    r = record_draw("GX draw", prim_type(prim), count, &efb_target);
+    r->attrs = l->attrs;
+    r->out_size = l->out_size;
+    for (i = 0; i < 16; i++) {
+        r->attr[i][0] = l->attr[i].offset;
+        r->attr[i][1] = l->attr[i].count;
+        r->attr[i][2] = l->attr[i].type;
+    }
+    r->vp = v;
+    r->fp = f;
+    for (i = 0; i < 8; i++) {
+        if (bound[i] != NULL) {
+            r->tex_on |= 1u << i;
+            r->tex[i] = tex_memo[i].d;
+        }
+    }
     dev_draw(prim_type(prim), count);
+    dev_mark(r->seq);
 }
 
 // EFB copies
@@ -1126,6 +1175,7 @@ static void copy_pass(const DevTarget* dst, u32 sx, u32 sy, u32 sw, u32 sh, cons
     float v0 = (float) sy / EFB_HEIGHT, v1 = (float) (sy + sh) / EFB_HEIGHT;
     const float tc[4][2] = { { u0, v0 }, { u1, v0 }, { u1, v1 }, { u0, v1 } };
     CopyVertex* q;
+    DrawRecord* r;
     DevTexture t;
     u32 io;
     int i;
@@ -1170,7 +1220,18 @@ static void copy_pass(const DevTarget* dst, u32 sx, u32 sy, u32 sw, u32 sh, cons
     }
     dev_attrib(VA_POS, io, sizeof(CopyVertex), 4, VTX_F32);
     dev_attrib(VA_TEX0, io + 16, sizeof(CopyVertex), 2, VTX_F32);
+    r = record_draw("EFB copy", DEV_PRIM_QUADS, 4, dst);
+    r->attrs = (1u << VA_POS) | (1u << VA_TEX0);
+    r->out_size = sizeof(CopyVertex);
+    r->attr[VA_POS][1] = 4;
+    r->attr[VA_TEX0][0] = 16;
+    r->attr[VA_TEX0][1] = 2;
+    r->vp = &copy_vp;
+    r->fp = fp;
+    r->tex_on = 1;
+    r->tex[0] = t;
     dev_draw(DEV_PRIM_QUADS, 4);
+    dev_mark(r->seq);
     // Later draws may sample dst.
     dev_barrier();
 }
@@ -1201,7 +1262,7 @@ static void efb_copy(GpState* s)
 {
     u32 v = s->bp[BP_EFB_COPY], tl = s->bp[0x49], wh = s->bp[0x4A];
     u32 sx = tl & 0x3FF, sy = (tl >> 10) & 0x3FF, sw = (wh & 0x3FF) + 1, sh = ((wh >> 10) & 0x3FF) + 1;
-    u32 addr = (s->bp[0x4B] & 0x1FFFFF) << 5;
+    u32 addr = (s->bp[0x4B] & 0xFFFFFF) << 5;
 
     stats.efb_copies++;
     if (trace_left != 0) {
@@ -1294,7 +1355,7 @@ static void efb_copy(GpState* s)
 
 static void tlut_load(GpState* s)
 {
-    u32 addr = (s->bp[0x64] & 0x1FFFFF) << 5, t = s->bp[BP_LOAD_TLUT1];
+    u32 addr = (s->bp[0x64] & 0xFFFFFF) << 5, t = s->bp[BP_LOAD_TLUT1];
     u32 off = (t & 0x3FF) << 9, bytes = ((t >> 10) & 0x7FF) << 5;
     const u8* src = OSPhysicalToCached(addr);
 
@@ -1327,7 +1388,12 @@ static void finish(GpState* s)
     frame++;
 }
 
-static const GpBackend backend = { draw, efb_copy, tlut_load, tex_invalidate, finish };
+static void present(GpState* s, u32 xfb)
+{
+    gx_rsx_present(xfb);
+}
+
+static const GpBackend backend = { draw, efb_copy, tlut_load, tex_invalidate, finish, present };
 
 const GpBackend* gx_rsx_backend(void)
 {
@@ -1399,7 +1465,13 @@ void gx_rsx_present(u32 xfb)
     for (i = 0; i < XFBS; i++) {
         if (xfbs[i].mem != NULL && xfbs[i].addr == xfb) {
             dev_barrier();
+#ifdef PS3_DUMP_FRAMES
+            if ((stats.presents + 1) % PS3_DUMP_FRAMES == 0 && stats.presents < 6 * PS3_DUMP_FRAMES) {
+                dev_debug_dump("xfb", stats.presents + 1, xfbs[i].mem, EFB_PITCH, xfbs[i].width, xfbs[i].height);
+            }
+#endif
             dev_present(xfbs[i].offset, EFB_PITCH, xfbs[i].width, xfbs[i].height);
+            dev_mark(record_draw("present", DEV_PRIM_QUADS, 4, &(DevTarget){ xfbs[i].offset })->seq);
             stats.presents++;
             // The present pass leaves its own state on the RSX.
             efb_bound = false;
@@ -1415,4 +1487,66 @@ void gx_rsx_present(u32 xfb)
 void gx_rsx_get_stats(GxRsxStats* out)
 {
     *out = stats;
+}
+
+void gx_rsx_debug_hang(void)
+{
+    u32 done = dev_marked(), i;
+    const DrawRecord* r = &records[(done + 1) % 16];
+
+    if (r->seq != done + 1) {
+        ps3_log("backend: the RSX finished draw %u of %u; the next one is not kept\n", done, draw_seq);
+        return;
+    }
+    ps3_log("backend: the RSX finished draw %u of %u; draw %u is a %s: prim %u, %u vertices of %u bytes, "
+            "attributes %#x, target %08x %ux%u\n",
+            done, draw_seq, r->seq, r->kind, r->prim, r->count, r->out_size, r->attrs, r->target, r->target_w,
+            r->target_h);
+    for (i = 0; i < 16; i++) {
+        if ((r->attrs >> i) & 1) {
+            ps3_log("backend:  attribute %u: offset %u, %u of type %u\n", i, r->attr[i][0], r->attr[i][1],
+                    r->attr[i][2]);
+        }
+    }
+    for (i = 0; i < 8; i++) {
+        const DevTexture* t = &r->tex[i];
+
+        if ((r->tex_on >> i) & 1) {
+            ps3_log("backend:  texture %u: %08x %ux%u, pitch %u, %u levels, swizzled %u, wrap %u %u, filter %u %u, "
+                    "lod %u to %u, bias %d\n",
+                    i, t->offset, t->width, t->height, t->pitch, t->levels, t->swizzled, t->wrap_s, t->wrap_t,
+                    t->min_filter, t->mag_filter, t->min_lod, t->max_lod, t->lod_bias);
+        }
+    }
+    if (r->fp != NULL) {
+        const TevConfig* c = &r->fp->cfg;
+        // Local memory: slow to read on the PPE, and the program stays where the draw used it.
+        const volatile u32* w = r->fp->mem;
+
+        ps3_log("backend:  fragment program at %08x: %u words, %u registers, texcoords %#x (%#x with 4), TEV %u "
+                "stages, fog %u, konst inputs %d %d %d %d, register inputs %d %d %d %d\n",
+                r->fp->offset, r->fp->words, r->fp->regs, r->fp->texcoords, r->fp->texcoords4, c->nstages, c->fog,
+                c->kin[0], c->kin[1], c->kin[2], c->kin[3], c->rin[0], c->rin[1], c->rin[2], c->rin[3]);
+        for (i = 0; i < c->nstages; i++) {
+            const TevStage* s = &c->st[i];
+
+            ps3_log("backend:  stage %u: tex %d coord %u proj %u ras %u konst %u %u; colour %u %u %u %u op %u "
+                    "bias %u scale %u clamp %u dest %u; alpha %u %u %u %u op %u bias %u scale %u clamp %u dest %u\n",
+                    i, s->tex, s->texcoord, s->proj, s->ras, s->kcsel, s->kasel, s->col.a, s->col.b, s->col.c,
+                    s->col.d, s->col.op, s->col.bias, s->col.scale, s->col.clamp, s->col.dest, s->alp.a, s->alp.b,
+                    s->alp.c, s->alp.d, s->alp.op, s->alp.bias, s->alp.scale, s->alp.clamp, s->alp.dest);
+        }
+        for (i = 0; i < r->fp->words; i += 8) {
+            ps3_log("backend:  fp %3u: %08x %08x %08x %08x %08x %08x %08x %08x\n", i, w[i], w[i + 1], w[i + 2],
+                    w[i + 3], w[i + 4], w[i + 5], w[i + 6], w[i + 7]);
+        }
+    }
+    if (r->vp != NULL) {
+        ps3_log("backend:  vertex program: %u instructions, inputs %#x, outputs %#x, %u registers\n", r->vp->n,
+                r->vp->inputs, r->vp->outputs, r->vp->regs);
+        for (i = 0; i < r->vp->n; i++) {
+            ps3_log("backend:  vp %3u: %08x %08x %08x %08x\n", i, r->vp->ucode[i][0], r->vp->ucode[i][1],
+                    r->vp->ucode[i][2], r->vp->ucode[i][3]);
+        }
+    }
 }

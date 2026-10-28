@@ -96,5 +96,19 @@ void dev_set_present_programs(const uint32_t (*vp)[4], uint32_t vp_n, uint32_t v
                               uint32_t fp_offset, uint32_t fp_regs, uint16_t fp_texcoords);
 // Shows the A8R8G8B8 rectangle at local src (w x h, pitch bytes) on the screen at 4:3, and flips.
 void dev_present(uint32_t src_offset, uint32_t src_pitch, uint32_t w, uint32_t h);
+// fn runs on each vertical blank of the display, on a system thread. Call after dev_init.
+void dev_set_vblank(void (*fn)(void));
+// The flips, the RSX's GET and PUT and the fence labels, as text (step 3 diagnostics).
+void dev_debug_state(char* buf, unsigned size);
+// Logs the 512 bytes of commands before GET once, when GET has not moved since the last call and differs from PUT.
+// Returns true on that call.
+bool dev_debug_dump_stall(void);
+// The RSX writes n to the draw label once the work queued before it is done (step 3 diagnostics).
+void dev_mark(uint32_t n);
+uint32_t dev_marked(void);
+#ifdef PS3_DUMP_FRAMES
+// RPCS3 builds only: waits for the RSX, then writes the w x h pixels at mem to /dev_hdd0/tmp as raw XRGB.
+void dev_debug_dump(const char* name, uint32_t n, const void* mem, uint32_t pitch, uint32_t w, uint32_t h);
+#endif
 
 #endif
