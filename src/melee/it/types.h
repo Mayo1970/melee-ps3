@@ -132,12 +132,21 @@ struct ItemAttr {
     s32 x80; // 0x80
 };
 
+typedef struct ItCollDynamicsDesc {
+    s32 bone_id;
+    Vec3 offset;
+    f32 size;
+} ItCollDynamicsDesc;
+
 struct ItemDynamics {
     /// @todo Combine with ftDynamics? Can see in it_8027163C that this struct
     /// does not work perfectly
     int count;
 
     BoneDynamicsTemplate* dyn_descs DAT_COUNT(count);
+    /// The hit dynamics, which it_8027163C reads as ItCollDynamics.
+    int coll_count;
+    ItCollDynamicsDesc* coll_descs DAT_COUNT(coll_count);
 };
 
 /// @todo In some stage items (e.g. in @c GrCn.dat), #x4_matanim_joint and
@@ -181,7 +190,7 @@ typedef struct {
 
 typedef struct {
     s32 count;
-    ItHurtBoneDesc* descs;
+    ItHurtBoneDesc* descs DAT_COUNT(count);
 } ItHurtBoneList;
 
 struct Article {
@@ -193,11 +202,12 @@ struct Article {
     ItemDynamics* x14_dynamics;
 };
 
+/// The bone lists a Game & Watch item's attributes point to (#it_8026EECC).
 typedef struct it_266F_ItemVars {
     u16 x0;
-    u8* x4;
+    u8* x4 DAT_COUNT(x0);
     u16 x8;
-    u8* xC;
+    u8* xC DAT_COUNT(x8);
     s32 x10;
     s32 x14;
     UnkFlagStruct x18;

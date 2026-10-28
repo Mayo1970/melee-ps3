@@ -1465,7 +1465,12 @@ s32 grShrineRoute_8020AE08(HSD_GObj* gobj, HSD_GObj* player_gobj, s32* out)
 
     if (pos.y < lo.y) {
         if (lo.x < pos.x && pos.x < hi.x) {
+#ifdef TARGET_PS3
+            // out is ftColl_8007BAC0's desc pointer: store all 8 bytes.
+            *(void**) out = yakumono_param->x10;
+#else
             *out = (s32) yakumono_param->x10;
+#endif
             return 1;
         }
     }

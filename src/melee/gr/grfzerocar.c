@@ -66,9 +66,15 @@ static inline void setup_car_child(HSD_JObj* parent, s16 ext_count, s32 offset,
 
     jobj = Ground_801C13D0(ext_count, 0);
     if (jobj != NULL) {
+#ifdef TARGET_PS3
+        // offset is ext_count * 0x34, the GameCube size of UnkStageDat_x8_t.
+        DynamicModelDesc* entry =
+            (DynamicModelDesc*) &archive->unk4->unk8[ext_count];
+#else
         DynamicModelDesc* entry =
             (DynamicModelDesc*) ((u8*) offset +
                                  (uintptr_t) archive->unk4->unk8);
+#endif
         if (entry->anims != NULL) {
             if (entry->matanims != NULL) {
                 grAnime_801C6C0C(jobj, *entry->anims, *entry->matanims, NULL);

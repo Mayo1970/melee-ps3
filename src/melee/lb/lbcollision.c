@@ -1526,7 +1526,12 @@ void lbColl_800077A0(Vec3* a, MtxPtr arg1, Vec3* b, Vec3* c, Vec3* d, Vec3* e,
 
             // The second sqrtf spill is allocated just below the scratch
             // array.
+#ifdef TARGET_PS3
+            // MWCC's slot below sqrt_tmp is another variable under GCC.
+            scl = (-n0 - sqrtf_store(n1, &sqrt_tmp[1])) / (2.0f * dot_diff_cb);
+#else
             scl = (-n0 - sqrtf_store(n1, sqrt_tmp - 1)) / (2.0f * dot_diff_cb);
+#endif
         }
 
         normalize_e.x = scl * diff_cb.x + b->x - a->x;

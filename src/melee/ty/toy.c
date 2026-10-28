@@ -229,11 +229,38 @@ bool un_80304780(void)
     { 7, 65 }, { 6, 66 }, { 5, 67 }, { 4, 68 }, { 3, 69 },
     { 2, 70 }, { 0, 73 }, { 1, 88 }, { 8, 83 },
 };
+#ifdef TARGET_PS3
+struct Toy26B8 Toy_804A26B8_Block;
+#define _Toy_804A26B8 (*(struct _Toy_804A26B8_t*) &Toy_804A26B8_Block)
+#define _Toy_devtext_buf_804A26C4                                             \
+    (*(char (*)[0x8C]) ((u8*) &Toy_804A26B8_Block + 0xC))
+#define _Toy_devtext_buf_804A2750                                             \
+    (*(char (*)[0xFC]) ((u8*) &Toy_804A26B8_Block + 0x98))
+#else
 /* 4A26B8 */ static struct _Toy_804A26B8_t _Toy_804A26B8;
 /* 4A26C4 */ static char _Toy_devtext_buf_804A26C4[0x8C];
 /* 4A2750 */ static char _Toy_devtext_buf_804A2750[0xFC];
 /* 4A284C */ u16 Toy_804A284C[302];
 /* 4A2AA8 */ ToyAnimState Toy_804A2AA8;
+#endif
+
+#ifdef TARGET_PS3
+// ToyGlobalsS_ views TyDisplayData from x140 on, at 32-bit offsets; these
+// read its fields by name.
+#define TG_X140(tg) ((ToySubStructS_*) ((TyDisplayData*) (tg))->selected_entry)
+#define TG_X144(tg) (((TyDisplayData*) (tg))->pad_144[0])
+#define TG_X148(tg) (((TyDisplayData*) (tg))->pad_144[1])
+#define TG_X14C(tg) (((TyDisplayData*) (tg))->pad_144[2])
+#define TG_X150(tg) (((TyDisplayData*) (tg))->pad_144[3])
+#define TG_X154(tg) (((TyDisplayData*) (tg))->selectedIdx)
+#else
+#define TG_X140(tg) ((tg)->x140)
+#define TG_X144(tg) ((tg)->x144)
+#define TG_X148(tg) ((tg)->x148)
+#define TG_X14C(tg) ((tg)->x14C)
+#define TG_X150(tg) ((tg)->x150)
+#define TG_X154(tg) ((tg)->x154)
+#endif
 /* 4D5A40 */ static GXColor _Toy_color_E2E2E2FF = { 0xE2, 0xE2, 0xE2, 0xFF };
 /* 4D5A44 */ static GXColor _Toy_color_FF8020FF = { 0xFF, 0x80, 0x20, 0xFF };
 
@@ -2257,8 +2284,14 @@ void _Toy_803075E8(s32 arg0)
 
     /// @todo Layout-dependent: this is @c _Toy_803FDEBC[arg0], but indexing
     ///       it directly changes register allocation.
+#ifdef TARGET_PS3
+    // The statics lie apart here, and 0x69 counts 32-bit pointers.
+    ptr = &_Toy_803FDEBC[arg0];
+    if (*ptr != NULL) {
+#else
     ptr = (char**) (data + arg0 * 4);
     if (*(ptr += 0x69) != NULL) {
+#endif
         joint = HSD_ArchiveGetPublicAs(HSD_Joint, td->archive, *ptr);
         if (joint != NULL) {
             td->gobj = GObj_Create(4, 7, 0);
@@ -5380,7 +5413,7 @@ static inline void toy_toggle_flag(Toy26B8* toy)
     u16* flags;
 
     tg6 = (ToyGlobalsS_*) Toy_sbss_804D6EE0;
-    idx = Toy_sbss_804D6EDC[tg6->x154];
+    idx = Toy_sbss_804D6EDC[TG_X154(tg6)];
 
     if (gm_IsCurrently1PMode() != 0 ||
         gm_GetCurrentGameMode() == GM_TOY_LOTTERY)
@@ -5392,7 +5425,7 @@ static inline void toy_toggle_flag(Toy26B8* toy)
 
     if (flags[idx] & 0x8000) {
         tg6 = (ToyGlobalsS_*) Toy_sbss_804D6EE0;
-        idx2 = Toy_sbss_804D6EDC[tg6->x154];
+        idx2 = Toy_sbss_804D6EDC[TG_X154(tg6)];
 
         if (gm_IsCurrently1PMode() != 0 ||
             gm_GetCurrentGameMode() == GM_TOY_LOTTERY)
@@ -5455,9 +5488,18 @@ void Toy_80310324(void)
     Toy_803067BC(toy->x195, toy->x196);
 
     if (tg->x50 == NULL) {
+#ifdef TARGET_PS3
+        // sym + 4 lies outside sym; the stored symbol is not read.
+        void* view_sym;
+
+        tg->x50 = lbArchive_LoadSymbols(
+            lbLang_IsSavedLanguageJP() ? "TyMnView.dat" : "TyMnView.usd",
+            &view_sym, _Toy_803FDEA0[0], NULL);
+#else
         tg->x50 = lbArchive_LoadSymbols(
             lbLang_IsSavedLanguageJP() ? "TyMnView.dat" : "TyMnView.usd",
             sym + 4, _Toy_803FDEA0[0], NULL);
+#endif
     }
 
     memzero(_Toy_sbss_804D6E68, sizeof(*_Toy_sbss_804D6E68));
@@ -5499,16 +5541,16 @@ void Toy_80310324(void)
         memzero(&toy->x3F0_u.anim, sizeof(toy->x3F0_u.anim));
         _Toy_8030FE48(Toy_sbss_804D6EE0, 0);
         tg6 = (ToyGlobalsS_*) Toy_sbss_804D6EE0;
-        Toy_803087F4(tg6->x140);
+        Toy_803087F4(TG_X140(tg6));
 
         toy_toggle_flag(toy);
 
         tg6 = (ToyGlobalsS_*) Toy_sbss_804D6EE0;
-        sub = tg6->x140;
+        sub = TG_X140(tg6);
         _Toy_803084A0(sub->x10);
 
         tg6 = (ToyGlobalsS_*) Toy_sbss_804D6EE0;
-        sub = tg6->x140;
+        sub = TG_X140(tg6);
         Toy_803083D8(tg->x30, sub->x10);
 
         toy_make_gobj();
@@ -5516,8 +5558,13 @@ void Toy_80310324(void)
 
     _Toy_80307828(0);
 
+#ifdef TARGET_PS3
+    // The view's x58 is Toy6E68's on the GameCube only.
+    _Toy_sbss_804D6E68->x58 = 0x95E;
+#else
     tg5 = (ToyGlobalsS_*) _Toy_sbss_804D6E68;
     tg5->x58 = 0x95E;
+#endif
 
     _Toy_8030715C(0.0f, 0.0f);
 
@@ -5559,7 +5606,7 @@ void Toy_80310660(s32 arg0)
 
     if (idx != 0) {
         u16* ptr;
-        idx = Toy_sbss_804D6EDC[ty25->x154];
+        idx = Toy_sbss_804D6EDC[TG_X154(ty25)];
 
         if (gm_IsCurrently1PMode() != 0 ||
             gm_GetCurrentGameMode() == GM_TOY_LOTTERY)
@@ -5570,7 +5617,7 @@ void Toy_80310660(s32 arg0)
         }
 
         if (ptr[idx] & 0x8000) {
-            idx = Toy_sbss_804D6EDC[ty25->x154];
+            idx = Toy_sbss_804D6EDC[TG_X154(ty25)];
 
             if (gm_IsCurrently1PMode() != 0 ||
                 gm_GetCurrentGameMode() == GM_TOY_LOTTERY)
@@ -5583,8 +5630,8 @@ void Toy_80310660(s32 arg0)
             *ptr ^= 0x8000;
         }
 
-        *(s16*) (state + 0x3E8) = ty25->x154;
-        *(s16*) (state + 0x3EA) = ty25->x140->x10;
+        *(s16*) (state + 0x3E8) = TG_X154(ty25);
+        *(s16*) (state + 0x3EA) = TG_X140(ty25)->x10;
     }
 
     if (arg != 0) {
@@ -5592,10 +5639,10 @@ void Toy_80310660(s32 arg0)
         s32 count;
 
         HSD_SisLib_803A5E70();
-        ty25->x150 = NULL;
-        ty25->x14C = NULL;
-        ty25->x148 = NULL;
-        ty25->x144 = NULL;
+        TG_X150(ty25) = NULL;
+        TG_X14C(ty25) = NULL;
+        TG_X148(ty25) = NULL;
+        TG_X144(ty25) = NULL;
 
         if (gm_IsCurrently1PMode() != 0 ||
             gm_GetCurrentGameMode() == GM_TOY_LOTTERY)
@@ -5640,8 +5687,14 @@ void Toy_80310660(s32 arg0)
         if (*(void**) ty27 != NULL) {
             HSD_GObjFree(*(void**) ty27);
             *(void**) ty27 = NULL;
+#ifdef TARGET_PS3
+            // jobj[1] and jobj[0], at their GameCube offsets below.
+            ((ToyAnimState*) ty27)->jobj[1] = NULL;
+            ((ToyAnimState*) ty27)->jobj[0] = NULL;
+#else
             *(void**) (ty27 + 0x8) = NULL;
             *(void**) (ty27 + 0x4) = NULL;
+#endif
         }
 
         if (*(void**) ty26 != NULL) {
@@ -6120,7 +6173,11 @@ void Toy_Scene_OnEnter(void* arg0)
     memzero(Toy_sbss_804D6EDC, sizeof(*Toy_sbss_804D6EDC) * TY_TROPHY_COUNT);
     memzero(_Toy_sbss_804D6E64, sizeof(*_Toy_sbss_804D6E64) * TY_TROPHY_COUNT);
     memzero(Toy_sbss_804D6EE0, sizeof(*Toy_sbss_804D6EE0));
+#ifdef TARGET_PS3
+    memzero(_Toy_sbss_804D6E6C, sizeof(*_Toy_sbss_804D6E6C));
+#else
     memzero(_Toy_sbss_804D6E6C, 8);
+#endif
 
     Toy_8031263C();
 

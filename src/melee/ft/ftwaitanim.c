@@ -52,7 +52,12 @@ static inline enum_t getAnimID(WaitStruct* arg1)
     while (wait_data->u.i.x != -1) {
         count += wait_data->u.i.y;
         if (max <= count) {
+#ifdef TARGET_PS3
+            // u.p.x is 8 bytes here; its low half is u.i.y, the chance.
+            return wait_data->u.i.x;
+#else
             return (enum_t) wait_data->u.p.x;
+#endif
         }
         wait_data += 1;
     }

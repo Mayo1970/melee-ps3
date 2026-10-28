@@ -1559,6 +1559,13 @@ void fn_8019A158(void)
         ((struct Lbl804799D8_t*) base_ptr)->x4E[k] = 0;
     }
 
+#ifdef TARGET_PS3
+// The slots hold a GObj pointer, so their raw GameCube offsets (stride 0x2C
+// from the entry) become field names here.
+#define CURSOR(off, f) bracket->slots[i].f
+#else
+#define CURSOR(off, f) cursor[off]
+#endif
     if (mode == 1) {
         bracket = fn_8019A158_GetBracketEntry(bracket_idx);
         cursor = (u8*) bracket;
@@ -1566,7 +1573,7 @@ void fn_8019A158(void)
             if (i == state.slot) {
                 bracket->slots[state.slot].x4C = 0;
             } else {
-                cursor[0x4C] = 3;
+                CURSOR(0x4C, x4C) = 3;
             }
             cursor += 0x2C;
         }
@@ -1574,8 +1581,8 @@ void fn_8019A158(void)
         bracket = fn_8019A158_GetBracketEntry(bracket_idx);
         cursor = (u8*) bracket;
         for (i = 0; i < 4; i++) {
-            if (cursor[0x4E] == 3) {
-                cursor[0x4C] = 3;
+            if (CURSOR(0x4E, x4E) == 3) {
+                CURSOR(0x4C, x4C) = 3;
             } else {
                 MatchEndStanding* standing;
                 u8 v;
@@ -1583,13 +1590,14 @@ void fn_8019A158(void)
                 standing = &((MatchEndStanding*) *x48_ptr)[i];
                 v = standing->is_small_loser;
                 standing->is_big_loser = v;
-                cursor[0x4C] = v;
+                CURSOR(0x4C, x4C) = v;
                 if ((*x48_ptr)->player_standings[i].is_small_loser == 0) {
                     sel = i;
                 }
             }
             cursor += 0x2C;
         }
+#undef CURSOR
     } else {
         counter = 0;
         for (i = 0; i < 4; i++) {
@@ -1661,11 +1669,20 @@ void fn_8019A158(void)
             }
         }
 
+#ifdef TARGET_PS3
+        // The slots hold a GObj pointer and x48 is 8 bytes wide here, so the
+        // GameCube's raw slot offset and the x4E view do not hold.
+        {
+            u8 model_idx = lbl_80473AB8[bracket_idx].slots[sel].x50;
+            fn_8018F00C((char*) lbl_804799D8.x4E, td1->x37[model_idx].x9);
+        }
+#else
         cursor = (u8*) &lbl_80473AB8[bracket_idx] + sel * 0x2C;
         {
             u8 model_idx = cursor[0x50];
             fn_8018F00C(base_ptr->x4E, td1->x37[model_idx].x9);
         }
+#endif
     }
 }
 
@@ -2024,11 +2041,21 @@ void fn_8019AF50(s32* arg0, u32 arg1, u32 arg2)
             s32 n;
 
             for (n = 4; n != 0; n--) {
+#ifdef TARGET_PS3
+                // The slots hold a GObj pointer, so their raw GameCube stride
+                // (0x2C) does not hold here.
+                BracketEntrySlot* slot = &lbl_80473AB8[bracketIdx].slots[j];
+                if (slot->x30 != 0 && slot->x4C == 0) {
+                    lbl_804D6680[1] = slot->x4D;
+                    break;
+                }
+#else
                 if (bp[0x30] != 0 && bp[0x4C] == 0) {
                     lbl_804D6680[1] =
                         (&lbl_80473AB8[bracketIdx].slots[0].x4D)[j * 0x2C];
                     break;
                 }
+#endif
                 bp += 0x2C;
                 j++;
             }
@@ -2056,7 +2083,12 @@ void fn_8019AF50(s32* arg0, u32 arg1, u32 arg2)
             if (lbl_804799D8.x0 >= 0x64U) {
                 int i;
                 u32 count = (lbl_804799D8.x0 - 0x64) / 15;
+#ifdef TARGET_PS3
+                // x48 is 8 bytes wide here, so x4E is not at 0x4E.
+                u8* base = lbl_804799D8.x4E - 0x4E;
+#else
                 u8* base = (u8*) &lbl_804799D8;
+#endif
                 u8* dest = (u8*) &sp_buf;
                 for (i = 0; i < count; i++) {
                     dest[0] = base[0x4E];
@@ -2073,7 +2105,11 @@ void fn_8019AF50(s32* arg0, u32 arg1, u32 arg2)
                     lbl_804799D8.x0 = 0xFA;
                 }
             }
+#ifdef TARGET_PS3
+            HSD_SisLib_803A70A0(tm->x524[3], 0, (char*) lbl_804799D8.x4E);
+#else
             HSD_SisLib_803A70A0(tm->x524[3], 0, (char*) &lbl_804799D8 + 0x4E);
+#endif
         }
     } else {
         if (lbl_804799D8.x0 < 0xFAU) {

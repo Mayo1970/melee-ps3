@@ -1232,8 +1232,15 @@ static inline f32 it_802A4BFC_sqrtf_offset(f32 x)
         guess = 0.5 * guess * (3.0 - guess * guess * x);
         guess = 0.5 * guess * (3.0 - guess * guess * x);
         guess = 0.5 * guess * (3.0 - guess * guess * x);
+#ifdef TARGET_PS3
+        // The slot 6 floats above y is MWCC's stack layout; under GCC it is
+        // other stack data.
+        y = (f32) (x * guess);
+        return y;
+#else
         *(&y + 6) = (f32) (x * guess);
         return *(&y + 6);
+#endif
     }
     return x;
 }

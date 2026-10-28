@@ -1768,6 +1768,12 @@ void fn_8018E618(int arg0, f32 farg0, int arg1)
     gobj = GObj_Create(9, 20, 1);
     {
         HSD_CObj* cobj = HSD_CObjLoadDesc((HSD_CObjDesc*) &cam);
+#ifdef TARGET_PS3
+        // The GameCube reaches lbl_803D9DD0 by its DOL offset from
+        // lbl_803D9DAC; the statics lie apart here.
+        lbl_803D9DD0.cobj = cobj;
+        HSD_GObjObject_80390A70(gobj, HSD_GObj_CameraKind, cobj);
+#else
         CObjData* cobj_data = (CObjData*) &lbl_803D9DAC;
         cobj_data->cobj_data.cobj = cobj;
         {
@@ -1775,6 +1781,7 @@ void fn_8018E618(int arg0, f32 farg0, int arg1)
             u8* kind_ptr = &HSD_GObj_CameraKind;
             HSD_GObjObject_80390A70(gobj, *kind_ptr, *cobj_ptr);
         }
+#endif
     }
     GObj_SetupGXLinkMax(gobj, HSD_GObj_803910D8, 1);
     gobj->gxlink_prios = 0x10;
@@ -1782,9 +1789,27 @@ void fn_8018E618(int arg0, f32 farg0, int arg1)
     gmTournament_InitBracket(arg0, farg0, arg1);
 }
 
+#ifdef TARGET_PS3
+// The slot's GObj pointer makes it 0x30 bytes here, so the GameCube's raw
+// slot offsets (stride 0x2C) become field names.
+#define SUB_X4D sub->x4D
+#define SUB_X4F sub->x4F
+#define SUB_X44 sub->x44
+#define SUB_X48 sub->x48
+#else
+#define SUB_X4D sub[0x4D]
+#define SUB_X4F sub[0x4F]
+#define SUB_X44 *(s32*) (sub + 0x44)
+#define SUB_X48 *(s32*) (sub + 0x48)
+#endif
+
 void fn_8018E85C(DynamicModelDesc* model, s32 flag)
 {
+#ifdef TARGET_PS3
+    BracketEntrySlot* sub;
+#else
     u8* sub;
+#endif
     TmData* td;
     HSD_JObj* jobj;
     s32 outer_idx;
@@ -1807,6 +1832,33 @@ void fn_8018E85C(DynamicModelDesc* model, s32 flag)
         }
         inner_idx = 0;
         for (; inner_idx < 4; inner_idx++) {
+#ifdef TARGET_PS3
+            sub = &lbl_80473AB8[outer_idx].slots[inner_idx];
+            if (sub->x30 == 0) {
+                continue;
+            }
+
+            if (flag != 0) {
+                ptr = (u8*) td;
+                for (j = 0; j < 64; j++) {
+                    if (ptr[0x44 + j * 0x12] == bracket_idx) {
+                        break;
+                    }
+                }
+                sub->x50 = (u8) j;
+                ptr = (u8*) td + j * 0x12;
+                sub->x4D = ptr[0x3A];
+                sub->x4E = ptr[0x37];
+                sub->x4F = ptr[0x3E];
+                sub->x51 = ptr[0x38];
+                sub->x52 = ptr[0x39];
+                sub->x54 = *(u16*) (ptr + 0x40);
+                bracket_idx++;
+            }
+
+            gobj = GObj_Create(0xE, 0x1B, 0);
+            sub->x2C = gobj;
+#else
             sub = &lbl_80473AB8[outer_idx].x0 + inner_idx * 0x2C;
             if (sub[0x30] == 0) {
                 continue;
@@ -1833,12 +1885,13 @@ void fn_8018E85C(DynamicModelDesc* model, s32 flag)
             gobj = GObj_Create(0xE, 0x1B, 0);
             *(HSD_GObj**) (sub + 0x2C) = gobj;
             gobj = *(HSD_GObj**) (sub + 0x2C);
+#endif
             jobj = HSD_JObjLoadJoint(model->joint);
             HSD_GObjObject_80390A70(gobj, HSD_GObj_JObjKind, jobj);
             GObj_SetupGXLink(gobj, HSD_GObj_JObjCallback, 4, 2);
             gm_8016895C(jobj, model, 0);
 
-            anim_frame = sub[0x4D] + sub[0x4F] * 0x1E;
+            anim_frame = SUB_X4D + SUB_X4F * 0x1E;
             HSD_JObjReqAnimAll(jobj, (f32) anim_frame);
             HSD_JObjAnimAll(jobj);
 
@@ -1859,12 +1912,15 @@ void fn_8018E85C(DynamicModelDesc* model, s32 flag)
             if (td->cur_option < 0x1F) {
                 fn_8018AA74(jobj, outer_idx, inner_idx);
             } else {
-                fn_8018FDC4(jobj, (f32) * (s32*) (sub + 0x44),
-                            -(f32) * (s32*) (sub + 0x48), 666.0f);
+                fn_8018FDC4(jobj, (f32) SUB_X44, -(f32) SUB_X48, 666.0f);
             }
         }
     }
 }
+#undef SUB_X4D
+#undef SUB_X4F
+#undef SUB_X44
+#undef SUB_X48
 
 void fn_8018EC48(void)
 {
@@ -2141,7 +2197,13 @@ s32 fn_8018F508(s32* out_index)
     }
 
     for (i = 0; i < 4; i++) {
+#ifdef TARGET_PS3
+        // The slots hold a GObj pointer, so their raw GameCube stride
+        // (0x2C) does not hold here.
+        if (((BracketEntry*) base_ptr)->slots[i].x4E != 3) {
+#else
         if (slot_ptr[0x4E] != 3) {
+#endif
             if (out_index != NULL) {
                 *out_index = i;
             }
@@ -2312,28 +2374,42 @@ void fn_8018FA24(void)
     }
 
     dst = tmdata;
+#ifdef TARGET_PS3
+    // The slot's GObj pointer makes it 0x30 bytes here, so the GameCube's raw
+    // slot offsets (stride 0x2C) become field names.
+    BracketEntrySlot* slot = lbl_80473AB8[i].slots;
+#define PTR(off, f) slot->f
+#else
     ptr = (u8*) lbl_80473AB8 + i * (s32) 0xDC;
+#define PTR(off, f) ptr[off]
+#endif
     player_count = 0;
 
     for (player_idx = 0; player_idx < 4; player_idx++) {
-        dst[0x4B6] = ptr[0x30];
-        dst[0x4B7] = ptr[0x50];
-        *(u16*) (dst + 0x4BE) = *(u16*) (tmdata + 0x40 + ptr[0x50] * 0x12);
-        dst[0x4BC] = ptr[0x51];
-        dst[0x4BD] = ptr[0x52];
-        dst[0x4B9] = ptr[0x4D];
+        dst[0x4B6] = PTR(0x30, x30);
+        dst[0x4B7] = PTR(0x50, x50);
+        *(u16*) (dst + 0x4BE) =
+            *(u16*) (tmdata + 0x40 + PTR(0x50, x50) * 0x12);
+        dst[0x4BC] = PTR(0x51, x51);
+        dst[0x4BD] = PTR(0x52, x52);
+        dst[0x4B9] = PTR(0x4D, x4D);
         Player_SetPlayerCharacter(player_idx, fn_8018FA24_inline0(dst[0x4B9]));
-        dst[0x4B8] = ptr[0x4E];
+        dst[0x4B8] = PTR(0x4E, x4E);
         if (dst[0x4B8] != 3) {
             player_count += 1;
         }
         Player_SetSlottype(player_idx, dst[0x4B8]);
-        dst[0x4BB] = ptr[0x4F];
+        dst[0x4BB] = PTR(0x4F, x4F);
         Player_SetCostumeId(player_idx, dst[0x4BB]);
-        dst[0x4BC] = ptr[0x51];
+        dst[0x4BC] = PTR(0x51, x51);
+#ifdef TARGET_PS3
+        slot++;
+#else
         ptr += 0x2C;
+#endif
         dst += 0xA;
     }
+#undef PTR
 
     tmdata[0x30] = player_count;
 }
@@ -2348,6 +2424,22 @@ void fn_8018FBE0(s32 arg0, s32 arg1, s32 arg2, s32 arg3, s32 arg4, s32 arg5,
 {
     s32 i;
 
+#ifdef TARGET_PS3
+    // The GameCube reaches gm_804771C4 by its DOL offset from lbl_80473AB8;
+    // the statics lie apart here.
+    TmData* tm = &gm_804771C4;
+
+    tm->cur_option = arg0;
+    tm->x1C = arg1;
+    tm->x20 = arg2;
+    for (i = 0; 64 > i; i++) {
+        tm->x37[i].x2 = (u8) arg3;
+        tm->x37[i].x1 = (u8) arg4;
+        tm->x37[i].xD = (u8) i;
+        tm->x37[i].x9 = (u16) arg5;
+        tm->x37[i].x0 = (u8) arg6;
+    }
+#else
     ((TmData*) &((BracketData*) lbl_80473AB8)->srcs[3])->cur_option = arg0;
     ((TmData*) &((BracketData*) lbl_80473AB8)->srcs[3])->x1C = arg1;
     ((TmData*) &((BracketData*) lbl_80473AB8)->srcs[3])->x20 = arg2;
@@ -2364,6 +2456,7 @@ void fn_8018FBE0(s32 arg0, s32 arg1, s32 arg2, s32 arg3, s32 arg4, s32 arg5,
         ((TmData*) &((BracketData*) lbl_80473AB8)->srcs[3])->x37[i].x0 =
             (u8) arg6;
     }
+#endif
 }
 
 void fn_8018FDC4(HSD_JObj* jobj, float x, float y, float z)

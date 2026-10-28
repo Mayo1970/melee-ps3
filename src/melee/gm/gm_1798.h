@@ -25,6 +25,16 @@
 /* 17A9B4 */ void fn_8017A9B4(int);
 /* 17AA78 */ void fn_8017AA78(const u8*);
 
+#ifdef TARGET_PS3
+// The GameCube reaches the next three statics through ResultsDisplayLayout
+// from lbl_8046E1B0; one object keeps them adjacent here.
+extern ResultsDisplayLayout gm_8046E1B0;
+#define lbl_8046E1B0 gm_8046E1B0
+#define lbl_8046E38C gm_8046E1B0.gobjs
+#define lbl_8046E39C gm_8046E1B0.jobjs
+#define lbl_8046E3AC gm_8046E1B0.state
+#else
 extern lbl_8046E3AC_t lbl_8046E3AC;
+#endif
 
 #endif

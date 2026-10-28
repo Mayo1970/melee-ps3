@@ -567,8 +567,18 @@ void* efAsync_Dispatch(s32 gfx_id, HSD_GObj* gobj, va_list vlist)
             scale.x = scale.y = scale.z = f32_2;
             HSD_JObjSetScale(setter_jobj, &scale);
             jobj_2 = HSD_JObjGetChild(jobj_1);
+#ifdef TARGET_PS3
+            {
+                // MWCC evaluates these arguments right to left (the DOL reads
+                // tev0 first); GCC goes left to right.
+                u32 tev0_arg = va_arg(vlist, u32);
+                efLib_SetTevKonstColor(jobj_2, 0, va_arg(vlist, u32),
+                                       tev0_arg);
+            }
+#else
             efLib_SetTevKonstColor(jobj_2, 0, va_arg(vlist, u32),
                                    va_arg(vlist, u32));
+#endif
         }
         break;
     }

@@ -29,6 +29,52 @@
 
 /// Name-entry menu animation loop windows (.data block owned by this
 /// translation unit; see symbols.txt 0x803ED538..0x803ED62F).
+#ifdef TARGET_PS3
+// The game indexes mnName_803ED538 past its end into the objects after it;
+// one block keeps them in DOL order.
+static struct {
+    AnimLoopSettings x0[4];
+    AnimLoopSettings x30;
+    AnimLoopSettings x3C;
+    AnimLoopSettings x48;
+    AnimLoopSettings x54;
+    AnimLoopSettings x60;
+    f32 x6C[23];
+    f32 xC8[6];
+    Vec3 xE0[2];
+} mnName_DataBlock = {
+    {
+        { 0.0F, 0.0F, -0.1F },
+        { 0.0F, 0.0F, -0.1F },
+        { 0.0F, 0.0F, -0.1F },
+        { 0.0F, 0.0F, -0.1F },
+    },
+    { 50.0F, 59.0F, -0.1F },
+    { 40.0F, 49.0F, -0.1F },
+    { 30.0F, 39.0F, -0.1F },
+    { 10.0F, 19.0F, -0.1F },
+    { 20.0F, 29.0F, -0.1F },
+    {
+        0.0F, 9.0F, -0.1F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F, 0.0F,
+        0.0F, 1.0F, 0.0F, 0.0F, 2.0F, 3.0F, 4.0F, 0.0F, 5.0F, 6.0F, 7.0F,
+        8.0F,
+    },
+    { 0.0F, 9.0F, -0.1F, 20.0F, 29.0F, -0.1F },
+    {
+        { -2.0F, 0.5F, 0.0F },
+        { -5.5F, -2.9F, 23.0F },
+    },
+};
+#define mnName_803ED538 (mnName_DataBlock.x0)
+#define mnName_803ED568 (mnName_DataBlock.x30)
+#define mnName_803ED574 (mnName_DataBlock.x3C)
+#define mnName_803ED580 (mnName_DataBlock.x48)
+#define mnName_803ED58C (mnName_DataBlock.x54)
+#define mnName_803ED598 (mnName_DataBlock.x60)
+#define mnName_803ED5A4 (mnName_DataBlock.x6C)
+#define mnName_803ED600 (mnName_DataBlock.xC8)
+#define mnName_803ED618 (mnName_DataBlock.xE0)
+#else
 /* 3ED538 */ AnimLoopSettings mnName_803ED538[4] = {
     { 0.0F, 0.0F, -0.1F },
     { 0.0F, 0.0F, -0.1F },
@@ -51,6 +97,7 @@
     { -2.0F, 0.5F, 0.0F },
     { -5.5F, -2.9F, 23.0F },
 };
+#endif
 
 /// Animation loop window lookup table for mnName_FindAnimLoop (.rodata block
 /// owned by this translation unit; see symbols.txt 0x803B8510..0x803B8527).
@@ -784,6 +831,30 @@ HSD_JObj* mnName_802388D4(HSD_GObj* gobj, u8 index)
 {
     u8* p = (u8*) gobj;
 
+#ifdef TARGET_PS3
+    // Joints 10, 7, 4 and 5, by their GameCube offsets (mnName_8023A59C).
+    if (index < 0x18) {
+        HSD_JObj* jobj =
+            HSD_JObjGetChild((HSD_JObj*) gobj->user_data_remove_func);
+        s32 i;
+
+        for (i = 0; i < index; i++) {
+            jobj = HSD_JObjGetNext(jobj);
+        }
+        return jobj;
+    } else {
+        switch (index) {
+        case 0x18:
+            return ((MnName_GObj*) gobj)->x24;
+        case 0x19:
+            return (HSD_JObj*) gobj->proc;
+        case 0x1A:
+            return (HSD_JObj*) gobj->render_cb;
+        default:
+            return (HSD_JObj*) gobj;
+        }
+    }
+#else
     if (index < 0x18) {
         HSD_JObj* jobj = HSD_JObjGetChild(*(HSD_JObj**) (p + 0x30));
         s32 i;
@@ -804,6 +875,7 @@ HSD_JObj* mnName_802388D4(HSD_GObj* gobj, u8 index)
             return (HSD_JObj*) gobj;
         }
     }
+#endif
 }
 
 static inline f32 mnName_80238964_noinline(u8 index, u8 target, u8 flag)
@@ -1531,7 +1603,11 @@ HSD_GObj* mnName_8023A59C(u8 arg0)
                        archive->matanim_joint, archive->shapeanim_joint);
     HSD_JObjReqAnimAll(root_jobj[0], 0.0f);
     HSD_JObjAnimAll(root_jobj[0]);
+#ifdef TARGET_PS3
+    user_data = (MnName_GObj*) HSD_MemAlloc(sizeof(MnName_GObj));
+#else
     user_data = (MnName_GObj*) HSD_MemAlloc(0x44);
+#endif
     HSD_ASSERTREPORT(0x67CU, user_data, "Can't get user_data.\n");
     GObj_InitUserData(gobj, 0U, HSD_Free, user_data);
     *(u8*) &user_data->gobj.classifier = (u8) mn_804A04F0.cur_menu;
@@ -1542,10 +1618,35 @@ HSD_GObj* mnName_8023A59C(u8 arg0)
     user_data->gobj.p_link = arg0;
     user_data->text = NULL;
     user_data->text2 = NULL;
+#ifdef TARGET_PS3
+    {
+        // The GameCube stores joint i at +8 + 4i, over the GObj fields it
+        // reads them by; here each joint goes to its field.
+        HSD_JObj** slots[0xD] = {
+            (HSD_JObj**) &user_data->gobj.next,
+            (HSD_JObj**) &user_data->gobj.prev,
+            (HSD_JObj**) &user_data->gobj.next_gx,
+            (HSD_JObj**) &user_data->gobj.prev_gx,
+            (HSD_JObj**) &user_data->gobj.proc,
+            (HSD_JObj**) &user_data->gobj.render_cb,
+            (HSD_JObj**) &user_data->gobj.gxlink_prios,
+            &user_data->x24,
+            (HSD_JObj**) &user_data->gobj.hsd_obj,
+            (HSD_JObj**) &user_data->gobj.user_data,
+            (HSD_JObj**) &user_data->gobj.user_data_remove_func,
+            (HSD_JObj**) &user_data->gobj.x34_unk,
+            (HSD_JObj**) &user_data->x38,
+        };
+        for (i = 0; i < 0xD; i++) {
+            lb_80011E24(root_jobj[0], slots[i], i, -1);
+        }
+    }
+#else
     for (i = 0; i < 0xD; i++) {
         lb_80011E24(root_jobj[0],
                     (HSD_JObj**) ((u8*) user_data + (i << 2) + 8), i, -1);
     }
+#endif
     if (mn_804A04F0.x10 == 1) {
         struct mn_80231634_t* p =
             (struct mn_80231634_t*) user_data->gobj.user_data_remove_func;
@@ -1553,7 +1654,11 @@ HSD_GObj* mnName_8023A59C(u8 arg0)
         if (p == NULL) {
             j = NULL;
         } else {
+#ifdef TARGET_PS3
+            j = ((HSD_JObj*) p)->child;
+#else
             j = (HSD_JObj*) p->x10;
+#endif
         }
         HSD_JObjRemoveAll(j);
         if (user_data->text != NULL) {
@@ -1571,7 +1676,11 @@ HSD_GObj* mnName_8023A59C(u8 arg0)
         mnName_80239A24((HSD_GObj*) user_data);
         mnName_80238754_noinline((HSD_GObj*) user_data);
     }
+#ifdef TARGET_PS3
+    jobj7[0] = user_data->x24;
+#else
     jobj7[0] = ((HSD_JObj**) user_data)[9];
+#endif
     HSD_JObjReqAnimAll(jobj7[0],
                        mnName_804D4BD0[mn_804A04F0.hovered_selection == 0x18]);
     HSD_JObjAnimAll(jobj7[0]);
@@ -1626,7 +1735,11 @@ void mnName_8023A9B4(u8 arg0)
         if (p == NULL) {
             jobj = NULL;
         } else {
+#ifdef TARGET_PS3
+            jobj = ((HSD_JObj*) p)->child;
+#else
             jobj = (HSD_JObj*) p->x10;
+#endif
         }
         HSD_JObjRemoveAll(jobj);
         if (gobj2->text != NULL) {

@@ -108,7 +108,13 @@ struct ftMasterHand_SpecialAttrs {
 union ftMasterHand_MotionVars {
     struct ftMasterHand_Unk0Vars {
         float x0;
+#ifdef TARGET_PS3
+        // The other views share x8..x78 at their 32-bit offsets, so the
+        // 64-bit x4 goes after them.
+        s32 x4_gc;
+#else
         HSD_GObjEvent x4;
+#endif
         int x8;
         Vec3 xC;
         float x18;
@@ -132,6 +138,9 @@ union ftMasterHand_MotionVars {
         int x70;
         int x74;
         int x78;
+#ifdef TARGET_PS3
+        /* +80 */ HSD_GObjEvent x4;
+#endif
     } unk0;
 
     struct ftMasterHand_Unk4Vars {
@@ -146,7 +155,13 @@ union ftMasterHand_MotionVars {
     } unk13;
 
     struct ftMasterHand_FingerBeamVars {
+#ifdef TARGET_PS3
+        // 64-bit item pointers here would overlap unk0's sound ids
+        // (x28..x40), so they go past unk0.
+        char pad_0[0x88];
+#else
         /*  +0 fp+2340 */ char pad_0[0x34];
+#endif
         /* +34 fp+2374 */ Item_GObj* x34;
         /* +38 fp+2378 */ Item_GObj* x38;
         /* +3C fp+237C */ Item_GObj* x3C;
@@ -154,7 +169,11 @@ union ftMasterHand_MotionVars {
     } fingerbeam;
 
     struct ftMasterHand_GrabVars {
+#ifdef TARGET_PS3
+        char pad_0[0x88];
+#else
         char pad_0[0x28];
+#endif
         Item_GObj* x28;
         Item_GObj* x2C;
         Item_GObj* x30;
@@ -166,6 +185,9 @@ union ftMasterHand_MotionVars {
         /* +28 fp+2368 */ int x28;
         /* +2C fp+236C */ int x2C;
         /* +30 fp+2370 */ int x30;
+#ifdef TARGET_PS3
+        char pad_x34[0x88 - 0x34];
+#endif
         /* +34 fp+2374 */ Item_GObj* x34;
         /* +38 fp+2378 */ Item_GObj* x38;
         /* +3C fp+237C */ Item_GObj* x3C;

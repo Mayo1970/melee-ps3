@@ -237,7 +237,12 @@ void DevText_Printf(DevText* text, char* format, ...)
     char str[64];
     va_list args;
     va_start(args, format);
+#ifdef TARGET_PS3
+    // The size -1 makes glibc's checked vsnprintf abort in the host build.
+    vsnprintf(str, sizeof(str), format, args);
+#else
     vsnprintf(str, -1, format, args);
+#endif
     va_end(args);
     DevText_Print(text, str);
 }

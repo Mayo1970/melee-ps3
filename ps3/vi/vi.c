@@ -12,6 +12,7 @@
 #include "../gx/rsxdev.h"
 #include "../os/diag.h"
 #include "../os/intr.h"
+#include "../os/prof.h"
 #include "../os/sync.h"
 #include "../os/sys.h"
 
@@ -95,6 +96,50 @@ static void log_calltrace(u32 n)
     }
 }
 
+// The share of the last second each GP and main thread phase took (prof.h), and the draw counts behind them.
+static void log_profile(u32 n, const GpStats* gs, const GxRsxStats* rs)
+{
+    static uint64_t last_now, last[PROF_COUNT], last_bytes;
+    static u32 last_draws, last_batchable, last_reuses, last_reloads, last_vp, last_uploads, last_presents;
+    uint64_t now = ps3_prof_now(), d[PROF_COUNT], span = now - last_now, other;
+    u32 pm[PROF_COUNT], i;
+
+    for (i = 0; i < PROF_COUNT; i++) {
+        uint64_t v = ps3_prof.ticks[i];
+
+        d[i] = v - last[i];
+        last[i] = v;
+        pm[i] = span != 0 ? (u32) (d[i] * 1000 / span) : 0;
+    }
+    other = d[PROF_DRAW_TEV] + d[PROF_DRAW_XF] + d[PROF_DRAW_STATE] + d[PROF_DRAW_VTX] + d[PROF_DRAW_CONST] +
+            d[PROF_DRAW_TEX];
+    other = d[PROF_DRAW] > other ? d[PROF_DRAW] - other : 0;
+    if (last_now != 0) {
+        // Per mille of the second; RSX waits partly fall inside the draw phases (ring fences, evictions).
+        OSReport("heartbeat %u: GP per mille: draws %u (TEV %u, XF %u, state %u, vertices %u, constants %u, "
+                 "textures %u, RSX commands %u), EFB copies %u, presents %u (flip waits %u); waits for data %u, "
+                 "for RSX labels %u; main: asleep %u, ring full %u; per second: %u presents, %u draws, %u with no "
+                 "register write since the last, %u with the last draw's state, %u XF reloads, %u VP loads, %u "
+                 "texture uploads of %u KB\n",
+                 n, pm[PROF_DRAW], pm[PROF_DRAW_TEV], pm[PROF_DRAW_XF], pm[PROF_DRAW_STATE], pm[PROF_DRAW_VTX],
+                 pm[PROF_DRAW_CONST], pm[PROF_DRAW_TEX], (u32) (span != 0 ? other * 1000 / span : 0),
+                 pm[PROF_COPY], pm[PROF_PRESENT], pm[PROF_GP_FLIP], pm[PROF_GP_IDLE], pm[PROF_GP_RSX],
+                 pm[PROF_MAIN_SLEEP], pm[PROF_MAIN_RING], rs->presents - last_presents, gs->draws - last_draws,
+                 ps3_prof.batchable - last_batchable, ps3_prof.state_reuses - last_reuses,
+                 ps3_prof.xf_reloads - last_reloads, rs->vp_loads - last_vp,
+                 rs->texture_uploads - last_uploads, (u32) ((ps3_prof.upload_bytes - last_bytes) >> 10));
+    }
+    last_now = now;
+    last_draws = gs->draws;
+    last_batchable = ps3_prof.batchable;
+    last_reuses = ps3_prof.state_reuses;
+    last_reloads = ps3_prof.xf_reloads;
+    last_vp = rs->vp_loads;
+    last_uploads = rs->texture_uploads;
+    last_presents = rs->presents;
+    last_bytes = ps3_prof.upload_bytes;
+}
+
 // Once a second, apart from the interrupts: a log that stops means the process is gone, counts that stop
 // name the part that is stuck (step 3 diagnostics).
 static void heartbeat_main(void* arg)
@@ -131,6 +176,15 @@ static void heartbeat_main(void* arg)
                  n, ps3_diag.vblanks, waits[ps3_diag.gp_wait & 3], ps3_diag.ring_space_wait,
                  owner != NULL ? owner : "free", ps3_diag.intr_site != NULL ? ps3_diag.intr_site : "no handler",
                  rsx, ps3_diag.pads, ps3_diag.pad0_buttons);
+        log_profile(n, &gs, &rs);
+        {
+            const void* q = ps3_diag.main_sleep;
+            const char* site = ps3_diag.gp_site;
+
+            OSReport("heartbeat %u: GP at %s, opcode %#x, draw %u; main sleeps on %s %p\n", n,
+                     site != NULL ? site : "start", ps3_diag.gp_op, ps3_diag.gp_draw,
+                     q == NULL ? "nothing" : q == &retrace_queue ? "the retrace queue" : "the queue at", q);
+        }
         if (ps3_diag.main_calls != 0) {
             log_calltrace(n);
         }

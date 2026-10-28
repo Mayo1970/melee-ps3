@@ -11,6 +11,7 @@
 #include <sysutil/video.h>
 
 #include "../os/diag.h"
+#include "../os/prof.h"
 #include "../os/udplog.h"
 
 // Main memory mapped for the RSX: the command buffer, then the vertex ring. The samples' 32 MB wastes RAM.
@@ -123,6 +124,7 @@ static bool wait_label(u8 index, u32 value)
 {
     volatile u32* label = (volatile u32*) gcmGetLabelAddress(index);
     u32 waited = 0;
+    uint64_t t = ps3_prof_now();
 
     ps3_diag.gp_wait = 3;
     while ((s32) (*label - value) < 0) {
@@ -135,6 +137,7 @@ static bool wait_label(u8 index, u32 value)
         waited += 30;
     }
     ps3_diag.gp_wait = 0;
+    ps3_prof_lap(PROF_GP_RSX, &t);
     return true;
 }
 
@@ -524,13 +527,16 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
     DevTexture t;
     Vertex* v;
     u32 io, b = disp_next;
+    uint64_t t0;
     int i;
 
     // Three buffers: wait only while two flips are still pending.
     ps3_diag.gp_wait = 2;
+    t0 = ps3_prof_now();
     while ((s32) (flips_queued - flips_done) > FB_COUNT - 2) {
         usleep(100);
     }
+    ps3_prof_lap(PROF_GP_FLIP, &t0);
     ps3_diag.gp_wait = 0;
     v = dev_ring_alloc(4 * sizeof(Vertex), &io);
     if (v == NULL) {

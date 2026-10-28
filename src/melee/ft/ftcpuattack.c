@@ -1627,7 +1627,12 @@ void ftCo_800B77E8(Fighter* fp)
                 tmp->xEC++;
             }
         }
+#ifdef TARGET_PS3
+        // u.gw.x2238 is u.kb.hat.kind only with 32-bit pointers.
+        charge = fp->u.kb.hat.kind;
+#else
         charge = fp->u.gw.x2238_panicCharge;
+#endif
         if (charge == 3 || charge == 0xD || charge == 0x10) {
             {
                 struct CpuFighter* tmp = &fp->cpu;
@@ -2682,7 +2687,12 @@ int ftCo_800BB220(Fighter* fp, Item* ip, Vec3* arg2, f32 arg3)
         result = true;
         break;
     default:
+#ifdef TARGET_PS3
+        // ip is no Fighter; see ftCo_800A5980_Item.
+        result = ftCo_800A5980_Item(ip);
+#else
         result = ftCo_800A5980((Fighter*) ip);
+#endif
         break;
     }
     if (result) {

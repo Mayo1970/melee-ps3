@@ -122,6 +122,12 @@ typedef struct mnDiagram_AnimTable {
 
 #define GET_DIAGRAM_ANIM_TABLE()                                              \
     ((mnDiagram_AnimTable*) &mnDiagram_PopupTextOffsets)
+#ifdef TARGET_PS3
+// Only the points lie at the table's base here; the statics after it do not.
+#define DIAGRAM_CURSOR_ANIM(tbl) (mnDiagram_CursorAnim)
+#else
+#define DIAGRAM_CURSOR_ANIM(tbl) ((tbl)->cursor_anim)
+#endif
 
 static GXColor mnDiagram_PopupTextColor = { 0, 0, 0, 0xFF };
 char mnDiagram_StringTerminator[1] = "";
@@ -688,9 +694,15 @@ void mnDiagram_SortNamesByKOs(void)
     int max_idx;
     u8* dst_iter;
     int i;
+#ifdef TARGET_PS3
+    // The GameCube reaches the name order at +0x1C from the fighter order
+    // (DOL order); the arrays lie apart here.
+    u8* dst = mnDiagram_NameDisplayOrder;
+#else
     mnDiagram_Assets* assets =
         (mnDiagram_Assets*) &mnDiagram_FighterDisplayOrder;
     u8* dst = assets->sorted_names;
+#endif
     u32* tp;
     u8* candidate;
     int n;
@@ -718,8 +730,13 @@ void mnDiagram_SortNamesByKOs(void)
             }
         }
         if (max_idx != i) {
+#ifdef TARGET_PS3
+            u8* p = &mnDiagram_NameDisplayOrder[max_idx];
+            u8 temp = *p;
+#else
             u8* p = &assets->sorted_fighters[max_idx];
             u8 temp = *(p += sizeof(mnDiagram_FighterDisplayOrder));
+#endif
             while (max_idx > i) {
                 *p = *(p - 1);
                 p--;
@@ -1467,7 +1484,7 @@ void mnDiagram_PopupAnimProc(HSD_GObj* arg0)
         text->default_alignment = 1;
     }
 
-    anim_frame = mn_8022EFD8(data->jobjs[12], &tbl->cursor_anim);
+    anim_frame = mn_8022EFD8(data->jobjs[12], &DIAGRAM_CURSOR_ANIM(tbl));
     {
         HSD_Text* t;
         f32 y;
@@ -1481,7 +1498,7 @@ void mnDiagram_PopupAnimProc(HSD_GObj* arg0)
     }
     text->default_alignment = 1;
 
-    if (anim_frame == tbl->cursor_anim.end_frame) {
+    if (anim_frame == DIAGRAM_CURSOR_ANIM(tbl).end_frame) {
         HSD_GObjProc_RemoveProc(HSD_GObj_CurrentInvokedProc);
     }
 }

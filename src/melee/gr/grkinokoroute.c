@@ -17,6 +17,9 @@
 #include <melee/ft/ftlib.h>
 #include <melee/gm/gm_1601.h>
 #include <melee/it/it_26B1.h>
+#ifdef TARGET_PS3
+#include <melee/it/types.h>
+#endif
 #include <melee/lb/lb_00B0.h>
 #include <melee/lb/lbvector.h>
 #include <melee/mp/mplib.h>
@@ -572,9 +575,17 @@ void grKinokoRoute_802084B4(HSD_GObj* gobj)
 {
     HSD_GObj* gobj2;
     Vec3 sp_vec;
+#ifdef TARGET_PS3
+    // gobj is the yaku item; offset 0xDD8 is its yaku.x4_u.x4 only in the
+    // GameCube Item layout.
+    HSD_JObj* jobj = ((Item*) gobj->user_data)->xDD4_itemVar.yaku.x4_u.x4;
+#define NKR_JOBJ jobj
+#else
     struct grKinokoRoute_802084B4_gp* gp = gobj->user_data;
+#define NKR_JOBJ gp->jobj
+#endif
 
-    HSD_JObjSetFlagsAll(gp->jobj, JOBJ_HIDDEN);
+    HSD_JObjSetFlagsAll(NKR_JOBJ, JOBJ_HIDDEN);
 
     gobj2 = Ground_GetMapGObj(3);
     if (gobj2 != NULL) {
@@ -584,7 +595,8 @@ void grKinokoRoute_802084B4(HSD_GObj* gobj)
         }
     }
 
-    lb_8000B1CC(gp->jobj, NULL, &sp_vec);
+    lb_8000B1CC(NKR_JOBJ, NULL, &sp_vec);
+#undef NKR_JOBJ
     efSync_Spawn(0x442, gobj, &sp_vec);
     Camera_RequestQuake(QuakeKind_Small, NULL);
     Ground_801C5414(0x136, 0xBA);

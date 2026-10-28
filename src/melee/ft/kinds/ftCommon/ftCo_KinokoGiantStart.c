@@ -65,7 +65,12 @@ void ftCo_800D15D0(Fighter_GObj* gobj)
         }
         fp->x2008 += percent;
     }
+#ifdef TARGET_PS3
+    // walk.fast_anim_frame overlaps mushroom.x8 with 64-bit pointers.
+    ftCo_800D2770(gobj, fp->mv.co.mushroom.scale_end);
+#else
     ftCo_800D2770(gobj, fp->mv.co.walk.fast_anim_frame);
+#endif
     ftCommon_8007E2FC(gobj);
     if (fp->ground_or_air == GA_Ground) {
         ft_8008A324(gobj);

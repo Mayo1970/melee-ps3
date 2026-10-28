@@ -114,7 +114,13 @@ void it_80272784(Item_GObj* item_gobj)
 
 Fighter* it_80272818(Item* item)
 {
+#ifdef TARGET_PS3
+    // The GameCube reads the Starman's first attribute word as a pointer.
+    return (Fighter*) (uintptr_t) *(u32*) item->xC4_article_data
+        ->x4_specialAttributes;
+#else
     return (&item->xC4_article_data->x4_specialAttributes->unk_2728)->fighter;
+#endif
 }
 
 /// Returns Item_GObj of the specified kind if part of

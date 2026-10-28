@@ -918,7 +918,14 @@ void Camera_ApplyQuake(CameraBounds* bounds, CameraTransformState* state)
     f32 input_x;
     f32 input_y;
     f32 depth_ratio;
+#ifdef TARGET_PS3
+    // The GameCube reaches cm_803BCB64 by its DOL offset from cm_803BCB18;
+    // the statics lie apart here.
+#define CAM_DESC cm_803BCB64
+#else
     struct CameraStaticData* data = (struct CameraStaticData*) &cm_803BCB18;
+#define CAM_DESC data->desc
+#endif
 
     input_x = game_camera.quake_offset.x * game_camera.quake_scale;
     input_y = game_camera.quake_offset.y * game_camera.quake_scale;
@@ -935,12 +942,12 @@ void Camera_ApplyQuake(CameraBounds* bounds, CameraTransformState* state)
     half_view_height =
         bounds->z_pos * tanf(0.5f * (0.017453292f * state->fov));
     viewport_x_scale =
-        data->desc.aspect *
+        CAM_DESC.aspect *
         (half_view_height /
-         (0.5f * (f32) (data->desc.viewport.xmax - data->desc.viewport.xmin)));
+         (0.5f * (f32) (CAM_DESC.viewport.xmax - CAM_DESC.viewport.xmin)));
     viewport_y_scale =
         half_view_height /
-        (0.5f * (f32) (data->desc.viewport.ymax - data->desc.viewport.ymin));
+        (0.5f * (f32) (CAM_DESC.viewport.ymax - CAM_DESC.viewport.ymin));
     depth_factor_y = Stage_GetCamZoomRate();
     depth_factor_x = Stage_GetCamMaxDepth() - depth_factor_y;
 
@@ -960,6 +967,7 @@ void Camera_ApplyQuake(CameraBounds* bounds, CameraTransformState* state)
     game_camera.quake_offset.x = 0.0f;
     game_camera.quake_offset.y = 0.0f;
 }
+#undef CAM_DESC
 
 void Camera_SetQuakeOffset(f32 x, f32 y)
 {

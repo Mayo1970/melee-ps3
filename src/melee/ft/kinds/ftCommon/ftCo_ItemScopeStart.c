@@ -24,6 +24,15 @@ typedef struct {
     s32 flag;  // 0x2344
 } ItemScopeVars;
 
+#ifdef TARGET_PS3
+// fp + 0x2340 is mv only with 32-bit pointers.
+#define SCOPE_VARS(fp) ((ItemScopeVars*) ((u8*) &(fp)->mv - 0x2340))
+#define SCOPE_X2340(fp) (*(f32*) &(fp)->mv)
+#else
+#define SCOPE_VARS(fp) ((ItemScopeVars*) (fp))
+#define SCOPE_X2340(fp) (((FighterOverlay*) (fp))->x2340)
+#endif
+
 FtMotionId fn_800D769C(Fighter* ft, FtMotionId msid)
 {
     if (ft->motion_id >= ftCo_MS_ItemScopeStartEmpty) {
@@ -45,7 +54,7 @@ void ft_800D76B8(Fighter_GObj* gobj)
     }
 
     {
-        ItemScopeVars* vars = (ItemScopeVars*) fp;
+        ItemScopeVars* vars = SCOPE_VARS(fp);
 
         ftAnim_8006EBA4(gobj);
         vars->timer = 0.0F;
@@ -69,7 +78,7 @@ void ft_800D7770(Fighter_GObj* gobj)
     }
 
     {
-        ItemScopeVars* vars = (ItemScopeVars*) fp;
+        ItemScopeVars* vars = SCOPE_VARS(fp);
 
         ftAnim_8006EBA4(gobj);
         ftCommon_ClampAirDrift(fp);
@@ -124,7 +133,7 @@ void fn_800D7938(Fighter_GObj* gobj)
     temp_r31 = GET_FIGHTER(temp_r30);
     if (temp_r31->item_gobj != NULL) {
         temp_r4 = it_80291DAC(temp_r31->item_gobj,
-                              (s32) ((FighterOverlay*) temp_r31)->x2340);
+                              (s32) SCOPE_X2340(temp_r31));
         if (temp_r4 != -1) {
             it_80291F14(temp_r31->item_gobj, temp_r4);
         }
@@ -145,7 +154,7 @@ void fn_800D79B4(HSD_GObj* gobj, void (*cb_ground)(HSD_GObj*),
 
     // Define an overlay struct to force direct offset access (prevents address
     // caching in r26/r27)
-    ItemScopeVars* fp_ovl = (ItemScopeVars*) fp;
+    ItemScopeVars* fp_ovl = SCOPE_VARS(fp);
 
     // Use this specific cast to generate the correct 'lfs' instruction for the
     // global int

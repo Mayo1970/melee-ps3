@@ -556,12 +556,23 @@ struct Command_03 {
 struct Command_04 {
     u32 x;
 };
+#ifdef TARGET_PS3
+// The native readers keep scripts as serialized bytes: a pointer is a word,
+// an offset into the archive's data (ps3_dat_script), and a command 4 bytes.
+struct Command_05 {
+    u32 ptr;
+};
+struct Command_07 {
+    u32 ptr;
+};
+#else
 struct Command_05 {
     CmdUnion* ptr;
 };
 struct Command_07 {
     CmdUnion* ptr;
 };
+#endif
 struct Command_09 {
     u32 id : 6;
     u32 param_1 : 8;

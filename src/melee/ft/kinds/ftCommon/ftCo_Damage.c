@@ -150,6 +150,11 @@ bool ftCo_8008DA4C(Fighter_GObj* gobj, HitElement arg1, enum_t arg2)
 {
     Fighter* fp = gobj->user_data;
     bool result;
+#ifdef TARGET_PS3
+    // With no damage the DOL returns a leftover register: the return address,
+    // or gobj where inlined (r31 in ftCo_8008E9D0), so true.
+    result = true;
+#endif
     if (fp->dmg.x1838_percentTemp) {
         switch (arg1) {
         case HitElement_Fire:

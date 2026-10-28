@@ -65,8 +65,13 @@ static size_t const _tyDisplay_804D6F10_len = 300;
 /* 31C1D0 */ static void _tyDisplay_8031C1D0(void);
 /* 4A2D98 */ static char _tyDisplay_devtext_buf[9 * (3 * 2)];
 /* 4A2DD0 */ static TyDspArchiveHolder _tyDisplay_804A2DD0;
+#ifdef TARGET_PS3
+// 44 archives, as on the GameCube; the game indexes up to 42.
+static HSD_Archive* _tyDisplay_804A2DE8[0xB0 / 4];
+#else
 /* 4A2DE8 */ static HSD_Archive*
     _tyDisplay_804A2DE8[0xB0 / sizeof(HSD_Archive*)];
+#endif
 /* 4D6F10 */ static HSD_JObj** _tyDisplay_804D6F10;
 /* 4D6F14 */ static TyDspGrid* _tyDisplay_804D6F14;
 /* 4D6F18 */ static TyDspConfig* _tyDisplay_804D6F18;
@@ -1828,7 +1833,11 @@ void tyDisplay_Scene_OnEnter(void* arg0)
     _tyDisplay_804D6F14 = HSD_MemAlloc(sizeof(*_tyDisplay_804D6F14));
     _tyDisplay_804D6F18 = HSD_MemAlloc(sizeof(*_tyDisplay_804D6F18));
     _tyDisplay_804D6F1C = HSD_MemAlloc(sizeof(*_tyDisplay_804D6F1C));
+#ifdef TARGET_PS3
+    Toy_sbss_804D6ED4 = HSD_MemAlloc(sizeof(*Toy_sbss_804D6ED4));
+#else
     Toy_sbss_804D6ED4 = HSD_MemAlloc(0xE4);
+#endif
 
     cfg = _tyDisplay_804D6F18;
     data = _tyDisplay_804D6F1C;
@@ -1856,7 +1865,11 @@ void tyDisplay_Scene_OnEnter(void* arg0)
     Toy_8031263C();
     memzero(_tyDisplay_804D6F1C, sizeof(*_tyDisplay_804D6F1C));
     memzero(_tyDisplay_804D6F18, sizeof(*_tyDisplay_804D6F18));
+#ifdef TARGET_PS3
+    memzero(Toy_sbss_804D6ED4, sizeof(*Toy_sbss_804D6ED4));
+#else
     memzero(Toy_sbss_804D6ED4, 0xE4);
+#endif
 
     cfg->x08 = Toy_GetTrophyTotal();
 
@@ -2166,6 +2179,18 @@ void _tyDisplay_8031BA78(s32 arg0, s32 arg1, f32 farg0)
     },
 };
 
+#ifdef TARGET_PS3
+// TyDspNameTables views the three tables from _tyDisplay_803B8988 at their
+// DOL offsets; they lie apart here.
+#define TYDSP_JOBJ_NAMES(t) (_tyDisplay_803B8988.entries)
+#define TYDSP_MATANIM_NAMES(t) (_tyDisplay_803B8A34.entries)
+#define TYDSP_ARCH_NAMES(t) (_tyDisplay_803B8AE0)
+#else
+#define TYDSP_JOBJ_NAMES(t) ((t)->jobj_names)
+#define TYDSP_MATANIM_NAMES(t) ((t)->matanim_names)
+#define TYDSP_ARCH_NAMES(t) ((t)->arch_names)
+#endif
+
 s32 tyDisplay_8031BB34(s8 idx)
 {
     TyDspArchNames table = _tyDisplay_803B8988;
@@ -2423,7 +2448,7 @@ s32 tyDisplay_8031C454(s32 arg0)
     temp = tables;
     if (archArr[idx] == NULL) {
         idx = entry->x04;
-        names1 = temp->arch_names;
+        names1 = TYDSP_ARCH_NAMES(temp);
         if ((s8) idx == -1) {
             idx = 0;
         }
@@ -2434,13 +2459,13 @@ s32 tyDisplay_8031C454(s32 arg0)
     }
 
     if (archArr[42] == NULL) {
-        names2 = tables->arch_names;
+        names2 = TYDSP_ARCH_NAMES(tables);
         archArr[42] = lbArchive_LoadSymbols(names2.entries[42], NULL);
     }
     temp2 = archArr[41];
     if (temp2 == NULL) {
         do {
-            names3 = temp->arch_names;
+            names3 = TYDSP_ARCH_NAMES(temp);
             archArr[41] = lbArchive_LoadSymbols(names3.entries[41], 0L);
         } while (entry->x04 * 0);
     }
@@ -2483,7 +2508,7 @@ HSD_JObj* tyDisplay_8031C5E4(s32 arg0)
     {
         u8 c = entry->x04;
         cat = c;
-        jobj_names1 = *(TyDspArchNames*) tables->jobj_names;
+        jobj_names1 = *(TyDspArchNames*) TYDSP_JOBJ_NAMES(tables);
         if ((s8) c == -1) {
             cat = 0;
         }
@@ -2495,7 +2520,7 @@ HSD_JObj* tyDisplay_8031C5E4(s32 arg0)
     {
         u8 c = entry->x04;
         cat = c;
-        matanim_names1 = *(TyDspArchNames*) tables->matanim_names;
+        matanim_names1 = *(TyDspArchNames*) TYDSP_MATANIM_NAMES(tables);
         if ((s8) c == -1) {
             cat = 0;
         }
@@ -2506,11 +2531,11 @@ HSD_JObj* tyDisplay_8031C5E4(s32 arg0)
     HSD_JObjSetTranslateX(child, entry->x08);
     HSD_JObjSetTranslateZ(child, entry->x0C);
 
-    jobj_names2 = *(TyDspArchNames*) tables->jobj_names;
+    jobj_names2 = *(TyDspArchNames*) TYDSP_JOBJ_NAMES(tables);
     HSD_JObjAddChild(root, HSD_JObjLoadJoint(un_8031C5E4_inline(
                                archives, 42, jobj_names2.entries[42])));
 
-    jobj_names3 = *(TyDspArchNames*) tables->jobj_names;
+    jobj_names3 = *(TyDspArchNames*) TYDSP_JOBJ_NAMES(tables);
     HSD_JObjAddChild(root, HSD_JObjLoadJoint(un_8031C5E4_inline(
                                archives, 41, jobj_names3.entries[41])));
 

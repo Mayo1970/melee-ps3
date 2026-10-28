@@ -387,8 +387,19 @@ void grFlatzone_802176BC(Ground_GObj* gobj)
     s32 trigger_machine = 0;
     Vec3 pos = grFz_803B8430;
     PAD_STACK(12);
+#ifdef TARGET_PS3
+    // flatzone2.xCC is 8 bytes here, so flatzone.xD0/xD4 and unk.xD0 miss
+    // flatzone2.xD0 and timer; use those.
+#define FZ_STATE gp->u.flatzone2.xD0
+#define FZ_TIMER gp->u.flatzone2.timer
+#define FZ_STATE2 gp->u.flatzone2.xD0
+#else
+#define FZ_STATE gp->u.flatzone.xD0
+#define FZ_TIMER gp->u.flatzone.xD4
+#define FZ_STATE2 gp->u.unk.xD0
+#endif
     if (gp->u.flatzone.xC4 != 0) {
-        if (gp->u.flatzone.xD0 == 3) {
+        if (FZ_STATE == 3) {
             HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN);
             if (gp->u.flatzone2.xCC == NULL) {
                 grDynamicAttr_801CA1C0(gp->u.flatzone2.xCC);
@@ -397,11 +408,11 @@ void grFlatzone_802176BC(Ground_GObj* gobj)
         }
         gp->u.flatzone.xC4 = 0;
         gp->u.flatzone2.xC8 = SIGN_RANDOM();
-        gp->u.flatzone.xD0 = 0;
-        gp->u.flatzone.xD4 = yakumono_param->unk20;
+        FZ_STATE = 0;
+        FZ_TIMER = yakumono_param->unk20;
         if (gp->u.flatzone2.xC8 == 1.0f) {
             pos.x = yakumono_param->unk24;
-            gp->u.flatzone.xD4 = (s32) ((f32) gp->u.flatzone.xD4 / 2.0f);
+            FZ_TIMER = (s32) ((f32) FZ_TIMER / 2.0f);
         } else {
             pos.x = yakumono_param->unk28;
             {
@@ -464,7 +475,7 @@ void grFlatzone_802176BC(Ground_GObj* gobj)
             f32 other_x;
             f32 other_z;
             s32 line_id;
-            gp->u.unk.xD0 = 3;
+            FZ_STATE2 = 3;
             gp->u.flatzone2.timer = yakumono_param->unk3C;
             HSD_JObjGetTranslation(jobj, &pos);
             pos.x = (36.0f * gp->u.flatzone2.xC8) + pos.x;
@@ -526,6 +537,9 @@ void grFlatzone_802176BC(Ground_GObj* gobj)
     }
     Ground_UpdateMapColl(gobj);
 }
+#undef FZ_STATE
+#undef FZ_TIMER
+#undef FZ_STATE2
 
 void grFlatzone_80217CD0(Ground_GObj* gobj) {}
 

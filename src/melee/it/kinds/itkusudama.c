@@ -193,6 +193,10 @@ static inline ItemKind it_80289BE8_spawn_random(Item_GObj* gobj, f32 vel_scale,
             return -1;
         }
     }
+#ifdef TARGET_PS3
+    // The GameCube stores the previous kind here (r29), or garbage at first.
+    return -1;
+#endif
 }
 
 static inline void it_80289BE8_spawn(Item_GObj* gobj, ItemKind kind,

@@ -13,6 +13,10 @@ typedef struct MnName_GObj {
     /* +38 */ void* x38;
     /* +3C */ HSD_Text* text;
     /* +40 */ HSD_Text* text2;
+#ifdef TARGET_PS3
+    // Joint 7, which the GameCube keeps in the low word of gxlink_prios.
+    HSD_JObj* x24;
+#endif
 } MnName_GObj;
 
 /* 23749C */ char* mnName_8023749C(int slot);

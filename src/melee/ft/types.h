@@ -692,9 +692,14 @@ typedef struct ftData_x44_t {
     float ledge_snap_height;
 } ftData_x44_t;
 
+/// A costume's texture animation indices (#ftAnim_80070200).
+typedef u16* FtCostumeTObjIndices DAT_COUNT(ftData_x8_x8::x8);
+
 struct ftData_x8_x8 {
     /*  +8 */ u32 x8;
-    /*  +C */ u16** xC;
+    /// A list per costume, the default's (0) where an entry is NULL.
+    /*  +C */ FtCostumeTObjIndices* xC DAT_EXTENT
+        DAT_BIND(ftData_x8_x8::x8, x8);
 };
 
 /// A visibility lookup for each model of #FtPartsDesc.
@@ -1666,7 +1671,13 @@ struct Fighter {
         /* fp+1864 */ int x1864;
         /* fp+1868 */ HSD_GObj* x1868_source;
         /* fp+186C */ int x186c;
+#ifdef TARGET_PS3
+        // ftColl_8007A06C writes a DmgResult here (dir first); it needs
+        // the record 8-aligned, like at facing_dir_1, for its source pointer.
+        /* fp+1870 */ float x1870 __attribute__((aligned(8)));
+#else
         /* fp+1870 */ struct DmgLogEntry* x1870;
+#endif
         /* fp+1874 */ int x1874;
         /* fp+1878 */ int x1878;
         /* fp+187C */ float x187c;
@@ -2141,8 +2152,15 @@ typedef struct ftData_UnkModelStruct {
 
 struct ftData_80085FD4_ret {
     /* +0 */ const char* x0;
+#ifdef TARGET_PS3
+    // The code views Fighter_WaitAnimData entries as this; with 64-bit
+    // pointers it needs that struct's 32-bit x4 and x8.
+    /* +4 */ s32 x4;
+    /* +8 */ s32 x8;
+#else
     /* +4 */ UNK_T x4;
     /* +8 */ size_t x8;
+#endif
     /* +C */ UNK_T xC;
     /* +10:0 */ u8 x10_b0 : 1;
     /* +10:1 */ u8 x10_b1 : 1;

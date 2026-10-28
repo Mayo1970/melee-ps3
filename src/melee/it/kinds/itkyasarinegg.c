@@ -134,7 +134,12 @@ void it_802EFD84(Item_GObj* gobj)
 
 bool itKyasarinegg_UnkMotion4_Anim(Item_GObj* gobj)
 {
+#ifdef TARGET_PS3
+    // The DOL returns it_802751D8's r3: true when the egg's life ends.
+    return it_802751D8(gobj);
+#else
     it_802751D8(gobj);
+#endif
 }
 
 static inline bool it_damage_inline(Item_GObj* gobj)

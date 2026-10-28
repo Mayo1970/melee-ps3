@@ -2,6 +2,7 @@
 // only while holding it, so a handler never runs inside a disabled section of any thread.
 #include "intr.h"
 #include "diag.h"
+#include "prof.h"
 #include "sync.h"
 
 #include <stdbool.h>
@@ -9,6 +10,7 @@
 #include <dolphin/os.h>
 
 Ps3Diag ps3_diag;
+Ps3Prof ps3_prof;
 
 static PsMutex intr_lock = PS_MUTEX_INIT;
 // Its address differs per thread; ps3_intr_init keeps the main thread's.
@@ -219,7 +221,11 @@ void OSSleepThread(OSThreadQueue* queue)
     BOOL level = OSDisableInterrupts();
     u32* wakeups = queue_wakeups(queue);
     u32 seen = *wakeups;
+    uint64_t t = ps3_prof_now();
 
+    if (&thread_marker == main_marker) {
+        ps3_diag.main_sleep = queue;
+    }
     while (*wakeups == seen) {
         const char* owner = ps3_diag.intr_owner;
 
@@ -227,6 +233,10 @@ void OSSleepThread(OSThreadQueue* queue)
         ps3_diag.intr_owner = NULL;
         ps_cond_wait(&sleep_cond, &intr_lock);
         ps3_diag.intr_owner = owner;
+    }
+    if (&thread_marker == main_marker) {
+        ps3_prof_lap(PROF_MAIN_SLEEP, &t);
+        ps3_diag.main_sleep = NULL;
     }
     OSRestoreInterrupts(level);
 }

@@ -142,6 +142,18 @@ typedef struct grBb_GroundStateFlag {
     s32 xCC;
 } grBb_GroundStateFlag;
 
+#ifdef TARGET_PS3
+// Car lane i is at gp + 0xD4 + 0x40 * i on the GameCube. The lanes, the
+// platform vars and data[] hold no pointers, so their offsets hold from these.
+#define BB_LANES(gp)                                                          \
+    ((u8*) (gp) + offsetof(Ground, u.bigblue.x0_u.car.lanes) - 0xD4)
+#define BB_PLATFORM(gp) ((u8*) (gp) + offsetof(Ground, u) - 0xC4)
+#define BB_DATA(gp)                                                           \
+    ((u8*) (gp) + offsetof(Ground, u.bigblue.x0_u.x0_s.data) - 0xE4)
+#else
+#define BB_LANES(gp) ((u8*) (gp))
+#endif
+
 GrJoint grBb_803E2938[] = {
     { 36, 34, 10 }, { 37, 34, 10 }, { 38, 34, 7 },  { 39, 34, 7 },
     { 40, 34, 7 },  { 41, 34, 14 }, { 42, 34, 14 }, { 43, 34, 14 },
@@ -517,7 +529,12 @@ void grBigBlue_801E6364(Ground_GObj* gobj)
     scale.x = scale.y = scale.z = 1.0F;
     HSD_JObjSetScale(jobj, &scale);
 
+#ifdef TARGET_PS3
+    gp->u.bigblue.x0_u.car.collision_jobjs =
+        HSD_MemAlloc(30 * sizeof(HSD_JObj*));
+#else
     gp->u.bigblue.x0_u.car.collision_jobjs = HSD_MemAlloc(120);
+#endif
     HSD_ASSERT(774, gp->u.carnull.coll_jobj);
 
     gp->u.bigblue.x0_u.car.ranks = HSD_MemAlloc(30);
@@ -1410,6 +1427,14 @@ static f32 grBigBlue_801E8B84_noinline_2(f32 right, f32 left, f32 bottom,
     return grBigBlue_801E8B84_noinline_1(right, left, bottom, top);
 }
 
+#ifdef TARGET_PS3
+// &gp->x20[8] is gp + 0x40 on the GameCube: the next car lane.
+#define BB_NEXT_LANE(gp)                                                      \
+    ((Ground*) ((u8*) (gp) + sizeof(struct grBigBlue_CarLane)))
+#else
+#define BB_NEXT_LANE(gp) ((Ground*) &(gp)->x20[8])
+#endif
+
 f32 grBigBlue_801E8B84(f32 right, f32 left, f32 bottom, f32 top)
 {
     Ground* gp = Ground_GetMapGObj(33)->user_data;
@@ -1433,7 +1458,7 @@ f32 grBigBlue_801E8B84(f32 right, f32 left, f32 bottom, f32 top)
     }
 
     state = gp->u.bigblue.x0_u.car.lanes[i + 1].x0.x0.state;
-    gp = (Ground*) &gp->x20[8];
+    gp = BB_NEXT_LANE(gp);
     if ((unsigned) state != 1U) {
         if (gp->u.bigblue.x0_u.car.lanes[0].pos.y < right &&
             gp->u.bigblue.x0_u.car.lanes[0].pos.y > left)
@@ -1450,7 +1475,7 @@ f32 grBigBlue_801E8B84(f32 right, f32 left, f32 bottom, f32 top)
     }
 
     state = gp->u.bigblue.x0_u.car.lanes[1].x0.x0.state;
-    gp = (Ground*) &gp->x20[8];
+    gp = BB_NEXT_LANE(gp);
     if ((unsigned) state != 1U) {
         if (gp->u.bigblue.x0_u.car.lanes[0].pos.y < right &&
             gp->u.bigblue.x0_u.car.lanes[0].pos.y > left)
@@ -1466,7 +1491,7 @@ f32 grBigBlue_801E8B84(f32 right, f32 left, f32 bottom, f32 top)
     }
 
     state = gp->u.bigblue.x0_u.car.lanes[1].x0.x0.state;
-    gp = (Ground*) &gp->x20[8];
+    gp = BB_NEXT_LANE(gp);
     if ((unsigned) state != 1U) {
         if (gp->u.bigblue.x0_u.car.lanes[0].pos.y < right &&
             gp->u.bigblue.x0_u.car.lanes[0].pos.y > left)
@@ -1522,7 +1547,12 @@ void grBigBlue_801E8D64(Ground_GObj* gobj)
     {
         HSD_GObj* other = Ground_GetMapGObj(32);
         Ground* other_gp = other->user_data;
+#ifdef TARGET_PS3
+        // Offset 0xCC of the manager (gobj 32) is event_data[1].
+        other_gp->u.bigblue.x0_u.manager.event_data[1] = (void*) 1;
+#else
         *(s32*) ((u8*) other_gp + 0xCC) = 1;
+#endif
     }
 
     y_pos = grBigBlue_801EC58C(&pos, NULL, 500.0f);
@@ -1537,9 +1567,15 @@ void grBigBlue_801E8D64(Ground_GObj* gobj)
 
     HSD_JObjSetTranslateZ(jobj, 0.0F);
 
+#ifdef TARGET_PS3
+    gp->u.bigblue.x0_u.platform.xD8 = 0.0F;
+    gp->u.bigblue.x0_u.platform.xC8_timer = (s32) yakumono_param->xD8;
+    gp->u.bigblue.x0_u.x0_s.x0_u.x0_s.x0 = 2;
+#else
     *(f32*) ((u8*) gp + 0xD8) = 0.0F;
     *(s32*) ((u8*) gp + 0xC8) = (s32) yakumono_param->xD8;
     *((u8*) gp + 0xC4) = 2;
+#endif
 
     grAnime_801C8138(gobj, gp->map_id, 0);
 
@@ -1603,7 +1639,11 @@ void grBigBlue_801E93D8(Ground_GObj* gobj)
     u8 pad[4];
     Vec3 check_pos;
     Ground* gp = gobj->user_data;
+#ifdef TARGET_PS3
+    u8* bp = BB_PLATFORM(gp);
+#else
     u8* bp = (u8*) gp;
+#endif
     HSD_JObj* jobj = GET_JOBJ(gobj);
     PAD_STACK(56);
 
@@ -1636,8 +1676,13 @@ void grBigBlue_801E93D8(Ground_GObj* gobj)
 
         switch (state) {
         case 0:
+#ifdef TARGET_PS3
+            if (GET_GROUND(Ground_GetMapGObj(32))
+                    ->u.bigblue.x0_u.manager.event_data[1] != NULL)
+#else
             if (((grBb_GroundStateFlag*) Ground_GetMapGObj(32)->user_data)
                     ->xCC != 0)
+#endif
             {
                 s32 count = grBigBlue_CountCars();
 
@@ -1731,7 +1776,11 @@ void grBigBlue_801E93D8(Ground_GObj* gobj)
 
                     *(f32*) (bp + 0xD8) = yakumono_param->xD0;
                     bp[0xC4] = 3;
+#ifdef TARGET_PS3
+                    mgp = BB_DATA(Ground_GetMapGObj(32)->user_data);
+#else
                     mgp = Ground_GetMapGObj(32)->user_data;
+#endif
                     idx = 0;
                     p = mgp;
 
@@ -1755,6 +1804,16 @@ void grBigBlue_801E93D8(Ground_GObj* gobj)
                 if (pos.x > (50.0f + Stage_GetBlastZoneRightOffset())) {
                     HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN);
                     *(f32*) (bp + 0xD8) = 0.0f;
+#ifdef TARGET_PS3
+                    {
+                        Ground* mgp2 = GET_GROUND(Ground_GetMapGObj(32));
+                        mgp2->u.bigblue.x0_u.manager.event_data[1] = NULL;
+                        if (jobj != NULL) {
+                            mgp2->u.bigblue.x0_u.manager.event_extra = jobj;
+                        }
+                        mgp2->u.bigblue.x0_u.manager.event_data[0] = (void*) 1;
+                    }
+#else
                     {
                         grBb_GroundStateFlag* manager =
                             Ground_GetMapGObj(32)->user_data;
@@ -1767,6 +1826,7 @@ void grBigBlue_801E93D8(Ground_GObj* gobj)
                         }
                         *(s32*) (mgp2 + 0xC8) = 1;
                     }
+#endif
                     *(f32*) (bp + 0xCC) = 0.0f;
                     HSD_JObjSetRotationZ(jobj, 0.0f);
                     bp[0xC4] = 0;
@@ -1878,8 +1938,15 @@ void grBigBlue_801E9F3C(Ground_GObj* gobj)
 
     HSD_JObjSetScale(jobj, &v);
 
+#ifdef TARGET_PS3
+    // Offset 0xD0 of the manager (gobj 32) is event_data[2].
+    gp->u.bigblue.x0_u.x0_s.x0_u.x0_s.x0 = 0;
+    GET_GROUND(Ground_GetMapGObj(32))->u.bigblue.x0_u.manager.event_data[2] =
+        NULL;
+#else
     ((u8*) gp)[0xC4] = 0;
     *(s32*) ((u8*) GET_GROUND(Ground_GetMapGObj(32)) + 0xD0) = 0;
+#endif
     grAnime_801C8138(gobj, gp->map_id, 0);
 }
 
@@ -1926,7 +1993,13 @@ void grBigBlue_801EA05C(Ground_GObj* gobj)
 
     switch ((s8) gp->u.bigblue.x0_u.x0_s.x0_u.x0_s.x0) {
     case 0:
+#ifdef TARGET_PS3
+        if (GET_GROUND(Ground_GetMapGObj(32))
+                ->u.bigblue.x0_u.manager.event_data[2] != NULL)
+        {
+#else
         if (*(s32*) ((u8*) GET_GROUND(Ground_GetMapGObj(32)) + 0xD0) != 0) {
+#endif
             gp->u.bigblue.x0_u.platform.xC8_timer = 0;
             gp->u.bigblue.x0_u.platform.xD0_timer = 0;
             gp->u.bigblue.x0_u.platform.xCC_timer = 0;
@@ -2179,8 +2252,15 @@ void grBigBlue_801EA05C(Ground_GObj* gobj)
             gp->u.bigblue.x0_u.platform.xEC = 0.0f;
             gp->u.bigblue.x0_u.platform.velocity.z = 0.0f;
             gp->u.bigblue.x0_u.platform.velocity.y = 0.0f;
+#ifdef TARGET_PS3
+            // x0_s.xD0 is event_data[2] on the GameCube; here it is that
+            // pointer's high half.
+            GET_GROUND(Ground_GetMapGObj(32))
+                ->u.bigblue.x0_u.manager.event_data[2] = NULL;
+#else
             *(u32*) &GET_GROUND(Ground_GetMapGObj(32))
                  ->u.bigblue.x0_u.x0_s.xD0 = 0;
+#endif
             gp->u.bigblue.x0_u.x0_s.x0_u.x0_s.x0 = 0;
         }
         break;
@@ -2273,9 +2353,15 @@ s32 grBigBlue_801EACE8(HSD_JObj* exclude, Vec3* point, f32* out_y,
             continue;
         }
 
+#ifdef TARGET_PS3
+        if ((int) gp->u.bigblue.x0_u.x0_s.data[i].x1 != 3) {
+            continue;
+        }
+#else
         if ((int) ((u8*) gp)[0xE5 + i * 0x54] != 3) {
             continue;
         }
+#endif
 
         HSD_JObjGetTranslation2(jobj, &pos);
 
@@ -3138,7 +3224,7 @@ static inline void grBigBlue_FindClosestCar(Ground* gp, s32* found_ten,
     f32 closest_dist = F32_MAX;
     f32 dist;
     s32 car_idx;
-    u8* car_p = (u8*) gp;
+    u8* car_p = BB_LANES(gp);
     s32 ctr;
     s32 j;
 
@@ -3238,7 +3324,7 @@ void grBigBlue_801ECB50(Ground_GObj* gobj)
 
     /* Count active cars (not in state 1, 7, or 8) */
     {
-        u8* bp = (u8*) gp;
+        u8* bp = BB_LANES(gp);
         u8* p;
         u32 st;
         st = (bp[0xD4] >> 2) & 0x3F;
@@ -3267,7 +3353,7 @@ void grBigBlue_801ECB50(Ground_GObj* gobj)
 
     /* Find closest car */
     {
-        u8* bp = (u8*) gp;
+        u8* bp = BB_LANES(gp);
         s32 found_ten;
         s32 closest_lane;
 
@@ -3283,6 +3369,8 @@ void grBigBlue_801ECB50(Ground_GObj* gobj)
             byte = target_car[0xD4];
 #ifdef MUST_MATCH
             asm { rlwimi byte, st_val, 2, 24, 29 }
+#elif defined(TARGET_PS3)
+            byte = (byte & 0x03) | (u8) (st_val << 2);
 #endif
             target_car[0xD4] = byte;
 
@@ -3297,6 +3385,8 @@ void grBigBlue_801ECB50(Ground_GObj* gobj)
                     byte = bp[0xD4];
 #ifdef MUST_MATCH
                     asm { rlwimi byte, st_val, 2, 24, 29 }
+#elif defined(TARGET_PS3)
+                    byte = (byte & 0x03) | (u8) (st_val << 2);
 #endif
                     bp[0xD4] = byte;
                 }
@@ -3313,6 +3403,8 @@ void grBigBlue_801ECB50(Ground_GObj* gobj)
                     byte = p[0xD4];
 #ifdef MUST_MATCH
                     asm { rlwimi byte, st_val, 2, 24, 29 }
+#elif defined(TARGET_PS3)
+                    byte = (byte & 0x03) | (u8) (st_val << 2);
 #endif
                     p[0xD4] = byte;
                 }
@@ -3330,6 +3422,8 @@ void grBigBlue_801ECB50(Ground_GObj* gobj)
                     byte = p[0xD4];
 #ifdef MUST_MATCH
                     asm { rlwimi byte, st_val, 2, 24, 29 }
+#elif defined(TARGET_PS3)
+                    byte = (byte & 0x03) | (u8) (st_val << 2);
 #endif
                     p[0xD4] = byte;
                 }
@@ -3347,6 +3441,8 @@ void grBigBlue_801ECB50(Ground_GObj* gobj)
                     byte = p[0xD4];
 #ifdef MUST_MATCH
                     asm { rlwimi byte, st_val, 2, 24, 29 }
+#elif defined(TARGET_PS3)
+                    byte = (byte & 0x03) | (u8) (st_val << 2);
 #endif
                     p[0xD4] = byte;
                 }
@@ -3356,7 +3452,7 @@ void grBigBlue_801ECB50(Ground_GObj* gobj)
 
     /* Timer-based car spawn */
     {
-        u8* bp = (u8*) gp;
+        u8* bp = BB_LANES(gp);
         u8* p;
         u32 st;
         s16 timer = gp->u.bigblue.x0_u.car.spawn_timer;
@@ -3520,6 +3616,19 @@ void grBigBlue_801ECB50(Ground_GObj* gobj)
     }
 }
 
+#ifdef TARGET_PS3
+// A view of the car Ground at its GameCube offsets; the car vars moved here.
+typedef union grBigBlue_CarPhysics {
+    u8 raw[sizeof(Ground)];
+    struct grBigBlue_CarPhysics_data {
+        u8 pad_0[offsetof(Ground, u.bigblue.x0_u.car.collision_jobjs)];
+        HSD_JObj** jobjs;
+        u8 pad_CC[offsetof(Ground, u.bigblue.x0_u.car.lanes) -
+                  offsetof(Ground, u.bigblue.x0_u.car.ranks)];
+        struct grBigBlue_CarLane lanes[4];
+    } data;
+} grBigBlue_CarPhysics;
+#else
 typedef union grBigBlue_CarPhysics {
     u8 raw[0x1D4];
     struct grBigBlue_CarPhysics_data {
@@ -3529,6 +3638,7 @@ typedef union grBigBlue_CarPhysics {
         struct grBigBlue_CarLane lanes[4];
     } data;
 } grBigBlue_CarPhysics;
+#endif
 
 void grBigBlue_801ED694(Ground_GObj* gobj, s32 lane)
 {
@@ -3579,7 +3689,11 @@ void grBigBlue_801ED694(Ground_GObj* gobj, s32 lane)
             active = 0;
             behind = 0;
 
+#ifdef TARGET_PS3
+            for (idx = 0, iter = BB_LANES(gp); idx < 4; idx++, iter += 0x40) {
+#else
             for (idx = 0, iter = gp->raw; idx < 4; idx++, iter += 0x40) {
+#endif
                 u32 st = (iter[0xD4] >> 2) & 0x3F;
                 if (st != 1 && st != 7 && st != 8) {
                     active++;
@@ -3747,8 +3861,14 @@ void grBigBlue_801ED694(Ground_GObj* gobj, s32 lane)
                 HSD_ASSERT(3255, map_gobj);
                 gp2 = (u8*) map_gobj->user_data;
                 HSD_ASSERT(3256, gp2);
+#ifdef TARGET_PS3
+                gp->data.lanes[lane].pos.y +=
+                    ((Ground*) gp2)->u.bigblue.x0_u.road.position.y -
+                    ((Ground*) gp2)->u.bigblue.x0_u.road.previous_position.y;
+#else
                 gp->data.lanes[lane].pos.y +=
                     *(f32*) (gp2 + 0xCC) - *(f32*) (gp2 + 0xD8);
+#endif
             }
         }
     } else {
@@ -3952,6 +4072,21 @@ s32 grBigBlue_801EDF44(Ground_GObj* gobj, s32 index)
     return result;
 }
 
+#ifdef TARGET_PS3
+// A view of the car Ground at its GameCube offsets; the car vars moved here.
+typedef union grBb_CarGround {
+    Ground ground;
+    struct grBb_CarGround_typed {
+        u8 pad_0[offsetof(Ground, u.bigblue.x0_u.car.collision_jobjs)];
+        HSD_JObj** jobjs;
+        u8* ranks;
+        u8 pad_D0[offsetof(Ground, u.bigblue.x0_u.car.lanes) -
+                  offsetof(Ground, u.bigblue.x0_u.car.spawn_timer)];
+        struct grBigBlue_CarLane cars[4];
+    } typed;
+    u8 bytes[sizeof(Ground)];
+} grBb_CarGround;
+#else
 typedef union grBb_CarGround {
     Ground ground;
     struct grBb_CarGround_typed {
@@ -3963,6 +4098,7 @@ typedef union grBb_CarGround {
     } typed;
     u8 bytes[0x1D4];
 } grBb_CarGround;
+#endif
 
 static inline s32 grBigBlue_801EE398_sfx(void)
 {
@@ -4233,7 +4369,11 @@ bool grBigBlue_801EEF00(Ground_GObj* gobj, s32 index)
     offset = index << 6;
     gp = gobj->user_data;
 
+#ifdef TARGET_PS3
+    switch ((*(volatile u8*) (BB_LANES(gp) + offset + 0xD4) >> 2) & 0x3F) {
+#else
     switch ((*(volatile u8*) (gp->bytes + offset + 0xD4) >> 2) & 0x3F) {
+#endif
     case 1:
         return 0;
 
@@ -4381,7 +4521,11 @@ bool grBigBlue_801EEF00(Ground_GObj* gobj, s32 index)
 
     case 5:
     case 6: {
+#ifdef TARGET_PS3
+        u8* car = BB_LANES(gp) + offset;
+#else
         u8* car = gp->bytes + offset;
+#endif
         f32* alpha = (f32*) (car + 0xEC);
 
         *(f32*) (car + 0x100) = 0.0F;
@@ -4446,12 +4590,12 @@ void grBigBlue_801EF424(Ground_GObj* gobj)
     while (k < 10 && changed != 0) {
         changed = 0;
 
-        for (i = 0, car_i = (u8*) gp; i < 4; i++, car_i += 0x40) {
+        for (i = 0, car_i = BB_LANES(gp); i < 4; i++, car_i += 0x40) {
             if ((u32) ((car_i[0xD4] >> 2) & 0x3F) == 1U) {
                 continue;
             }
 
-            for (j = 0, car_j = (u8*) gp; j < 4; j++, car_j += 0x40) {
+            for (j = 0, car_j = BB_LANES(gp); j < 4; j++, car_j += 0x40) {
                 if (i == j) {
                     continue;
                 }
@@ -4525,7 +4669,7 @@ void fn_801EF60C(void* user_data, int joint_id, CollData* coll, int coll_x50,
     HSD_ASSERT(0xED9, car_num!=Gr_Fzero_Car_Max);
 
     params = yakumono_param;
-    p = (u8*) gp;
+    p = BB_LANES(gp);
 
     for (i = 0; i < 4; i++) {
         hw = *(u16*) (p + 0xD4);

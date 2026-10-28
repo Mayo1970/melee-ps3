@@ -131,17 +131,21 @@ static void fn_8019EFC4(HSD_PadStatus* pad)
         HSD_JObjReqAnimAll(lbl_80479A98.x5C, (f32) lbl_80479A98.x6C);
         {
             s32 i;
+#ifdef TARGET_PS3
+            // Byte 0x28 + 4 * i is jobj_slots[9 + i] on the GameCube, which
+            // fn_8019F9C4 fills; the pointers are 8 bytes here.
+#define JOBJ_SLOT(i) lbl_80479A98.x4_u.jobj_slots[9 + (i)]
+#else
+#define JOBJ_SLOT(i) ((HSD_JObj**) ((u8*) &lbl_80479A98 + 0x28))[i]
+#endif
             for (i = 10; i > 0; i--) {
                 if (i > lbl_80479A98.x70) {
-                    HSD_JObjSetFlags(
-                        ((HSD_JObj**) ((u8*) &lbl_80479A98 + 0x28))[i],
-                        JOBJ_HIDDEN);
+                    HSD_JObjSetFlags(JOBJ_SLOT(i), JOBJ_HIDDEN);
                 } else {
-                    HSD_JObjClearFlags(
-                        ((HSD_JObj**) ((u8*) &lbl_80479A98 + 0x28))[i],
-                        JOBJ_HIDDEN);
+                    HSD_JObjClearFlags(JOBJ_SLOT(i), JOBJ_HIDDEN);
                 }
             }
+#undef JOBJ_SLOT
         }
         HSD_JObjAnimAll(child_next);
     }

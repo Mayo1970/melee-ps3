@@ -15,7 +15,12 @@ int ft_804D6570;
 
 ColorOverlay* ftCo_800C0658(Fighter* fp)
 {
+#ifdef TARGET_PS3
+    // The colanim id is in .i, the high half of the 64-bit .ptr here.
+    return fp->x408.x28_colanim.i != 0 ? &fp->x408 : &fp->x488;
+#else
     return (int) fp->x408.x28_colanim.ptr != 0 ? &fp->x408 : &fp->x488;
+#endif
 }
 
 ColorOverlay* ftCo_800C0674(Fighter_GObj* gobj)
@@ -31,7 +36,12 @@ enum_t ftCo_800C0694(Fighter* fp)
 
 int ftCo_800C06B4(Fighter* fp)
 {
+#ifdef TARGET_PS3
+    // The GameCube adds x7B's offset to the id it reads as a 32-bit pointer.
+    return fp->x508.x28_colanim.i + 0x7B;
+#else
     return (int) &fp->x508.x28_colanim.ptr->x7B;
+#endif
 }
 
 void ftCo_800C06C0(void)

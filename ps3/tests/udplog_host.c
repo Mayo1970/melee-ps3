@@ -4,7 +4,11 @@
 #include <stdarg.h>
 #include <stdio.h>
 
-void ps3_log_init(void) {}
+// Line by line, so a crash keeps the log up to it.
+void ps3_log_init(void)
+{
+    setvbuf(stdout, NULL, _IOLBF, 0);
+}
 
 void ps3_log(const char* fmt, ...)
 {

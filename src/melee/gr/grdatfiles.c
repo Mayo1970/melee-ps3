@@ -27,8 +27,15 @@ void grDatFiles_801C5FC0(HSD_Archive* archive, void* data, size_t length)
     int* map_ptcl;
     int* map_texg;
     lbArchive_InitializeDAT(archive, data, length);
+#ifdef TARGET_PS3
+    // A typed lookup gives a native copy; grDatFiles_801C6038 loads the
+    // serialized banks, so those must be the ones located.
+    map_ptcl = HSD_ArchiveGetPublicAddress(archive, "map_ptcl");
+    map_texg = HSD_ArchiveGetPublicAddress(archive, "map_texg");
+#else
     map_ptcl = HSD_ArchiveGetPublicAs(int, archive, "map_ptcl");
     map_texg = HSD_ArchiveGetPublicAs(int, archive, "map_texg");
+#endif
 
     if (map_ptcl != NULL && map_texg != NULL) {
         psInitDataBankLocate(map_ptcl, map_texg, NULL);

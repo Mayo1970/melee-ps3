@@ -852,7 +852,7 @@ typedef struct itGamewatchchefAttrEntry {
 } itGamewatchchefAttrEntry;
 
 typedef struct itGamewatchchefAttributes {
-    /* +0 */ void* x0;
+    /* +0 */ struct it_266F_ItemVars* x0;
     /* +4 */ f32 x4;
     /* +8 */ f32 x8;
     /* +C */ f32 xC;
@@ -860,7 +860,7 @@ typedef struct itGamewatchchefAttributes {
 } itGamewatchchefAttributes;
 
 typedef struct itGamewatchAttributes {
-    /* +0 */ void* x0;
+    /* +0 */ struct it_266F_ItemVars* x0;
 } itGamewatchAttributes;
 
 typedef struct itHinoarashi_ItemVars {

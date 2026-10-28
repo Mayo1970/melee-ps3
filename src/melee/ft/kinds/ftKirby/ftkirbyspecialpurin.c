@@ -547,7 +547,12 @@ static inline void ftKb_AirScaleAnimStep(Fighter_GObj* gobj, Vec3* scale,
     if (frame >= 0 && frame < 4) {
         scale->x = fp->u.kb.x8C.x;
         scale->y = fp->u.kb.x8C.y * scale_base[frame];
+#ifdef TARGET_PS3
+        // The DOL keeps ftKb_Init_803CB720 right after scale_base's table.
+        scale->z = fp->u.kb.x8C.z * ftKb_Init_803CB720[frame];
+#else
         scale->z = fp->u.kb.x8C.z * scale_base[frame + 4];
+#endif
         HSD_JObjSetScale(jobj, scale);
         fp->mv.pr.specialn.x8 += 1;
     } else {

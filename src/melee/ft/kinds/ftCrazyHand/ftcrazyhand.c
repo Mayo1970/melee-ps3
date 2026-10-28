@@ -628,10 +628,18 @@ void ftCh_Init_OnLoad(HSD_GObj* gobj)
     fp->cur_pos.x = ftData_attr->x18;
     fp->cur_pos.y = ftData_attr->x1C;
     fp->cur_pos.z = 0.0f;
+#ifdef TARGET_PS3
+    // unk0.x28..x34 are the grab item pointers only with 32-bit pointers.
+    fp->mv.ch.grab.x28 = NULL;
+    fp->mv.ch.grab.x2C = NULL;
+    fp->mv.ch.grab.x30 = NULL;
+    fp->mv.ch.grab.x34 = NULL;
+#else
     fp->mv.ch.unk0.x28 = 0;
     fp->mv.ch.unk0.x2C = 0;
     fp->mv.ch.unk0.x30 = 0;
     fp->mv.ch.unk0.x34 = 0;
+#endif
     fp->mv.ch.unk0.x38 = -1;
     fp->mv.ch.unk0.x3C = -1;
     fp->mv.ch.unk0.x40 = -1;

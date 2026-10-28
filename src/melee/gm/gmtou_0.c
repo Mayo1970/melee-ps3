@@ -2194,7 +2194,8 @@ void fn_80194D84(s32* state, u32 buttons, u32 trigger)
     }
 }
 
-#ifdef MUST_MATCH
+// A view of TmData: x37 must stay packed (0x12 stride, x9 at odd offsets).
+#if defined(MUST_MATCH) || defined(TARGET_PS3)
 #pragma pack(push, 1)
 #endif
 typedef struct TmData_80194F30 {
@@ -2219,7 +2220,7 @@ typedef struct TmData_80194F30 {
         u8 pad_X10[0x12 - 0x10];
     } x37[64];
 } TmData_80194F30;
-#ifdef MUST_MATCH
+#if defined(MUST_MATCH) || defined(TARGET_PS3)
 #pragma pack(pop)
 #endif
 

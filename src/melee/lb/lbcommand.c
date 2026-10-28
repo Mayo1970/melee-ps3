@@ -3,6 +3,9 @@
 #include "inlines.h"
 #include "lb_0219.h"
 #include "types.h"
+#ifdef TARGET_PS3
+#include <ps3_dat.h>
+#endif
 
 void (*lbCommand_803B9840[16])(CommandInfo*) = {
     Command_00, Command_01, Command_02, Command_03, Command_04, Command_05,
@@ -42,6 +45,17 @@ void Command_03(CommandInfo* info)
 /// Execute Loop
 void Command_04(CommandInfo* info)
 {
+#ifdef TARGET_PS3
+    // The GameCube reaches the loop's count and start as 32-bit words from
+    // info; they are the last two event_return entries (Command_03).
+    union CmdUnion** top = &info->event_return[info->loop_count - 1];
+
+    *top = (union CmdUnion*) ((uintptr_t) *top - 1);
+    if ((s32) (uintptr_t) *top) {
+        info->x8.u = top[-1];
+        return;
+    }
+#else
     u32* ptr = (u32*) info;
     ptr[info->loop_count + 3] -= 1;
 
@@ -49,6 +63,7 @@ void Command_04(CommandInfo* info)
         info->x8.ptr[0] = &info->x8.ptr[info->loop_count][0];
         return;
     }
+#endif
     NEXT_CMD(info);
     info->loop_count -= 2;
 }
@@ -58,7 +73,11 @@ void Command_05(CommandInfo* info)
 {
     NEXT_CMD(info);
     info->event_return[info->loop_count++] = info->x8.u + 1;
+#ifdef TARGET_PS3
+    info->x8.u = ps3_dat_script(info->x8.u, info->x8.u->Command_05.ptr);
+#else
     info->x8.u = info->x8.u->Command_05.ptr;
+#endif
 }
 
 /// Return
@@ -71,7 +90,11 @@ void Command_06(CommandInfo* info)
 void Command_07(CommandInfo* info)
 {
     NEXT_CMD(info);
+#ifdef TARGET_PS3
+    info->x8.u = ps3_dat_script(info->x8.u, info->x8.u->Command_07.ptr);
+#else
     info->x8.u = info->x8.u->Command_07.ptr;
+#endif
 }
 
 /// SetTimerAnimation

@@ -364,9 +364,16 @@ void ftCo_ThrowB_Phys(Fighter_GObj* gobj)
     Fighter* fp = GET_FIGHTER(gobj);
     if (fp->ground_or_air == GA_Air) {
         if (fp->mv.co.fighterthrow.x4 != 0) {
+#ifdef TARGET_PS3
+            // self_vel_x and self_vel_y are throw_.xC.z and .y (set at the
+            // release) only with 32-bit pointers.
+            fp->self_vel.x = fp->mv.co.throw_.xC.z * fp->facing_dir;
+            fp->self_vel.y = fp->mv.co.throw_.xC.y;
+#else
             fp->self_vel.x =
                 fp->mv.co.fighterthrow.self_vel_x * fp->facing_dir;
             fp->self_vel.y = fp->mv.co.fighterthrow.self_vel_y;
+#endif
         } else {
             ft_80085134(gobj);
         }
@@ -410,9 +417,14 @@ void ftCo_ThrowHi_Phys(Fighter_GObj* gobj)
     Fighter* fp = GET_FIGHTER(gobj);
     if (fp->ground_or_air == GA_Air) {
         if (fp->mv.co.fighterthrow.x4 != 0) {
+#ifdef TARGET_PS3
+            fp->self_vel.x = fp->mv.co.throw_.xC.z * fp->facing_dir;
+            fp->self_vel.y = fp->mv.co.throw_.xC.y;
+#else
             fp->self_vel.x =
                 fp->mv.co.fighterthrow.self_vel_x * fp->facing_dir;
             fp->self_vel.y = fp->mv.co.fighterthrow.self_vel_y;
+#endif
         } else {
             ft_80085134(gobj);
         }
@@ -466,9 +478,14 @@ void ftCo_ThrowLw_Phys(Fighter_GObj* gobj)
     Fighter* fp = GET_FIGHTER(gobj);
     if (fp->ground_or_air == GA_Air) {
         if (fp->mv.co.fighterthrow.x4 != 0) {
+#ifdef TARGET_PS3
+            fp->self_vel.x = fp->mv.co.throw_.xC.z * fp->facing_dir;
+            fp->self_vel.y = fp->mv.co.throw_.xC.y;
+#else
             fp->self_vel.x =
                 fp->mv.co.fighterthrow.self_vel_x * fp->facing_dir;
             fp->self_vel.y = fp->mv.co.fighterthrow.self_vel_y;
+#endif
         } else {
             ft_80085134(gobj);
         }

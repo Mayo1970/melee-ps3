@@ -281,7 +281,13 @@ void grKongo_801D55D8(Ground_GObj* arg0)
     grAnime_801C8138(arg0, temp_r31->map_id, 0);
     grMaterial_801C94D8(temp_r28);
     temp_r31->u.kongo3.xE4 = 1.0f;
+#ifdef TARGET_PS3
+    // The barrel's anim rate is kongo2.xE8 in grKongo_801D577C; kongo.xE8
+    // and kongo3.xE8 lie elsewhere here.
+    temp_r31->u.kongo2.xE8 = 1.0f;
+#else
     temp_r31->u.kongo.xE8 = 1.0f;
+#endif
     temp_r31->u.kongo.xD4 = 0.0f;
     temp_r31->u.kongo.xD8 = 0.0f;
     temp_r31->u.kongo3.xC4 = 0;
@@ -290,7 +296,11 @@ void grKongo_801D55D8(Ground_GObj* arg0)
     temp_r31->u.kongo.u.taru.keep = NULL;
     temp_r31->u.kongo3.xDC = 0.0f;
     temp_r31->u.kongo3.xE0 = 0.0f;
+#ifdef TARGET_PS3
+    temp_r31->u.kongo2.xE8 = yakumono_param->unk60;
+#else
     temp_r31->u.kongo.xE8 = yakumono_param->unk60;
+#endif
     temp_r31->u.kongo2.xCC =
         rand_range((s32) yakumono_param->unk30, (s32) yakumono_param->unk2C);
     temp_r31->u.kongo2.xCE =
@@ -427,7 +437,11 @@ void grKongo_801D577C(Ground_GObj* arg0)
         }
         break;
     }
+#ifdef TARGET_PS3
+    grAnime_801C7A04(arg0, 0, 7, gp->u.kongo2.xE8);
+#else
     grAnime_801C7A04(arg0, 0, 7, gp->u.kongo3.xE8);
+#endif
 
     switch (gp->u.kongo3.xC6) {
     case 0: { /* switch 2 */
@@ -802,19 +816,24 @@ void grKongo_801D6668(Ground_GObj* arg0)
     sp34.z = sp50.z;
     sp34.w = 1.0f;
     HSD_JObjSetRotation(jobj, &sp34);
-    if (gp->u.kongo.xD8 < sp5C.y) {
-        gp->u.kongo.xD8 = sp5C.y;
+#ifdef TARGET_PS3
+    // grKongo_801D651C sets kongo2.xD8; kongo.xD8 is kongo2.xDC here.
+#define KG_MAX_Y gp->u.kongo2.xD8
+#else
+#define KG_MAX_Y gp->u.kongo.xD8
+#endif
+    if (KG_MAX_Y < sp5C.y) {
+        KG_MAX_Y = sp5C.y;
     }
     if (gp->u.kongo2.xDC > sp5C.z) {
         gp->u.kongo2.xDC = sp5C.z;
     }
-    if (((gp->u.kongo.xD8 - sp44.y) < 5.0f) &&
-        ((gp->u.kongo.xD8 - sp5C.y) > 5.0f))
-    {
+    if (((KG_MAX_Y - sp44.y) < 5.0f) && ((KG_MAX_Y - sp5C.y) > 5.0f)) {
         Ground_801C5440(gp, 0, 0x5A550U);
         Ground_801C5630(gp, 0, 1.0f - (sp5C.z / gp->u.kongo2.xDC));
     }
 }
+#undef KG_MAX_Y
 
 void grKongo_801D69AC(Ground_GObj* arg) {}
 
@@ -1147,7 +1166,14 @@ void grKongo_801D77E0(HSD_GObj* gobj, s32 arg1)
                     q->u.kongo.xC8 = 0.0f;
                 }
             }
+#ifdef TARGET_PS3
+            // The second pass is xD4/xD8; u.taru.keep between them is 8 bytes here.
+            q = (Ground*) ((u8*) q +
+                           (offsetof(struct grKongo_GroundVars, xD4) -
+                            offsetof(struct grKongo_GroundVars, xC4)));
+#else
             q = (Ground*) ((u8*) q + 0x10);
+#endif
         }
     }
     HSD_JObjSetRotationZ(gp->u.kongo3.xCC, gp->u.kongo.xC4);

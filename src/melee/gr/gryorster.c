@@ -204,7 +204,12 @@ void grYorster_802022A4(HSD_GObj* gobj)
 void grYorster_80202428(HSD_GObj* item_gobj, Ground* gp, Vec3* pos,
                         HSD_GObj* fighter_gobj, f32 value)
 {
+#ifdef TARGET_PS3
+    // An s32 round trip cuts the 64-bit pointer.
+    Ground* gp2 = gp;
+#else
     Ground* gp2 = (Ground*) ((s32) gp + 0);
+#endif
     int i;
 
     if (ftLib_IsFighter(fighter_gobj)) {

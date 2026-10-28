@@ -1446,6 +1446,17 @@ void tyFigupon_Scene_OnEnter(void* arg0)
     u8 kind;
     PAD_STACK(16);
 
+#ifdef TARGET_PS3
+    // _tyFigupon_804D6EF8 is a ToyListEntry (Toy_80308250).
+    _tyFigupon_804D6EF0 = HSD_MemAlloc(sizeof(*_tyFigupon_804D6EF0));
+    _tyFigupon_804D6EF4 = HSD_MemAlloc(sizeof(*_tyFigupon_804D6EF4));
+    _tyFigupon_804D6EF8 = HSD_MemAlloc(sizeof(ToyListEntry));
+    Toy_sbss_804D6ED4 = HSD_MemAlloc(sizeof(*Toy_sbss_804D6ED4));
+    memzero(_tyFigupon_804D6EF0, sizeof(*_tyFigupon_804D6EF0));
+    memzero(_tyFigupon_804D6EF4, sizeof(*_tyFigupon_804D6EF4));
+    memzero(_tyFigupon_804D6EF8, sizeof(ToyListEntry));
+    memzero(Toy_sbss_804D6ED4, sizeof(*Toy_sbss_804D6ED4));
+#else
     _tyFigupon_804D6EF0 = HSD_MemAlloc(0x34);
     _tyFigupon_804D6EF4 = HSD_MemAlloc(sizeof(*_tyFigupon_804D6EF4));
     _tyFigupon_804D6EF8 = HSD_MemAlloc(0x18);
@@ -1454,6 +1465,7 @@ void tyFigupon_Scene_OnEnter(void* arg0)
     memzero(_tyFigupon_804D6EF4, sizeof(*_tyFigupon_804D6EF4));
     memzero(_tyFigupon_804D6EF8, 0x18);
     memzero(Toy_sbss_804D6ED4, 0xE4);
+#endif
     data = _tyFigupon_804D6EF0;
     Toy_sbss_804D6EC8 = NULL;
     ef4 = _tyFigupon_804D6EF4;
@@ -1484,7 +1496,11 @@ void tyFigupon_Scene_OnEnter(void* arg0)
             }
         }
     }
+#ifdef TARGET_PS3
+    memzero(Toy_sbss_804D6ED4, sizeof(*Toy_sbss_804D6ED4));
+#else
     memzero(Toy_sbss_804D6ED4, 0xE4);
+#endif
     Toy_80306D70(0);
     _tyFigupon_8031753C();
     joint = HSD_ArchiveGetPublicAs(HSD_Joint, ef4->archive,

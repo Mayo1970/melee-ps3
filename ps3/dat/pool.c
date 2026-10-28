@@ -10,11 +10,12 @@
 #include "../os/mem.h"
 #include "../os/sync.h"
 
-// Each archive's data is copied once more, with its objects in native layout.
-#define POOL_SIZE (48u << 20)
+// The native objects of the live archives; their data stays in the game's buffers. 48 MB ran out in run 24.
+#define POOL_SIZE (64u << 20)
 
 static PsHeap heap;
 static PsMutex lock = PS_MUTEX_INIT;
+static size_t used, peak;
 
 bool ps3_dat_pool_init(void)
 {
@@ -33,6 +34,10 @@ void* ps3_dat_malloc(size_t size)
 
     ps_mutex_lock(&lock);
     p = ps_heap_alloc(&heap, size);
+    if (p != NULL) {
+        used += ps_heap_block_size(p);
+        peak = used > peak ? used : peak;
+    }
     ps_mutex_unlock(&lock);
     if (p == NULL) {
         OSReport("ps3_dat_malloc: no room for %u bytes\n", (u32) size);
@@ -78,7 +83,16 @@ void ps3_dat_free(void* ptr)
 {
     if (ptr != NULL) {
         ps_mutex_lock(&lock);
+        used -= ps_heap_block_size(ptr);
         ps_heap_free(&heap, ptr);
         ps_mutex_unlock(&lock);
     }
+}
+
+void ps3_dat_pool_usage(size_t* now, size_t* most)
+{
+    ps_mutex_lock(&lock);
+    *now = used;
+    *most = peak;
+    ps_mutex_unlock(&lock);
 }

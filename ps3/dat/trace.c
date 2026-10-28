@@ -3,19 +3,9 @@
 #include <dolphin/os.h>
 #include <sysdolphin/baselib/archive.h>
 
-s32 __real_HSD_ArchiveParse(HSD_Archive* archive, u8* src, size_t size);
 void* __real_HSD_ArchiveGetPublicTyped(HSD_Archive* archive, const char* name, const char* type);
 
-s32 __wrap_HSD_ArchiveParse(HSD_Archive* archive, u8* src, size_t size)
-{
-    s32 r;
-
-    OSReport("dat: parse %p, %u bytes\n", src, (u32) size);
-    r = __real_HSD_ArchiveParse(archive, src, size);
-    OSReport("dat: parse %p -> %d\n", src, r);
-    return r;
-}
-
+// The parse log is in lookup.c, which wraps HSD_ArchiveParse for script pointers.
 void* __wrap_HSD_ArchiveGetPublicTyped(HSD_Archive* archive, const char* name, const char* type)
 {
     void* p;

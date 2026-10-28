@@ -67,6 +67,9 @@ typedef struct GpState {
     u32 bp_dirty[8];
     u32 xf_reg_dirty[3];
     u32 xf_mem_dirty_lo, xf_mem_dirty_hi;
+    // Bumped when a value changes: BP (with the TEV register sets), XF registers but the matrix indices and the
+    // projection, VCD and VAT. The backend keeps what it derived while the generations it read stay.
+    u32 bp_gen, xf_gen, cp_gen;
 } GpState;
 
 typedef struct GpBackend {
@@ -81,6 +84,8 @@ typedef struct GpBackend {
     void (*finish)(GpState* s);
     // Show the display copy made to physical address xfb (gp_post_present).
     void (*present)(GpState* s, u32 xfb);
+    // The CPU rewrote [paddr, paddr + size) (gp_post_mem_changed).
+    void (*mem_changed)(GpState* s, u32 paddr, u32 size);
 } GpBackend;
 
 // Starts the GP thread over a ring of ring_size bytes (a power of two). backend lives until exit.
@@ -89,6 +94,8 @@ u32 gp_vertex_size(GpState* s, int vat);
 // Any thread: the GP thread presents xfb between two commands, or while it waits. A later post replaces one
 // not yet run.
 void gp_post_present(u32 xfb);
+// The GX thread only: tells the backend, in stream order, that the CPU rewrote memory a texture may come from.
+void gp_post_mem_changed(const void* p, u32 size);
 // The registers, for tests and logs: read them only while the GP thread is idle (after gp_fifo_sync).
 GpState* gp_get_state(void);
 

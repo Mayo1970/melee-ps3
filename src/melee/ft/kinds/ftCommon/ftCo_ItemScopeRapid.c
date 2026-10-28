@@ -142,17 +142,32 @@ void ftCo_ItemScopeRapid_IASA(Fighter_GObj* gobj)
 {
     Fighter* fp = GET_FIGHTER(gobj);
     if (fp->input.pressed_buttons & HSD_PAD_A) {
+#ifdef TARGET_PS3
+        // fp + 0x2340 is mv only with 32-bit pointers.
+        fp->mv.co.common.x0 = p_ftCommonData->x5BC;
+#else
         *(s32*) ((u8*) fp + 0x2340) = *(s32*) ((u8*) p_ftCommonData + 0x5BC);
+#endif
     }
 }
 
 void ftCo_ItemScopeAirRapid_IASA(Fighter_GObj* gobj)
 {
+#ifdef TARGET_PS3
+    // gobj + 0x2C and fp + 0x2340 are user_data and mv only with 32-bit
+    // pointers.
+    Fighter* fp = GET_FIGHTER(gobj);
+
+    if (fp->input.pressed_buttons & HSD_PAD_A) {
+        fp->mv.co.common.x0 = p_ftCommonData->x5BC;
+    }
+#else
     Fighter* fp = *(Fighter**) ((u8*) gobj + 0x2C);
 
     if (fp->input.pressed_buttons & HSD_PAD_A) {
         *(s32*) ((u8*) fp + 0x2340) = *(s32*) ((u8*) p_ftCommonData + 0x5BC);
     }
+#endif
 }
 
 void ftCo_ItemScopeRapid_Phys(Fighter_GObj* gobj)

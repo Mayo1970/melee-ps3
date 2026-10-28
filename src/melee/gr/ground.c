@@ -697,8 +697,15 @@ void Ground_OnLoad(StageIdPair* pair)
 
 struct Ground_801C0FB8_cur {
     void* unk0;
+#ifdef TARGET_PS3
+    // Ground_801C10B8 writes these as a GObj and its event; a 32-bit unk4
+    // drops the pointer's high half and moves unk8.
+    HSD_GObj* unk4;
+    HSD_GObjEvent unk8;
+#else
     s32 unk4;
     void (*unk8)(s32);
+#endif
 };
 
 void Ground_801C0FB8(StageIdPair* pair)

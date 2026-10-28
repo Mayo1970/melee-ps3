@@ -98,9 +98,38 @@ typedef struct grZe_BubbleSpawnPos {
     /* 0x1C */ f32 pad_1C[2];
 } grZe_BubbleSpawnPos;
 
+#ifdef TARGET_PS3
+// grZe_BubbleState reads these three by their DOL adjacency: keep them in
+// one object, in DOL order.
+static struct {
+    Vec3 x140[2];
+    Vec3 x158[2];
+    grZe_BubbleEntry x170[20];
+} grZe_8049F140_block;
+#define grZe_8049F140 grZe_8049F140_block.x140
+#define grZe_8049F158 grZe_8049F140_block.x158
+#define grZe_8049F170 grZe_8049F140_block.x170
+
+// The GameCube steps 0x24 bytes from grZe_8049F140 into the 0x24-byte
+// bubble entries; an entry is 0x30 bytes here.
+static inline f32 grZe_BubbleSpawnX(int k)
+{
+    return k == 0 ? grZe_8049F140[1].z : grZe_8049F170[k - 1].x08_x;
+}
+
+static inline f32 grZe_BubbleSpawnY(int k)
+{
+    return k == 0 ? grZe_8049F158[0].x : grZe_8049F170[k - 1].x0C_y;
+}
+#define ZE_SPAWN_X(pos, k) ((void) (pos), grZe_BubbleSpawnX(k))
+#define ZE_SPAWN_Y(pos, k) ((void) (pos), grZe_BubbleSpawnY(k))
+#else
+#define ZE_SPAWN_X(pos, k) ((pos)[k].x14_x)
+#define ZE_SPAWN_Y(pos, k) ((pos)[k].x18_y)
 /* 8049F140 */ static Vec3 grZe_8049F140[2];
 /* 8049F158 */ static Vec3 grZe_8049F158[2];
 /* 8049F170 */ static grZe_BubbleEntry grZe_8049F170[20];
+#endif
 
 typedef struct grZe_BubbleScales {
     f32 values[7];
@@ -124,11 +153,27 @@ typedef struct grZe_AcidState {
     /* +08 */ f32 x08_offset;
     /* +0C */ f32 x0C_velocity;
     /* +10 */ f32 x10_damage;
+#ifdef TARGET_PS3
+    // Laid over 32-bit Ground fields (zebes4 writes them as u32, zebes5's
+    // xEC/xF0/xF8 follow it): keep the GameCube layout.
+    /* +14 */ u32 x14_jobj1;
+    /* +18 */ u32 x18_jobj2;
+    /* +1C */ u32 x1C_mat;
+#else
     /* +14 */ HSD_JObj* x14_jobj1;
     /* +18 */ HSD_JObj* x18_jobj2;
     /* +1C */ Item_GObj* x1C_mat;
+#endif
     /* +20 */ s16 x20_anim_idx;
 } grZe_AcidState;
+
+#ifdef TARGET_PS3
+#define ACID_PTR(T, word) ((T) (uintptr_t) (word))
+#define ACID_WORD(ptr) ((u32) (uintptr_t) (ptr))
+#else
+#define ACID_PTR(T, word) (word)
+#define ACID_WORD(ptr) (ptr)
+#endif
 
 GrJoint grZe_803E1A10[] = {
     { 1, 6, 21 }, { 4, 6, 14 }, { 3, 6, 1 }, { 2, 7, 6 }, { 5, 7, 1 },
@@ -302,10 +347,11 @@ void grZebes_801D8644(HSD_GObj* gobj)
     ((grZe_AcidState*) &gp->u.zebes5.xC8)->x08_offset = 0.0f;
     ((grZe_AcidState*) &gp->u.zebes5.xC8)->x0C_velocity = 0.0f;
     ((grZe_AcidState*) &gp->u.zebes5.xC8)->x10_damage = 0.0f;
-    ((grZe_AcidState*) &gp->u.zebes5.xC8)->x14_jobj1 = child_jobj;
+    ((grZe_AcidState*) &gp->u.zebes5.xC8)->x14_jobj1 = ACID_WORD(child_jobj);
     ((grZe_AcidState*) &gp->u.zebes5.xC8)->x18_jobj2 =
-        Ground_801C3FA4(gobj, 0x20);
-    ((grZe_AcidState*) &gp->u.zebes5.xC8)->x1C_mat = mat_gobj2 = mat_gobj;
+        ACID_WORD(Ground_801C3FA4(gobj, 0x20));
+    ((grZe_AcidState*) &gp->u.zebes5.xC8)->x1C_mat =
+        ACID_WORD(mat_gobj2 = mat_gobj);
 
     ((grZe_AcidState*) &gp->u.zebes5.xC8)->x20_anim_idx = 0x1C;
     gp->u.zebes5.xEC = 0;
@@ -483,8 +529,8 @@ void grZebes_801D881C(HSD_GObj* gobj)
                     {
                         f32 scale_range = yakumono_param->x5C - scale_min;
                         grZebes_801DAE70(spawn_phase, 4,
-                                         pos[spawn_phase].x14_x,
-                                         pos[spawn_phase].x18_y,
+                                         ZE_SPAWN_X(pos, spawn_phase),
+                                         ZE_SPAWN_Y(pos, spawn_phase),
                                          scale_range * rand + scale_min);
                     }
                 }
@@ -492,8 +538,8 @@ void grZebes_801D881C(HSD_GObj* gobj)
                     f32 rand2 = HSD_Randf();
                     grZe_BubbleSpawnPos* pos =
                         (grZe_BubbleSpawnPos*) grZe_8049F140;
-                    grZebes_801DAE70(mirror, 4, pos[mirror + 2].x14_x,
-                                     pos[mirror + 2].x18_y,
+                    grZebes_801DAE70(mirror, 4, ZE_SPAWN_X(pos, mirror + 2),
+                                     ZE_SPAWN_Y(pos, mirror + 2),
                                      (f32) (0.5 * rand2 + 1.0));
                 }
             }
@@ -1205,14 +1251,14 @@ s32 grZebes_801DA528(HSD_GObj* arg0, void* arg1, s32 arg2, s32 arg3)
         switch (st->x00_state) {
         case 0:
             grAnime_801C7FF8(arg0, st->x20_anim_idx, 1, arg2, 0.0f, 1.0f);
-            grMaterial_801C8E08(st->x1C_mat);
+            grMaterial_801C8E08(ACID_PTR(Item_GObj*, st->x1C_mat));
             st->x02_timer = 0;
             st->x08_offset = 0.0f;
             st->x0C_velocity = 0.0f;
             break;
         case 1:
             grAnime_801C78FC(arg0, st->x20_anim_idx, 1);
-            grMaterial_801C8E28((HSD_GObj*) st->x1C_mat);
+            grMaterial_801C8E28((HSD_GObj*) ACID_PTR(Item_GObj*, st->x1C_mat));
             break;
         case 2: {
             f1 = HSD_Randf();
@@ -1279,8 +1325,10 @@ s32 grZebes_801DA528(HSD_GObj* arg0, void* arg1, s32 arg2, s32 arg3)
             }
         }
 
-        HSD_JObjSetTranslateX(st->x14_jobj1, st->x04_base_x + st->x08_offset);
-        HSD_JObjSetTranslateX(st->x18_jobj2, st->x04_base_x + st->x08_offset);
+        HSD_JObjSetTranslateX(ACID_PTR(HSD_JObj*, st->x14_jobj1),
+                              st->x04_base_x + st->x08_offset);
+        HSD_JObjSetTranslateX(ACID_PTR(HSD_JObj*, st->x18_jobj2),
+                              st->x04_base_x + st->x08_offset);
         {
             f32 dmg = st->x10_damage;
             f32 thr = yakumono_param->x4C;
@@ -1391,11 +1439,21 @@ s32 grZebes_801DAA08(void)
             HSD_JObjAddChild(parent_child, (&grZe_8049F170[selected])->x04);
 
             {
+#ifdef TARGET_PS3
+                // +0x6C..0x74 are unk8[2]'s anims, matanims and shapeanims
+                // with 0x34-byte entries; they are 0x68 bytes here.
+                struct UnkStageDat_x8_t* dat =
+                    &grDatFiles_801C6330(2)->unk4->unk8[2];
+                HSD_ShapeAnimJoint** sap = dat->shapeanims;
+                HSD_AnimJoint** ajp = dat->anims;
+                HSD_MatAnimJoint** mjp = dat->matanims;
+#else
                 u8* dat = (0, (u8*) grDatFiles_801C6330(2)->unk4->unk8);
                 HSD_ShapeAnimJoint** sap =
                     *(HSD_ShapeAnimJoint***) (dat + 0x74);
                 HSD_AnimJoint** ajp = *(HSD_AnimJoint***) (dat + 0x6C);
                 HSD_MatAnimJoint** mjp = *(HSD_MatAnimJoint***) (dat + 0x70);
+#endif
                 HSD_ShapeAnimJoint* sa;
                 HSD_MatAnimJoint* ma;
                 HSD_AnimJoint* aj;
@@ -2298,7 +2356,12 @@ void grZebes_801DC9DC(s32 arg0)
     grZebes_801DC744(3, 1);
 
     for (i = 0; i < 100; i++) {
+#ifdef TARGET_PS3
+        // arg0 is a GObj passed as s32: zero-extend it, not sign-extend.
+        grZebes_801DB3CC((HSD_GObj*) (uintptr_t) (u32) arg0);
+#else
         grZebes_801DB3CC((HSD_GObj*) arg0);
+#endif
     }
 }
 
@@ -2335,7 +2398,12 @@ bool grZebes_801DCBFC(Ground_GObj* gobj, HSD_GObj* fobj, void* arg)
     ftLib_GetPrevPos(fobj, &prev);
     prev.y += intercept;
     if (pos.y < slope) {
+#ifdef TARGET_PS3
+        // user_data is at 0x2C only in the GameCube's HSD_GObj; this is x2C.
+        *(void**) arg = yakumono_param->x2C;
+#else
         *(void**) arg = ((HSD_GObj*) yakumono_param)->user_data;
+#endif
         if (prev.y > slope) {
             Ground_801C43A4(&pos);
             Ground_801C53EC(0x61A82);

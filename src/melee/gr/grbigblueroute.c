@@ -37,7 +37,11 @@ struct grBigBlueRoute_8020DA9C_t {
 /* car_info stores 31 RouteEntry records in its 0x554-byte allocation. */
 union grBigBlueRoute_RouteStorage {
     RouteEntry entries[31];
+#ifdef TARGET_PS3
+    u8 bytes[31 * sizeof(RouteEntry)];
+#else
     u8 bytes[0x554];
+#endif
 };
 
 /* 20DA9C */ static int
@@ -489,9 +493,16 @@ void grBigBlueRoute_8020C238(Ground_GObj* gobj)
         }
     }
 
+#ifdef TARGET_PS3
+    gp->u.car.car_info =
+        HSD_MemAlloc(sizeof(union grBigBlueRoute_RouteStorage));
+    HSD_ASSERT(0x2A2, gp->u.car.car_info);
+    memzero(gp->u.car.car_info, sizeof(union grBigBlueRoute_RouteStorage));
+#else
     gp->u.car.car_info = HSD_MemAlloc(0x554);
     HSD_ASSERT(0x2A2, gp->u.car.car_info);
     memzero(gp->u.car.car_info, 0x554);
+#endif
 
     gp->u.car.x10A = 0;
     gp->u.car.x108 = 0;
@@ -1044,9 +1055,17 @@ void grBigBlueRoute_8020CD20(Ground_GObj* gobj)
         }
 
         i++;
+#ifdef TARGET_PS3
+        // Through u32: an int sign-extends addresses at or above 2 GB.
+        jobj = (jobj != NULL) ? (HSD_JObj*) (uintptr_t) (u32)
+                                    grBigBlueRoute_8020DA9C(
+                                        (struct grBigBlueRoute_8020DA9C_t*) jobj)
+                              : NULL;
+#else
         jobj = (jobj != NULL) ? (HSD_JObj*) grBigBlueRoute_8020DA9C(
                                     (struct grBigBlueRoute_8020DA9C_t*) jobj)
                               : NULL;
+#endif
     } while (i < 31);
 }
 #undef RE_ENTRY
@@ -1056,7 +1075,13 @@ int grBigBlueRoute_8020DA9C(struct grBigBlueRoute_8020DA9C_t* desc)
     if (desc == NULL) {
         return 0;
     }
+#ifdef TARGET_PS3
+    // The view's x8 is HSD_JObj::next on the GameCube; here offset 8 is the
+    // ref count.
+    return (int) (intptr_t) ((HSD_JObj*) desc)->next;
+#else
     return desc->x8;
+#endif
 }
 
 void grBigBlueRoute_8020DAB4(HSD_JObj** jobjs, f32 scale, int count)
@@ -1151,7 +1176,12 @@ DynamicModelDesc* grBigBlueRoute_8020DE48(void)
     HSD_ASSERT(1495, archive);
     dat = archive->unk4;
     if (dat != NULL) {
+#ifdef TARGET_PS3
+        // 0x68 is two GameCube UnkStageDat_x8_t entries.
+        return (DynamicModelDesc*) &dat->unk8[2];
+#else
         return (DynamicModelDesc*) ((char*) dat->unk8 + 0x68);
+#endif
     }
     return NULL;
 }

@@ -175,17 +175,321 @@ Earlier hardware tests:
   "can't find tobj!" (`ftparts.c` 799) from `ftAnim_80070200` in `Fighter_Create`. Cause: `ftData_x8_x8::xC`
   is `u16**` with no annotation, so the reader converts one costume list of one index; `x5D0[i]` for i > 0
   reads past it. Needs annotations and a new schema.
-- `make dattest` no longer links: `ps3/dat/lookup.c` needs `-Wl,--wrap=HSD_ArchiveGetPublicAddress`.
+- Host game build (2026-10-28, see below): done. It reproduces run 21 ("can't find tobj!" from `PlPe.dat`).
+  After the annotations and a new schema, the Peach match passes `Fighter_Create` and the host build found
+  more LP64 faults, fixed under `TARGET_PS3` unless noted:
+  - `ft/types.h`: `ftData_x8_x8::xC` is a list per costume (`FtCostumeTObjIndices`, `DAT_EXTENT`, bound
+    count). `ftData_80085FD4_ret` views `Fighter_WaitAnimData` entries: its `x4` and `x8` are `s32` (the
+    motion size was read from the script pointer, and `memcpy` faulted).
+  - Items (audit findings 2-4): `ItemDynamics` has the second pair (`coll_count`, `coll_descs`), and
+    `ItCollDynamics` names the first pair's words, so its fields keep their place; `ItHurtBoneList::descs` has
+    `DAT_COUNT(count)`; the G&W attributes' `x0` is `struct it_266F_ItemVars*`, whose lists have counts. These
+    type changes are outside `TARGET_PS3` and keep the MWCC layout.
+  - `fighter.h`: `ftLoadCommonData::x20` is the respawn platform (`ftLoadCommonData_x20`), not `UNK_T`.
+  - Particles (`particle.c`): a bank is 32-bit words, relocated in place on the GameCube. Its tables
+    (`ptclref_804D0E5C`, `psTexGroupArray`, `psCmdListArray`) were read as 8-byte pointers. Locate relocates
+    the words as words; Load gives the bank native copies of the tables and groups (freed by the next Load).
+  - DOL layout reads, as `ft_800852B0`: `Camera_ApplyQuake` (`cm_803BCB64` from `cm_803BCB18`: NaN camera,
+    `lbvector.c` 383), `ftMaterial` (two templates from `ftMObj`: `texp.c` 1048), `lbRefract_800222A4`
+    (`imagedesc0` from `texture_mtx`).
+  - `ground.c`: `Ground_801C0FB8` read the callback list with a 32-bit `unk4`, which `Ground_801C10B8` writes
+    as a GObj pointer.
+  - Command scripts: `Command_04` (loop) reached its count through 32-bit words from `CommandInfo`.
+    `Command_05` and `Command_07` (subroutine, goto) read 8-byte pointers: the native readers keep scripts as
+    serialized bytes, so a script pointer is a 32-bit offset into the archive's data. They are `u32` now
+    (`lb/types.h`), resolved by `ps3_dat_script` (`ps3/dat/lookup.c`), and `CmdUnion` is 4 bytes again.
+  - `.dat` pool leak: each fighter motion parses its animation archive into the same buffer
+    (`ftData_80085E50`), and each parse kept a native copy, so the 48 MB pool filled in under a minute of
+    match. `ps3/dat/lookup.c` wraps `HSD_ArchiveParse` and `HSD_ArchiveReleaseNative`: a parse frees the
+    native data of the archives whose buffers it overlaps.
+- Host matches after the fixes (CPU level 9 against an idle player 0, 45-90 s each, `tools/hostmatch.sh`): Peach
+  and Fox on Yoshi's Story, Green Greens and Final Destination, Mario and Link on Battlefield, run 90 s with no
+  fault. With items at frequency 4: 10 of 13 fighter pairs pass on Final Destination (all 26 fighters
+  load); 17 of 30 stages pass with Mario and Fox. Open, from the logs (`build/hostmatch/`):
+  - Kirby and Bowser: assertion `ftparts.c` 458 in `ftParts_SetupParts`.
+  - Zelda and Sheik, Dr. Mario and Roy, Mute City (10), Yoshi's Island (16), Fourside (18): assertion
+    `rvalue->jobj` (`robj.c` 894) in `HSD_RvalueResolveRefs`.
+  - Faults in stage code: Izumi (2) `Ground_801C1D38`, Castle (4) `grCastle_801CF308`, Kongo (5)
+    `grKongo_801D77E0`, Zebes (6) `it_802756E0` from `grMaterial_801C8E08`, Rainbow Cruise (11) `ps_heap_alloc`
+    from `Ground_801C10B8`, Inishie2 (20) `grInishie2_801FDED8`, Akaneia (21) `Ground_801C0754`, Venom (22)
+    `grVenom_80203EAC`; Big Blue (24) `memory.c` 23 (`HSD_MemAlloc` fails in `HSD_JObjLoadJoint`);
+    Pokemon Stadium (3) glibc's "buffer overflow detected" after a Fox figatree.
+  - Not done: item audit findings 1 and 5-7, the `ft/` tether views, `ftCo_ItemScopeRapid.c` `+0x2340`.
+- Both packages build (2026-10-28): normal `.got` 0x41a8, call trace `.got` 0x4fe0, 0 `r2off` stubs.
+- Melee run 22 (2026-10-28, normal build): the menus pass; Peach and Captain Falcon on Yoshi's Story, chosen
+  through the menus, stop the main thread after `GrSt.dat` loads, with no assertion. The host build runs that
+  match (all costumes) with no fault.
+- Melee run 23 (call trace): the main thread stops in `ps3_tex_words` from `ps3_bank_load`
+  (`psInitDataBankLoad`, `grDatFiles_801C6038`). Cause: through the menus the stage is preloaded, and the
+  preload callback `grDatFiles_801C5FC0` locates the banks of a typed lookup (`HSD_ArchiveGetPublicAs(int,
+  ...)`, a native copy), while `grDatFiles_801C6038` loads the serialized banks, never located. The host's
+  debug VS start does not preload, so `psInitDataBank` locates and loads the same banks. Fix under
+  `TARGET_PS3` in `grdatfiles.c`: the callback takes the serialized banks too. Both packages rebuilt.
+- Melee run 24 (2026-10-28, normal build): Training mode, Peach and Captain Falcon on Yoshi's Story. The stage
+  and fighters load, "use dummy CamRange" and "use dummy DeadRange" show, then `ps3_dat_malloc: no room for
+  65536 bytes` at `GmTrain.usd`, and back to the XMB. The 48 MB `.dat` pool was full. The host build's debug VS
+  match on Yoshi's Story peaks at 39.9 MB: the reader copied each archive's data into the pool
+  (`dat_archive_open`), and the native objects take the rest (82,000 live blocks, 76,000 of them 64 bytes or
+  less). Fixes: under `TARGET_PS3` in `tools/dat-cli/native/src/archive.c` the reader keeps the data in the
+  game's buffer, as the GameCube does (32.1 MB on the host); the pool is 64 MB (`ps3/dat/pool.c`). Each parse
+  logs the pool's use and peak. Both packages rebuilt (`.got` 0x41b8 and 0x4ff0, 0 `r2off` stubs).
+- Melee run 25 (2026-10-28, normal build): Training, Peach and Captain Falcon on Yoshi's Story. The match runs
+  about 57 s (pool peak 36.4 MB), then the main thread stops with no message; the user saw wrong standing
+  animations and Ice Climbers' icon for both players. Causes found:
+  - The stop: `lbArq_80014BD0` waits for a synchronous ARAM read with `while (lbArq_80014ABC(rp) != DONE)`.
+    MWCC keeps `lbArq_80014ABC` out of line (`#pragma dont_inline`); GCC inlines it and loads `state` once,
+    before the loop (`ppu-objdump`: `lwz`, then `cmplwi`/`bne+` back to the compare). Fix under `TARGET_PS3`:
+    a volatile read. A scan of the EBOOT for compare-and-branch loops with no load found no other one.
+  - The icons: `gm_80168B34` sets `base` for some fighters only; the DOL keeps it in `ckind`'s register (r3),
+    so it is `ckind` for the others. GCC left it undefined (14, Ice Climbers). Fix under `TARGET_PS3`. Host
+    frames show Peach's and Captain Falcon's icons.
+  - The standing animations: not found yet. The host frames show Peach and Captain Falcon standing as
+    expected. Leads: GCC 13 reports 188 "may be used uninitialized" in the game (`build/linux_uninit`, with
+    `-Wmaybe-uninitialized`); `resolveIKJoint1` (`jobj.c`, leg IK) uses `var_f27` and `var_f28` unset on one
+    path, as the DOL does (callee-saved f27 and f28); `HSD_RvalueResolveRefs` fails on some fighters on the host.
+- Host frame dumps: `MELEE_HOST_DRAW=2` draws only the 3 frames before each dump, `MELEE_HOST_DUMP_FROM` skips
+  the boot; `tools/ppm2png.py` converts the dumps. A frame takes about 10 s under qemu.
+- Melee run 26 (2026-10-28, normal build): Training, Peach and Link. The user: after an idle animation, Peach's
+  and Captain Falcon's limbs stay deformed instead of going back to standing; Toad's counter freezes the game.
+  The log ends with Peach `SpecialLwHit` (the data names Toad `SpecialLw`) and Link `DamageFlyTop`, then the
+  main thread stops, as in run 25. The host does not freeze (14 counter hits against a level 9 Link).
+- Melee run 27 (call trace build): the attract demo (Kongo Jungle: Bowser, Kirby, DK, Fox) stops at
+  `ftparts.c` 459 "fighter parts num not match", as the host's Kirby and Bowser match. Cause:
+  `Fighter_804D6540_t::x0` (the parts `ftParts_8007506C` skips) had no count; fixed with `DAT_COUNT(x4)`
+  (`fighter.h`), schema regenerated. Then Training, Fox and Bowser: the main thread stops in `hsd_8039D0A0`
+  (`efLib_particles_proc_main`, `hsd_8039EE24`, `hsd_8039D3AC`): it reaches the particle lists and their
+  allocator through `ParticleData` laid over `psPointJObj`, a DOL layout read (`hsd_804D0908`, `hsd_804D0F60`).
+  Fixed under `TARGET_PS3` in `particle.c` (`PD_JOBJ`, `PD_PARTICLE`, `PD_ALLOC`). The Toad freeze is likely
+  the same (its spores' particles); not confirmed.
+- State when stopped (2026-10-28): the `fighter.h` and `particle.c` fixes are in the sources and the schema; the
+  PS3 packages are rebuilt with them (`.got` 0x41b8 and 0x4ff0, 0 `r2off` stubs); the host build is not.
+  `tests/sys_host.c`: SIGUSR1 at the quit logs the main thread's place; its `ps3_log` call had `%s` and `%d`
+  arguments swapped (the host runs faulted at the quit); fixed, not yet built. `tests/host_start.c`: `ckind:color` picks a costume, a trailing `h` makes a human.
+  `tools/hostmatch.sh` takes `MELEE_HOST_PAD` from the environment.
+- GameCube-call audit (2026-10-28): six read-only audits of the game and SDK sources, then the fixes, all under
+  `TARGET_PS3` with the GameCube code in `#else` (or annotations, which MWCC does not see). The audits: the 310
+  int and pointer cast warnings; MWCC-only code and GCC undefined behaviour (286 `MUST_MATCH`/`MWERKS_GEKKO`
+  blocks, 41 `-Wreturn-type`, 29 `-Warray-bounds`, busy-waits); DOL layout views and raw offsets; storage shared
+  by pointers and 32-bit values, and literal sizes; the SDK call surface; `.dat` pointer fields with no count.
+  The main results:
+  - Idle animations (runs 25 and 26): `getAnimID` (`ftwaitanim.c`) read `WaitStruct`'s 8-byte `u.p.x`, which
+    is the chance, as the motion id. Peach's table is {2,25} {3,25} {4,25} {5,25}, so every pick was motion 25
+    and the retry loop never ended: the main thread stop with no message.
+  - The five `rvalue->jobj` assertions (`robj.c` 894): the Fire Flower's 16 bytecode RObjs; `HSD_ExpDesc` and
+    `HSD_ByteCodeExpDesc` `rvalue` lists are `DAT_TERMINATED(0)` now. `bytecode.c` keeps a stack word in the
+    first 4 bytes of the 8-byte slot, where `ByteCodeVal` reads it.
+  - Stage faults from the host matches: Venom (`grVe_803E5348` read as one DOL array: callbacks, Arwing GObjs,
+    animation tables), Kongo (a 0x10 stride over a pointer), Castle (`castle7.xD0` over `castle11.xD4/xD8`),
+    Big Blue (a 120-byte block for 30 pointers, about 30 raw Ground offsets, the `rlwimi` car state that only the
+    `MUST_MATCH` asm set), Pokemon Stadium (a 0x1C block for a 40-byte struct), Zebes (bubble statics by DOL
+    offset, the acid overlay), Izumi (a GObj written into `xC_callback`), Inishie2, Rainbow Cruise (a 160-byte
+    block for 320 bytes), Icicle Mountain (`DAT_TERMINATED(-1)` on three lists), Home-Run, Flat Zone, Green
+    Greens, Mute City and Big Blue Route (`UnkStageDat_x8_t` stride 0x34).
+  - Fighters: colour overlays (`ftdevice.c` read the low half of a union), Bowser's side B and up B
+    (`ftKoopa_State1Vars`, `common.x10`), Kirby's copies (part masks, hat DObjs at a 4-byte stride, the copy table
+    cleared to half), capture and thrown states (Koopa, Kirby, Yoshi egg), the damage log `x1870`, throw
+    velocities, Yoshi's shield parts, Super Scope (`+0x2340`, `+0x2C`, a missing return), shake tables and item
+    throws (`DAT_COUNT`).
+  - Results screen, Classic, All-Star, Home-Run Contest, Multi-Man, tournament, event matches, credits,
+    1P splash: statics reached by DOL offset or raw offsets into structs with pointers. Menus: name entry (a
+    0x44 block for 120 bytes), data delete, rules (`mn_80231634` read `next`'s high half), event, info, counts
+    (a string written below `buf`). Trophies: one block for `_Toy_804A26B8`..`Toy_804A2AA8`, the archive table
+    at half its size, allocations, about 20 view structs over GObjs, SObjs and list entries.
+  - Items: Starman time, Link's arrow, the random item tiers, the Fire Flower (above).
+  - MWCC behaviour: `lbMthp_8001F800` waited on `unk_110` with one load (a branch to itself, as `lbArq`);
+    `fn_80166A8C` had only the `psq_st` asm (GQR3: u16, scale 0); the particles attached to joints never spawned
+    (`jobj.c` set bit 31 of the pointer's high half).
+  - SDK: async DVD reads go to a read thread (`dvd.c`). Read in the call, a devcom callback chain kept the
+    interrupt lock for a whole file: 10 alarms a second during loads in runs 22-26. Pad channels stay with their
+    port (`pad_cell.c`). `DBIsDebuggerPresent` is TRUE, so an assertion goes straight to `OSPanic`; the game's
+    crash screen thread spun on during `exit()` and wrote to a dead stack frame.
+  - Not changed: pointers kept in `int`/`s32` (safe below 0x80000000: heap and static data are), and debug-only
+    code (`debugconsole_main.c`, `leak.c`, `hsd_393C.c`) that `dberror.c` no longer reaches.
+  - Host matches after the fixes (items at frequency 4, 45 s each): 43 of 43 pass, that is the 13 fighter pairs
+    on Final Destination, Mario and Fox on stages 2-31 but 21 (Akaneia: no stage data, not playable), and an idle
+    Peach on Yoshi's Story. The same list passed 25 of 43 before. The run found three more, fixed: Nana copies
+    Popo's motion file and relocates it with `lbArchiveRelocate`, which makes no native data (now parsed, in
+    `ftdata.c`); Zebes reads `unk8[2]`'s animations at raw +0x6C..0x74; the text printf's `vsnprintf(buf, -1)`
+    aborts in glibc's checks on the host.
+  - Both packages rebuilt (`.got` 0x4408, 0 `r2off` stubs, 17.5 MB in loaded segments). Host boot over the
+    movie, 150 s: 4,744 DVD reads with their callbacks through the read thread, about 100 alarms a second.
+- THP (2026-10-28): `ps3/sdk/thp.c` decodes the frames in C with the SDK decoder's calls, work area and output (GX
+  I8 tiles). The frames are baseline JPEG, 4:2:0, with no 0x00 after an 0xFF in the scan. MvOpen.mth is 640x480 at
+  30 fps (3,036 frames), the endings 448x336, the stills (`GmRegend*.thp`) 560x416. `make thptest` writes frames
+  as PPM and as standard JPEG; the PPM matches the JPEG decode. Host boot: the intro movie shows in the game.
+  The GX texture cache hashes 1 KB of a large texture, so each decoded plane is posted to the GP
+  (`gp_post_mem_changed`, a port opcode 0x7E) and its cached textures are freed. Under qemu a 640x480 frame takes
+  17 M instructions.
+- Frame rate (2026-10-28): in the run 26 match the game drew 19 frames a second while its logic ran at 60 (the
+  pad queue runs several logic frames per drawn frame). Menus draw at 60. The GP thread is the limit: it never
+  waits in a match, while the main thread waits for a free XFB. A frame has about 2,100 GX draws, each one RSX
+  draw, about 24 µs each on the GP thread. A host match profile (qemu plugin, instructions per thread): the GP
+  thread runs 7 times the main thread's instructions, about 18,600 per draw. Of the GP time: TEV config and its
+  688-byte hash 23%, vertex conversion 20%, constants 14%, RSX commands 10%, textures 9%, state 5%, XF key 4%,
+  command parsing 14%. 79% of the draws have no CP, XF or BP write since the draw before. Not measured under
+  qemu: `xf_constants` converts all 225 constant rows through memory (load-hit-store) on each XF change (6,900 a
+  second), the FNV hash is a chain of multiplies, `gp_fifo_release` does two `sync` atomics per command, each
+  draw invalidates the vertex cache and writes a backend label, a new vertex program is uploaded each time
+  (1,700 a second), and `finish` waits for the RSX at each draw done. The heartbeat's fourth line gives the
+  same split on the console.
+
+### Host game build (big-endian LP64)
+
+The EBOOT's sources as a Linux ppc64 big-endian ELFv1 program (`TOOLCHAIN=linux`, GCC 13, `ppc64-qemu-test:2`),
+under `qemu-ppc64 -R 0x100000000` (a 4 GB guest space, as the PS3's user addresses). Pointer size, byte order
+and the native `.dat` readers are as on the PS3. Not for: the RSX and NV40, lv2 scheduling and timing, the
+SPU's timing, speed. Under qemu a match runs at 20-35 presents a second.
+
+- Build: `./build_linux.sh -j12 hostgame` (`build/linux/game/melee_host`). The PSL1GHT side is replaced by
+  `tests/sys_host.c` (clock, local time, exit, a fault handler that logs the back chain), `tests/pad_host.c`,
+  `tests/audio_host.c` with `audio/ax_spu.c` on a host thread at 48 kHz (`HOST_AUDIO_REALTIME`),
+  `tests/rsxdev_soft.c` (a first-fit local memory allocator, a 59.94 Hz vblank thread, draws dropped unless
+  `MELEE_HOST_DRAW=1`), `os/sync_host.c`, `tests/udplog_host.c` (stdout, line-buffered). The link script is
+  the default one with `SUBALIGN(32)` on `.rodata`, `.data` and `.bss`, as `melee.ld`. glibc's `setjmp`.
+- Run: `ps3/run_host.sh` (the disc from RPCS3's `MELE00001/USRDIR/games`, mounted at `/scratch`; only the ISO
+  file is read, RPCS3 does not run). Settings by environment: `MELEE_HOST_SECONDS` (quit, exit status 0),
+  `MELEE_HOST_PAD` (pad 0 script, e.g. `200:A,300:A,400:A` for the memory card notice), `MELEE_HOST_MATCH`
+  (`tests/host_start.c`: `ckind,ckind/stkind/item_freq`; the boot goes to the debug VS mode with these, player
+  0 human, the others CPU level 9), `MELEE_HOST_DRAW`, `MELEE_HOST_DUMP` (PPM prefix), `MELEE_HOST_DUMP_EVERY`.
+- Without a match, the boot reaches the notice, the title, the movie, a demo match on Pokemon Stadium and the
+  main menu, as on the console.
+- `tools/hostmatch.sh` runs matches 4 at a time, a log each in `build/hostmatch`. `tools/hostsym.sh` names
+  addresses of a fault or `OSPanic stack:` line (`addr2line` on `melee_host`). The image has no gdb.
+- Item audit (2026-10-28, read only, not run). Findings 1-3 were checked against the code; 4-7 were not.
+  Findings 2-4 are fixed (above).
+  1. `it_2725.c:117` `it_80272818`: the Starman's time is read as a `Fighter*` (`unk_2728`), cast to `int` in
+     `ftcoll.c:884`.
+  5. `itlinkarrow.c:678,686`: GameCube strides into `it_803F6A28`; use `it_803F6A84` as line 128 does.
+  6. `it_2E5A.c:338`: `tier_thresholds[9]` steps between tiers; use `tiers[1].threshold`.
+  7. `it_2E5A.c:438`: part of a tier entry cast to `ItemStateDesc`; safe until `Item_80268E40` uses it.
+  Also: the `tether` and `chain_segment` views in `ft/`; `ftCo_ItemScopeRapid.c:145,154` reads
+  `(u8*) fp + 0x2340`, a GameCube offset into `Fighter`.
+- "use dummy CamRange" and "use dummy DeadRange" do not show in the host matches on Green Greens and Yoshi's
+  Story.
+- To name an `OSPanic stack:` address: `ppu-objdump -s -j .opd` and `ppu-nm -n` on `melee.elf`, map each
+  descriptor to its code address, then take the function at or below the address.
+- `make dattest` no longer links: `ps3/dat/lookup.c` needs `-Wl,--wrap=` for `HSD_ArchiveGetPublicAddress`,
+  `HSD_ArchiveParse` and `HSD_ArchiveReleaseNative`.
+
+- Melee run 28 (2026-10-28, two boots in `build/run25_udp.txt`, which the listener appends to):
+  - 16:39, the first package of the audit (without the Ice Climbers, Zebes and `vsnprintf` fixes): the movie,
+    then Peach and Captain Falcon on Yoshi's Story for 5 minutes until the user quit. Idle animations played
+    with no stop: Peach Wait2-4 22 times, Captain Falcon Wait2-3 61 times (the run 25 and 26 stop is fixed).
+  - 17:00, the final package: the movie for 34 s at 32 presents a second (GP 59% in texture uploads, main
+    thread 69% busy), a demo on Castle, Peach and Bowser on Yoshi's Story for 56 s, then Peach and DK there.
+    After 57 s the GP thread stopped with no wait state, the RSX idle (GET = PUT, labels done), and the main
+    thread slept in `GXWaitDrawDone` for good (its disables stopped, its sleep never ended). The other threads
+    ran on until the user quit. The last loads: DK SpecialLwStart and SpecialLwLoop, Peach JumpF. Not
+    reproduced on the host (DK down-B 182 times by pad script, Peach and DK as CPU or human).
+  - Frame rate in that match: 12 presents a second, 48,000 draws a second (4,000 a frame), 83% with no
+    register write since the draw before. GP per mille: draws 866 (TEV 319, vertices 176, textures 124,
+    constants 87, RSX commands 75, XF 41, state 41), RSX label waits 7. Main thread asleep 705: the GP limits.
+  - The heartbeat's main-asleep share counts only sleeps that end, so a sleep that never ends shows 0.
+- Run 29 build (call trace): a fifth heartbeat line gives the GP thread's step (`ps3_diag.gp_site`, set in
+  `gp.c` and at each draw phase in `backend.c`), the last opcode and draw, and the queue the main thread
+  sleeps on.
 
 Waiting for the user:
 
 - The title ID. The code uses the placeholder `MELE00001` (`PS3_APP_DIR` in `ps3/dvd/dvd.c`, `EBOOT_APPID` in
   `ps3/Makefile`).
-- Run 18: a match on Yoshi's Story and on Green Greens with the anim joint fix.
-- The next milestone after that: THP video decoding in C.
+- Run 29: the call trace package, Peach and DK on Yoshi's Story until the stop, and what was on the screen at
+  the stop and in the movie.
+- Run 30: the normal package with step 1 (dirty tracking), a match, and the heartbeat's fourth line.
 
 The UDP log goes to `192.168.178.99`, port 18194 (`ps3/os/udplog_cell.c`). A listener: `nc -ul 18194`, or any
 UDP listener on that port.
+
+## Next goal: 60 frames a second in matches
+
+Set by the user on 2026-10-28, to start after run 29. Done when a match runs at 60 presents a second on the
+console (the heartbeat's fourth line), with no stop.
+
+The budget: in run 28's Peach and DK match the GP thread took about 21 µs per GX draw (48,000 a second, 4,000 a
+frame, 12 presents). 60 presents need about 4 µs per draw at that count, 5 times less GP time. 83% of the draws
+have no CP, XF or BP write since the draw before, yet each one rebuilds and hashes the TEV config (32% of GP
+time), checks its textures (12%), and makes the XF key and raster state (8%).
+
+The plan, in this order, measured on the console after each step:
+
+1. Dirty tracking: skip the TEV config and hash, the XF key, the raster state and the texture checks when no
+   register they read changed since the draw before (estimate: half of the GP time).
+2. Batching: merge consecutive draws with the same state and VAT into one RSX draw (about 4,000 RSX draws a
+   frame to about 700): fewer labels, cache invalidations and attribute binds, so the RSX does not become the
+   limit next. Estimate after steps 1 and 2: 30-50 presents a second.
+3. Vertex cache: convert the vertices of static display lists (the models) once into RSX memory and reuse them
+   (vertex conversion is 18% now).
+4. Smaller costs: convert only the changed constant rows, as word copies (no float stores and loads, a
+   load-hit-store each); release the FIFO every few KB instead of two `sync` atomics per command; drop the
+   per-draw backend label and draw record (step 3 diagnostics); keep vertex programs in RSX memory instead of
+   uploading each change (1,700 a second).
+5. Only if still short: vertex conversion and texture decoding on SPEs, one job per frame or ring segment.
+   Not per draw (a mailbox round trip each; the ioq3 port measured per-draw SPU jobs as a loss), and not the
+   whole GP thread (sequential, branchy, its caches do not fit 256 KB). The main and GP threads share the one
+   PPE core, so work moved to an SPE also helps the game logic, which was busy 30% of the time at 12 presents.
+
+Step 1, dirty tracking (2026-10-28): `GpState` has three generations (`gp.c`), bumped only when a value
+changes: `bp_gen` (BP and the TEV register sets), `xf_gen` (XF registers but the matrix indices 0x18-0x19 and
+the projection 0x20-0x26), `cp_gen` (VCD, VAT). A VCD or VAT write with the same value no longer clears the
+vertex sizes. `backend.c` keeps the last draw's layout, TEV config and fragment program, TEV values, vertex
+program, raster state (the `apply_state` RSX commands and its result), textures and DQ/TEV constant rows while
+the generations they read stay. A copy pass, clear or present drops the raster state; a TEV change drops the
+textures and constants; a new frame or TLUT load still checks the textures once. The heartbeat's fourth line
+adds "with the last draw's state" (`ps3_prof.state_reuses`).
+- Host check: a temporary build compared the registers at each memo hit with a snapshot from the last rebuild:
+  0 errors in about 26 million hits (Peach and DK on Yoshi's Story, Mario and Fox on Final Destination, items
+  at 4, 90 s each; the boot over the movie and a demo, 150 s). 85% of the draws keep the last draw's state.
+  `scenetest` PASS; `gx_test` 3 of 3 PASS.
+- Normal package rebuilt: `.got` 0x44c8, 0 `r2off` stubs, 17.4 MB in loaded segments. The call trace package
+  for run 29 is not rebuilt with this step.
+- Melee run 30 (2026-10-28, `build/run30_udp.txt`): Peach and DK on Yoshi's Story. 29 presents a second at
+  about 2,150 draws a frame (run 28: 12), 18-20 at about 4,000. 84% of the draws keep the last draw's state. GP
+  per mille: draws 778 (vertices 256, textures and program loads 209, constants 116, RSX commands 94, TEV 82).
+  The user: the stop of run 28 again, at DK's down B (the log: `SpecialLwStart`, `SpecialLwLoop`, then the main
+  thread's disables stop, outside `OSSleepThread`). The GP is idle: `dev_present` run as idle work clears
+  `gp_wait`, so the heartbeat says "waits for nothing". Not reproduced on the host, where rumble is a no-op.
+- Melee run 31 (2026-10-28, `build/run31_udp.txt`): test A, rumble off before DK's down B. The Rumble menu
+  failed at once: assertion `jobj` (`jobj.h` 932) in `mnVibration_CreatePortPanels` (stack named with
+  `build/opdsym.py`, the `.opd` map). `mnVibration_Init` writes 0878, 0888 and 0898 as `(&0868)[1..3]`; with no
+  named write, GCC folded their reads to NULL (only 0868 is in the ELF). Fix under `TARGET_PS3` in
+  `mnvibration.c`: one array, the four names its elements. Package rebuilt (`.got` 0x44c8, 0 `r2off` stubs).
+- Melee runs 32 and 33 (2026-10-28): the Rumble menu works. DK's down B stops the main thread as before, against
+  Bowser with rumble on (run 32) and against Zelda with rumble off (run 33, `build/run33_udp.txt`): rumble is not
+  the cause. Call trace package rebuilt with step 1 and the menu fix (`.got` 0x5488, 0 `r2off` stubs; symbols in
+  `build/calltrace_syms.txt`).
+- MWCC stack slots (2026-10-28, from the user's hint): `mpLib_80056C54` (`mplib.c`), which DK's down B calls on
+  each slap (`ftDk_Init_8010DB3C`), stores its square root through `sqrt_tmp - 4` and `sqrt_tmp - 5`: slots below
+  the array that MWCC lays out for the match. Under GCC the store lands on other stack data. Two more sites:
+  `ft_0899.c` (`(&sp1C)[-1]`) and `lbcollision.c` (`sqrt_tmp - 1`); `ftcpuattack.c` and `ftCo_0A01.c` already
+  keep it under `MUST_MATCH`. Fixed under `TARGET_PS3` (in-bounds slots, same arithmetic). Not proven to be the
+  stop. Both packages rebuilt (`.got` 0x44c8 and 0x5488, 0 `r2off` stubs). Run 34: DK's down B.
+- Second GameCube-only audit (2026-10-28, at the user's request). GCC 13 over the game with extra warnings
+  (`-Warray-bounds=2 -Wstringop-overflow=4 -Wmaybe-uninitialized -Wnull-dereference ...`, `build/linux_audit`):
+  580 sites of the relevant kinds (`build/audit_sites.txt`; the mplib store was among them, missed before). Six agents
+  checked every site and searched their directories for unflagged patterns (`build/audit_brief.md`; DOL disassembly
+  by name with `build/dol_dis.py`). Fixed under `TARGET_PS3`:
+  - Statics read as one block or by DOL distance: `mndatadel.c`, `mndiagram.c`, `mndiagram2.c`, `mndiagram3.c`,
+    `mnitemsw.c`, `ftkirbyspeciallw.c`, `ftpurinspecialn.c` and `ftkirbyspecialpurin.c` (next table, assert string),
+    the JPEG snapshot tables (`hsd_3B34.c`).
+  - Stack and object overruns: `itlinkhookshot.c` (`*(&y + 6)`), `gm_1832.c` (`MTXOrtho` into a 3x4 `Mtx`),
+    `lb_020A.c` (a 16-byte rotation into a `Vec3`), `grheal.c` (`_94[n + 2]`), `mninfo.c` (an unterminated joint
+    name), the JPEG coder's raw offsets past MWCC's 0x118-byte `jmp_buf` (`hsd_3B5C.c`, `hsd_3B34.c`).
+  - LP64 views: `hsd_3B33.c` (a pointer bumped as a u32), `gmtou_0.c` (`TmData_80194F30` packed as `TmData`),
+    `grbigblue.c` (car lane step), Kirby's bone byte, mushroom scales over a callback, Master/Crazy Hand state vars
+    and item pointers, Pikachu's down B thunder pointer, Yoshi's guard, the CPU item check (`motion_id` vs `kind`),
+    the Super Scope `fp + 0x2340` views (`ftCo_ItemScopeStart.c`).
+  - Register values the DOL relies on: `gricemt.c` (top check), `itmaplib.c` (`coll_index`), `ftCo_Damage.c`
+    (`ftCo_8008DA4C` result), `itkyasarinegg.c` (the missing return destroys the egg).
+  - Argument order: `efasync.c` 0x42B reads two `va_arg`s in one call; MWCC evaluates them right to left.
+  - Build (`Makefile`): `ps3/include/ps3_msl_math.h` forced into the game: MSL's `sqrtf` returns x for x <= 0, libm
+    NaN. String literals as CP932 (`-fexec-charset`), as sjiswrap gives the MWCC build: Japanese literals were UTF-8
+    (US text too: "Ｌｖ．", "ＨＩＴ"; with JP, two buffer overruns).
+  - Open: `mpLib_80056C54` reads `total_dist` unset on a first wall line (the DOL: the callers' f27); `hsd_3A76.c`
+    SIS jump operands read 8 bytes where the stream has 4 (opcodes 8/9, if any .dat uses them); `displayfunc.c` zlist
+    offsets (dead code); `gmevent.c:1594`, `mnitemsw.c` `fn_80234C24` state 0 (unreachable as far as known).
+  - Clean rebuilds: normal package `.got` 0x44c8, call trace 0x5488, 0 `r2off` stubs. Host matches
+    (`build/hostmatch_audit.txt`, items at 4): 46 of 46 run their time: the 13 pairs on Final Destination, Mario
+    and Fox on stages 2-31 but 21, Peach and DK, and a human DK doing down B 24 times by pad script.
 
 ## Not done for the game
 
@@ -193,9 +497,7 @@ UDP listener on that port.
 |---|---|
 | GX on RSX | Not drawn yet: indirect textures, TEV compare stages, two-compare alpha tests, logic ops, z textures, depth copies, emboss texgen, constant destination alpha, line width, a texcoord 7 matrix index in the vertex (the backend logs each once). Speed: a changed vertex program is uploaded again, vertices are de-indexed on the PPE for every draw (no display list cache), textures are hashed once per frame |
 | CARD | Saves on the HDD; the stubs report no card in either slot |
-| THP | Intro movie: `THPDec.c` has Gekko assembly; the stubs decode nothing |
 | OS threads | `OSSuspendThread` only counts; thread queues (`OSSleepThread`) are the minimal ones in `ps3/os/intr.c` |
-| AXFX effects | `reverb_hi`, `reverb_std` and `chorus` have Gekko assembly inner loops: need C versions |
 
 ## Done
 
@@ -218,16 +520,17 @@ UDP listener on that port.
 | `os.h` clocks | Under `TARGET_PC`: `__OSBusClock` and `__OSCoreClock` are variables (162 and 486 MHz in `ps3/os/globals.c`) |
 | OS layer `ps3/os/` | `os.c`: `OSInit` (UDP log, clock, memory), arena, report and panic, reset (back to the XMB), console settings, contexts, cache barriers. `ostime.c`: the GameCube time base from the PPE time base and the local time. `heap.c`: OSAlloc's heaps with a 32-byte header that fits LP64. `alarm.c`: one alarm thread, handlers with interrupts disabled. `thread.c`. `sys_cell.c`: the lv2 side, free memory by container probe, XMB quit. `setjmp.S`: 64-bit `setjmp`/`longjmp` before newlib's |
 | Memory | Arena 48 MB and `.dat` pool 48 MB (`ps3/dat/pool.c`), both from `memalign`; with the static data (0x10000000 up to `_end`), registered for GX |
-| SDK shims `ps3/sdk/`, `ps3/pad/`, `ps3/vi/` | `mtx.c`: `PSMTX*`, `PSVEC*` and the C-only `mtx.c` calls, after the SDK's C versions; `mtx44.c`, `OSArena.c`, `PadClamp.c` as they are. `card.c`: no card. `stubs.c`: AXFX (effects off), THP, MCC, FIO. PAD: DS3 (Cross, Square, Circle, Triangle as A, B, X, Y; R1 Z; L2 and R2 the analog L and R, with a click at 230; right stick the C stick), the first four connected of seven ports. VI: the RSX vblank raises the retrace interrupt; a flushed XFB goes to the GP thread (`gp_post_present`), which presents between commands or while it waits |
+| SDK shims `ps3/sdk/`, `ps3/pad/`, `ps3/vi/` | `mtx.c`: `PSMTX*`, `PSVEC*` and the C-only `mtx.c` calls, after the SDK's C versions; `mtx44.c`, `OSArena.c`, `PadClamp.c` as they are. `card.c`: no card. `stubs.c`: MCC, FIO. PAD: DS3 (Cross, Square, Circle, Triangle as A, B, X, Y; R1 Z; L2 and R2 the analog L and R, with a click at 230; right stick the C stick), the first four connected of seven ports. VI: the RSX vblank raises the retrace interrupt; a flushed XFB goes to the GP thread (`gp_post_present`), which presents between commands or while it waits |
 | Game sources | `debug.c`: `HSD_LogInit` is empty under `TARGET_PS3` (newlib's stdout has no write hook). `hsd_3915.c`: `GX_WG`. Fonts: `tools/dol_inc.py` takes `HSD_DebugFontAtlas` and `HSD_SisLib_FontAtlas` from `orig/GALE01/sys/main.dol`, as `config.yml` names them. `src/MSL/float.c` for `MSL_TrigF_80400770` and `MSL_TrigF_80400774` |
 | Final link (2026-10-27) | `make game`: the game, SDK and port objects, PSL1GHT libs, embedded SPU program; `EBOOT.BIN` and `melee.pkg`. Linker script `ps3/melee.ld`, `-fno-common`. `.got` 0x3f90, 0 `r2off` stubs; `.text` 9.8 MB, `.rodata` 2.3 MB, `.data` 0.8 MB, `.bss` 3.4 MB; loaded segments 18.0 MB. Main thread priority 1100, below the port's threads (1001): the game's loop spins between frames. `OSPanic` logs up to 16 return addresses from the back chain |
 | `.dat` toolchain `ps3/tools/datgen/` | Docker image `melee-datgen:1` (`Dockerfile`: Debian trixie, clang 19, lld, Rust stable, Aurora e6a6f02, newlib headers). `extract.py` writes `orig/GALE01/files` and `sys/main.dol` from the ISO (the DOL's SHA-1 matches `build.sha1`). `datgen.sh`: the PPC DWARF build, `melee-dat`, `types.bin` (1.9 MB), `native codegen` into `ps3/build/datgen/schema` (163 C files, 22 MB) |
 | Native `.dat` readers | `tools/dat-cli/native` and the schema in the EBOOT, with `-mminimal-toc`, allocations in the `.dat` pool (`ps3/dat/redirect.h`). `make dattest` (TOOLCHAIN=linux, qemu-ppc64, the EBOOT's headers and flags): upstream's HSD test passes, with typed dispatch, externs and 27 fighters |
 
+| AXFX effects | The SDK's `axfx/*.c` in the EBOOT: C versions of the asm loops in `reverb_hi`, `reverb_std` and `chorus` (`#ifdef TARGET_PS3`, fused multiply-adds as Gekko's), `long` to `s32` in the AX and AXFX sample types, `AXFXDelayInit`'s missing return. `make audiotest`: each effect on an AUX tone, finite output with the expected tail |
+| THP `ps3/sdk/thp.c` | Baseline JPEG in C (Huffman with a 9-bit lookahead, libjpeg's islow IDCT) into GX I8 tiles; replaces the stubs. Host: the intro movie in the game; MvOpen, MvEnd and the stills match a reference decode |
+
 ## Open decisions
 
-- AXFX: write C versions of the three assembly effects, and change their 32-bit `long` sample types to `s32`
-  (`AXAux.c`, `ax.h`, `axfx.h`, `axfx/*.c`). Safe for matching, but it edits SDK sources.
 - The matching DOL is not verified after the source changes. Run `python configure.py && ninja` with a native
   `ninja`. Edits outside a `TARGET_PS3` block that must keep the MWCC output: `GX_WG(T, x)` at the direct
   pipe stores (`GXVert.h`, `__gx.h`, `GXInit.c`, `GXFifo.c`, `gm_1832.c`, `psdisp.c`, `hsd_3915.c`),
@@ -249,8 +552,8 @@ UDP listener on that port.
   256 MB. Heap memory is therefore far above the 16 MB ARAM address range.
 - PSL1GHT's `u64` is `unsigned long` and the SDK's is `unsigned long long`: no SDK header may meet a
   PSL1GHT header in one source file (`ps3/audio/audio_cell.c`).
-- The SDK's `long` is 32-bit under MWCC. With LP64 it is 64-bit, which breaks the AUX buffers that the AXFX
-  callbacks read.
+- The SDK's `long` is 32-bit under MWCC. With LP64 it is 64-bit, which broke the AUX buffers that the AXFX
+  callbacks read, `__AXOutSBuffer` and the depop sums (`AXSPB.c`). They are `s32` now; under MWCC `s32` is `long`.
 - The SPU program keeps about 43 ms in the audio port. If a command list is late and less than about 11 ms
   remain, it writes silence instead of letting the port replay old data. Not measured on hardware.
 - `__GXData_struct` had `unsigned long` fields, 64-bit with LP64. GX writes several of them through `u32*`
@@ -289,3 +592,9 @@ UDP listener on that port.
 - lv2.ld places `.rodata` at 0x10000000, then `.data` and `.bss`, and aligns `_end` to 256 MB, so the static
   data region takes 256 MB of physical space. No linker symbol marks the end of `.bss`.
 - sagemono measured about 1.4 µs of PPU work per vertex with GX lighting on the PPU, and 7-14 fps in matches.
+- A schema type changed only under `TARGET_PS3` breaks the `.dat` reads: the schema comes from the GameCube
+  layout and writes native fields by name. Change only runtime structs that way; a `.dat` struct needs an
+  annotation or a change in both builds.
+- Host profiling: `ppc64-qemu-plugins:1` has qemu 8.2.2 built with plugins (`/opt/qemu-8.2.2/build/qemu-ppc64`).
+  A plugin that counts instructions per translation block and thread, with the `.text.<name>` sections of
+  `melee_host.map` for the names, splits a run by function and thread.

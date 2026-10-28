@@ -99,9 +99,17 @@ void ftKb_SpecialNYs_8010AC78(Fighter_GObj* victim, Fighter_GObj* gobj)
     fp->mv.co.yoshiegg.x0 = gobj;
     fp->take_dmg_2_cb = fn_8010B16C;
     ftCommon_8007EFC0(fp, 1);
+#ifdef TARGET_PS3
+    // fn_8010AA64 reads these as yoshiegg.x10, x14 and xC, which the other
+    // views are only with 32-bit pointers.
+    fp->mv.co.yoshiegg.x10 = ftKb_SpecialNYs_801092BC(gobj);
+    fp->mv.co.yoshiegg.x14 = fp->mv.co.yoshiegg.x10;
+    fp->mv.co.yoshiegg.xC = ftKb_SpecialNYs_801092AC(gobj);
+#else
     fp->mv.co.walk.fast_anim_frame = ftKb_SpecialNYs_801092BC(gobj);
     fp->mv.co.common.x14 = fp->mv.co.walk.fast_anim_frame;
     fp->mv.co.common.x4.z = ftKb_SpecialNYs_801092AC(gobj);
+#endif
     ftCommon_InitGrab(fp, 0, ftKb_SpecialNYs_801092CC(gobj));
     HSD_JObjGetScale(jobj, &fp->mv.co.yoshiegg.x18);
     fp->accessory4_cb = fn_8010AA64;

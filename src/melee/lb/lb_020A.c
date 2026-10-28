@@ -195,11 +195,20 @@ void fn_8002113C(HSD_JObj* jobj, Vec3* axis, f32 angle)
     PSMTXRotAxisRad(rotMtx, &localAxis, -angle);
 
     if (!(jobj->flags & JOBJ_USE_QUATERNION)) {
+#ifdef TARGET_PS3
+        // The rotation is 16 bytes; MWCC's frame had room after the 12-byte rot, GCC's does not.
+        HSD_JObjGetRotation(jobj, &rot2);
+        HSD_MkRotationMtx(tmpMtx, (Vec3*) &rot2);
+        PSMTXConcat(tmpMtx, rotMtx, result);
+        MatToEuler(result, (Vec3*) &rot2);
+        HSD_JObjSetRotation(jobj, &rot2);
+#else
         HSD_JObjGetRotation(jobj, (Quaternion*) &rot);
         HSD_MkRotationMtx(tmpMtx, &rot);
         PSMTXConcat(tmpMtx, rotMtx, result);
         MatToEuler(result, &rot);
         HSD_JObjSetRotation(jobj, (Quaternion*) &rot);
+#endif
     } else {
         HSD_JObjGetRotation(jobj, &rot2);
         HSD_MtxQuat(tmpMtx, &rot2);

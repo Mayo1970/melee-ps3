@@ -549,14 +549,26 @@ void mnCount_CreateRow(HSD_GObj* gobj, int visible_row, mnCount_row data_row)
     text->default_alignment = 2;
     if (inline_is_row_time(data_row)) {
         unsigned int row_value;
+#ifdef TARGET_PS3
+        // The GameCube writes the minutes 4 bytes below buf, outside it.
+        char buf[8];
+#else
         char buf[4];
+#endif
         text->font_size.x = 0.03f;
         text->font_size.y = 0.03f;
         row_value = mnCount_GetRowValue_Number(data_row);
+#ifdef TARGET_PS3
+        mn_8022EA78(buf + 4, 2, row_value / 60 / 60);
+        mn_8022EA78(buf, 2, row_value / 60 % 60);
+        HSD_SisLib_803A6B98(text, 0.0f, 0.0f, "%u:%s", row_value / 60 / 60,
+                            buf);
+#else
         mn_8022EA78(buf, 2, row_value / 60 / 60);
         mn_8022EA78(buf - 4, 2, row_value / 60 % 60);
         HSD_SisLib_803A6B98(text, 0.0f, 0.0f, "%u:%s", row_value / 60 / 60,
                             (char*) buf - 4);
+#endif
     } else if (inline_is_row_char(data_row)) {
         text->font_size.x = 0.03f;
         text->font_size.y = 0.03f;

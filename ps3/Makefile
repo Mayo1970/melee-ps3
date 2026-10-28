@@ -52,7 +52,7 @@ CFLAGS := -std=gnu11 -O2 $(ARCH) -ffunction-sections -fdata-sections -fno-strict
           -DTARGET_PC -DTARGET_PS3 -Iinclude -I$(ROOT)/src -I$(ROOT)/libs/doldecomp/include -I$(ROOT)/libs/dolphin/include \
           $(EXTRA_CFLAGS)
 
-.PHONY: check report toc dvdtest audiotest gxtest scenetest progtest dattest gxeboot spu game clean
+.PHONY: check report toc dvdtest audiotest gxtest scenetest progtest thptest dattest gxeboot spu game hostgame clean
 check: $(OBJS)
 
 $(BUILD)/ps3/%.o: CFLAGS += $(PORT_INCS)
@@ -75,7 +75,8 @@ $(BUILD)/%_test: $(ROOT)/ps3/tests/%_test.c $(TEST_DEPS) $(TEST_HEADERS)
 
 # The SDK's AX library over ps3/audio, with the audio program on a host thread (TOOLCHAIN=linux).
 AUDIO_TEST_SRCS := $(addprefix $(ROOT)/ps3/,tests/audio_test.c tests/audio_host.c audio/ax_spu.c \
-                   audio/sdk_audio.c os/intr.c os/sync_host.c os/globals.c) $(addprefix $(ROOT)/,$(SDK_AUDIO_SRCS))
+                   audio/sdk_audio.c os/intr.c os/sync_host.c os/globals.c) $(addprefix $(ROOT)/,$(SDK_AUDIO_SRCS)) \
+                   $(addprefix $(ROOT)/libs/dolphin/src/dolphin/axfx/,axfx.c chorus.c delay.c reverb_hi.c reverb_std.c)
 audiotest: $(BUILD)/audio_test
 $(BUILD)/audio_test: $(AUDIO_TEST_SRCS) $(wildcard $(ROOT)/ps3/audio/*.h $(ROOT)/ps3/tests/*.h)
 	@mkdir -p $(dir $@)
@@ -100,6 +101,13 @@ scenetest: $(BUILD)/gx_scene_test
 $(BUILD)/gx_scene_test: $(SCENE_TEST_SRCS) $(wildcard $(ROOT)/ps3/gx/*.h $(ROOT)/ps3/os/*.h $(ROOT)/ps3/tests/*.h)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -static -o $@ $(SCENE_TEST_SRCS) -lpthread -lm
+
+# The THP decoder over the game's movies (TOOLCHAIN=linux): frames as PPM files and as standard JPEG files.
+THP_TEST_SRCS := $(addprefix $(ROOT)/,ps3/tests/thp_test.c ps3/sdk/thp.c)
+thptest: $(BUILD)/thp_test
+$(BUILD)/thp_test: $(THP_TEST_SRCS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -static -o $@ $(THP_TEST_SRCS)
 
 # The generated programs against CPU references, on the ucode interpreters (any host).
 PROG_TEST_SRCS := $(addprefix $(ROOT)/,ps3/tests/prog_test.c ps3/tests/rsx_interp.c ps3/gx/fpgen.c ps3/gx/tevgen.c \
@@ -159,10 +167,11 @@ DOL := $(ROOT)/orig/GALE01/sys/main.dol
 DAT_SCHEMA := ps3/build/datgen/schema
 GAME_SRCS := $(sort $(shell cd $(ROOT) && find src/melee src/sysdolphin -name '*.c')) src/MSL/float.c
 GAME_SDK_SRCS := $(SDK_AUDIO_SRCS) $(SDK_GX_SRCS) libs/dolphin/src/dolphin/os/OSArena.c \
-                 libs/dolphin/src/dolphin/mtx/mtx44.c libs/dolphin/src/dolphin/pad/PadClamp.c
+                 libs/dolphin/src/dolphin/mtx/mtx44.c libs/dolphin/src/dolphin/pad/PadClamp.c \
+                 $(addprefix libs/dolphin/src/dolphin/axfx/,axfx.c chorus.c delay.c reverb_hi.c reverb_std.c)
 GAME_PORT_SRCS := $(addprefix ps3/,dvd/dvd.c os/intr.c os/globals.c os/os.c os/ostime.c os/heap.c \
                   os/alarm.c os/thread.c os/mem.c os/ppcarch.c audio/sdk_audio.c gx/fifo.c gx/gp.c sdk/mtx.c \
-                  sdk/card.c sdk/stubs.c pad/pad.c vi/vi.c dat/pool.c dat/trace.c os/calltrace.c) $(GX_RSX_SRCS) \
+                  sdk/card.c sdk/stubs.c sdk/thp.c pad/pad.c vi/vi.c dat/pool.c dat/trace.c os/calltrace.c) $(GX_RSX_SRCS) \
                   $(EXTRA_SRCS)
 # The PSL1GHT side, which no SDK header meets.
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_cell.c os/sys_cell.c os/udplog_cell.c audio/audio_cell.c \
@@ -172,17 +181,34 @@ DAT_SRCS := $(addprefix tools/dat-cli/native/src/,archive.c reader.c hsd.c) ps3/
 # Their allocations come from the .dat pool; GeoTypes.h stands in for Aurora's.
 DAT_FLAGS := -include $(ROOT)/ps3/dat/redirect.h -I$(ROOT)/tools/dat-cli/native/include -I$(ROOT)/$(DAT_SCHEMA) \
              -I$(ROOT)/ps3/dat/include -DVERSION_GALE01 -DBUILD_VERSION=0
+# The host game build (TOOLCHAIN=linux) replaces the PSL1GHT side: the audio program on a thread, the software RSX
+# without drawing, no pads or a script, the lv2 calls on Linux. glibc's setjmp keeps 64-bit registers.
+ifeq ($(TOOLCHAIN),linux)
+GAME_CELL_SRCS := $(addprefix ps3/,os/sync_host.c tests/sys_host.c tests/udplog_host.c tests/audio_host.c \
+                  audio/ax_spu.c tests/rsxdev_soft.c tests/rsx_interp.c tests/pad_host.c tests/host_start.c)
+HOST_WRAP := -Wl,--wrap=gm_ChangeGameModeAfterCurrentScene,--wrap=gm_LoadAnnouncer
+endif
 GAME_OBJ = $(patsubst %.c,$(GAME_DIR)/%.o,$(1))
-GAME_OBJS := $(call GAME_OBJ,$(GAME_SRCS) $(GAME_SDK_SRCS) $(GAME_PORT_SRCS) $(GAME_CELL_SRCS) $(DAT_SRCS)) \
-             $(GAME_DIR)/ps3/os/setjmp.o $(GAME_DIR)/ax_spu_elf.o
-# Untyped lookups become typed ones (ps3/dat/lookup.c); the trace logs parses and typed lookups (step 3).
-GAME_WRAP := -Wl,--wrap=HSD_ArchiveParse,--wrap=HSD_ArchiveGetPublicAddress,--wrap=HSD_ArchiveGetPublicTyped
+GAME_OBJS := $(call GAME_OBJ,$(GAME_SRCS) $(GAME_SDK_SRCS) $(GAME_PORT_SRCS) $(GAME_CELL_SRCS) $(DAT_SRCS))
+ifneq ($(TOOLCHAIN),linux)
+GAME_OBJS += $(GAME_DIR)/ps3/os/setjmp.o $(GAME_DIR)/ax_spu_elf.o
+endif
+# Untyped lookups become typed ones, parses free the native data of the buffers they reuse (ps3/dat/lookup.c);
+# the trace logs typed lookups (step 3).
+GAME_WRAP := -Wl,--wrap=HSD_ArchiveParse,--wrap=HSD_ArchiveGetPublicAddress,--wrap=HSD_ArchiveGetPublicTyped \
+             -Wl,--wrap=HSD_ArchiveReleaseNative
 GAME_LIBS := -L$(PS3DEV)/ppu/lib -lrsx -lgcm_sys -lio -laudio -lsysutil -lsysmodule -lnet -llv2 -lrt -lm
 FONT_INCS := $(addprefix $(GAME_DIR)/include/sysdolphin/baselib/,debug_font.inc sislib_font.inc)
 
-$(GAME_DIR)/src/%.o: GAME_FLAGS := -mminimal-toc
+# MSL's math where it differs from libm; string literals in Shift-JIS, as sjiswrap gives the MWCC build (CP932
+# keeps the backslash).
+$(GAME_DIR)/src/%.o: GAME_FLAGS := -mminimal-toc -include ps3_msl_math.h -finput-charset=UTF-8 -fexec-charset=CP932
 $(call GAME_OBJ,$(GAME_CELL_SRCS)): GAME_FLAGS := $(PORT_INCS)
 $(call GAME_OBJ,$(DAT_SRCS)): GAME_FLAGS := -mminimal-toc $(DAT_FLAGS)
+ifeq ($(TOOLCHAIN),linux)
+$(call GAME_OBJ,ps3/dvd/dvd.c): GAME_FLAGS := -DPS3_APP_DIR=\"$(DVD_APP_DIR)\"
+$(call GAME_OBJ,ps3/tests/audio_host.c): GAME_FLAGS := -DHOST_AUDIO_REALTIME
+endif
 
 # -fno-common: uninitialized globals get their own .bss sections too, which melee.ld aligns to 32 bytes.
 $(GAME_DIR)/%.o: $(ROOT)/%.c
@@ -228,6 +254,22 @@ $(GAME_DIR)/melee.pkg: $(GAME_DIR)/melee.elf
 	sfo --title "$(GAME_TITLE)" --appid "$(EBOOT_APPID)" -f $(PS3DEV)/bin/sfo.xml $(GAME_DIR)/pkg/PARAM.SFO
 	pkg --contentid $(EBOOT_CONTENTID) $(GAME_DIR)/pkg/ $@ > /dev/null
 	@ls -l $(GAME_DIR)/EBOOT.BIN $@
+
+# Melee as a Linux program (TOOLCHAIN=linux), for qemu-ppc64 with a 4 GB guest space, as the PS3's user addresses:
+# docker run -v <dir with games/Melee.iso>:/scratch ... qemu-ppc64 -R 0x100000000 build/linux/game/melee_host
+hostgame: $(GAME_DIR)/melee_host
+
+# The default script with SUBALIGN(32) on .rodata, .data and .bss, as melee.ld.
+$(GAME_DIR)/host.ld:
+	@mkdir -p $(dir $@)
+	$(CC) -static -Wl,--verbose 2> /dev/null | sed -n '/^=====/,/^=====/p' | sed '1d;$$d' | \
+	    sed -E 's/^  (\.rodata|\.data|\.bss)( +):/  \1\2: SUBALIGN(32)/' > $@.tmp
+	@test "$$(grep -c 'SUBALIGN(32)' $@.tmp)" = 3 && mv $@.tmp $@
+
+$(GAME_DIR)/melee_host: $(GAME_OBJS) $(GAME_DIR)/host.ld
+	$(CC) $(ARCH) -static -T $(GAME_DIR)/host.ld $(GAME_WRAP) $(HOST_WRAP) -Wl,--gc-sections \
+	    -Wl,-Map,$(GAME_DIR)/melee_host.map $(EXTRA_LDFLAGS) $(GAME_OBJS) -lpthread -lm -o $@
+	@$(PREFIX)readelf -lW $@ | grep LOAD
 
 # The native .dat readers as the EBOOT builds them, under upstream's HSD test over the game's files
 # (TOOLCHAIN=linux): docker run ... ppc64-qemu-test:2 qemu-ppc64 build/linux/dattest/dat_test ../orig/GALE01/files

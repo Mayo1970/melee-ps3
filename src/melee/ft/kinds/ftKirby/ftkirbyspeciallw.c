@@ -38,6 +38,26 @@ struct ftKb_Init_803CB4EC_t {
     Vec3 vec;
 };
 
+#ifdef TARGET_PS3
+// The layout casts read ftKb_Init_803CB4EC.vec at +0x74 from the flags: the
+// DOL keeps the two tables in a row, so one block keeps that offset here.
+struct {
+    bool flags[23];
+    struct ftKb_Init_803CB4EC_t next;
+} ftKb_Init_803CB490_blk = {
+    {
+        false, true,  false, false, false, false, true,  true,
+        false, false, false, true,  true,  true,  false, false,
+        true,  true,  true,  true,  false, true,  true,
+    },
+    {
+        { 0, 2, 3, 4, 5, 6 },
+        { 0.0F, 1.0F, 0.0F },
+    },
+};
+#define ftKb_Init_803CB490 ((bool*) &ftKb_Init_803CB490_blk)
+#define ftKb_Init_803CB4EC (ftKb_Init_803CB490_blk.next)
+#else
 bool ftKb_Init_803CB490[] = {
     false, true,  false, false, false, false, true,  true,
     false, false, false, true,  true,  true,  false, false,
@@ -48,6 +68,7 @@ struct ftKb_Init_803CB4EC_t ftKb_Init_803CB4EC = {
     { 0, 2, 3, 4, 5, 6 },
     { 0.0F, 1.0F, 0.0F },
 };
+#endif
 
 static inline bool fbKb_SpecialLw_IASA_Inline(Fighter_GObj* gobj)
 {

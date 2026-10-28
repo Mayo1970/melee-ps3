@@ -47,6 +47,22 @@ static grVe_Data grVe_803E5348 = {
 
 static int grVe_803E5380[3] = { 0 };
 
+#ifdef TARGET_PS3
+// The GameCube reads these statics as one s32 array from grVe_803E5348, by
+// their DOL offsets; here they lie apart and the GObj pointers are 8 bytes.
+#define VE_GOBJ(i) (grVe_803E5348.arwing.arwing_gobj[i])
+#define VE_TYPE(i) (grVe_803E5348.arwing.arwing_type[i])
+#define VE_KIND(i) (grVe_803E5380[i])
+#define VE_MAPANIM(k) (grVe_803E5530[k])
+#define VE_GOBJID(k) (grVe_803E5530[(k) + 48])
+#define VE_ANIMARG(k) (grVe_803E5644[k])
+#define VE_ANIM(k) (grVe_803E56A0[k])
+#define VE_SPAWN(k) ((Vec3*) &grVe_803E5530[12 + 3 * (k)])
+#define VE_FRAME(gp) ((gp)->u.venom2.xE4)
+#else
+#define VE_FRAME(gp) ((gp)->u.venom.x20.xE4)
+#endif
+
 static void stageGObj0_OnInit(Ground_GObj* gobj);
 static void stageGObj9_GObjProc(Ground_GObj* arg);
 
@@ -547,9 +563,13 @@ Ground_GObj* grVenom_80203EAC(int gobj_id)
 {
     Ground_GObj* gobj;
     Ground* gp;
+#ifdef TARGET_PS3
+    StageCallbacks* callbacks = &grVe_StageCallbacks[gobj_id];
+#else
     grVe_Data* base = &grVe_803E5348;
     StageCallbacks* callbacks =
         &((StageCallbacks*) ((char*) base + 0x44))[gobj_id];
+#endif
 
     gobj = Ground_GetStageGObj(gobj_id);
 
@@ -756,7 +776,7 @@ void grVenom_80204428(Ground_GObj* gobj)
     gp->u.venom2.xE0_state.x0.b5 = 0;
     gp->u.venom2.xE0_state.x0.b6 = 0;
 
-    gp->u.venom.x20.xE4 = 0.0F;
+    VE_FRAME(gp) = 0.0F;
 
     Ground_801C5440(gp, 0, 0x6B6C3);
     mpLib_80057BC0(2);
@@ -828,78 +848,78 @@ void grVenom_8020454C(Ground_GObj* gobj)
             HSD_AObj* a = grAnime_801C8318(gobj, 0, 7);
             if (a != NULL) {
                 float frame = HSD_AObjGetCurrFrame(a);
-                if ((gp->u.venom.x20.xE4 < 1033.0F && 1033.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 1086.0F && 1086.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 1185.0F && 1185.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 1238.0F && 1238.0F <= frame))
+                if ((VE_FRAME(gp) < 1033.0F && 1033.0F <= frame) ||
+                    (VE_FRAME(gp) < 1086.0F && 1086.0F <= frame) ||
+                    (VE_FRAME(gp) < 1185.0F && 1185.0F <= frame) ||
+                    (VE_FRAME(gp) < 1238.0F && 1238.0F <= frame))
                 {
                     Ground_801C53EC(0x6B6C5);
                 }
-                if ((gp->u.venom.x20.xE4 < 1063.0F && 1063.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 1116.0F && 1116.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 1215.0F && 1215.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 1268.0F && 1268.0F <= frame))
+                if ((VE_FRAME(gp) < 1063.0F && 1063.0F <= frame) ||
+                    (VE_FRAME(gp) < 1116.0F && 1116.0F <= frame) ||
+                    (VE_FRAME(gp) < 1215.0F && 1215.0F <= frame) ||
+                    (VE_FRAME(gp) < 1268.0F && 1268.0F <= frame))
                 {
                     Ground_801C53EC(0x6B6C6);
                 }
-                if ((gp->u.venom.x20.xE4 < 2460.0F && 2460.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 6440.0F && 6440.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 9330.0F && 9330.0F <= frame))
+                if ((VE_FRAME(gp) < 2460.0F && 2460.0F <= frame) ||
+                    (VE_FRAME(gp) < 6440.0F && 6440.0F <= frame) ||
+                    (VE_FRAME(gp) < 9330.0F && 9330.0F <= frame))
                 {
                     gp->u.venom2.xE0_state.x0.b6 = true;
                 }
-                if ((gp->u.venom.x20.xE4 < 2460.0F && 2460.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 2747.0F && 2747.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 3030.0F && 3030.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 3393.0F && 3393.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 3727.0F && 3727.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 6440.0F && 6440.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 6880.0F && 6880.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 9330.0F && 9330.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 9600.0F && 9600.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 9835.0F && 9835.0F <= frame))
+                if ((VE_FRAME(gp) < 2460.0F && 2460.0F <= frame) ||
+                    (VE_FRAME(gp) < 2747.0F && 2747.0F <= frame) ||
+                    (VE_FRAME(gp) < 3030.0F && 3030.0F <= frame) ||
+                    (VE_FRAME(gp) < 3393.0F && 3393.0F <= frame) ||
+                    (VE_FRAME(gp) < 3727.0F && 3727.0F <= frame) ||
+                    (VE_FRAME(gp) < 6440.0F && 6440.0F <= frame) ||
+                    (VE_FRAME(gp) < 6880.0F && 6880.0F <= frame) ||
+                    (VE_FRAME(gp) < 9330.0F && 9330.0F <= frame) ||
+                    (VE_FRAME(gp) < 9600.0F && 9600.0F <= frame) ||
+                    (VE_FRAME(gp) < 9835.0F && 9835.0F <= frame))
                 {
                     Ground_801C53EC(0x6B6C7);
                 }
-                if ((gp->u.venom.x20.xE4 < 4070.0F && 4070.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 < 7220.0F && 7220.0F <= frame) ||
-                    (gp->u.venom.x20.xE4 > frame))
+                if ((VE_FRAME(gp) < 4070.0F && 4070.0F <= frame) ||
+                    (VE_FRAME(gp) < 7220.0F && 7220.0F <= frame) ||
+                    (VE_FRAME(gp) > frame))
                 {
                     gp->u.venom2.xE0_state.x0.b6 = false;
                 }
-                if (gp->u.venom.x20.xE4 < 4200 && 4200 <= frame) {
+                if (VE_FRAME(gp) < 4200 && 4200 <= frame) {
                     gp->u.venom2.xE0_state.x0.b0 = true;
                 }
-                if (gp->u.venom.x20.xE4 < 3800 && 3800 <= frame) {
+                if (VE_FRAME(gp) < 3800 && 3800 <= frame) {
                     gp->u.venom2.xE0_state.x0.b1 = true;
                 }
-                if (gp->u.venom.x20.xE4 < 4400 && 4400 <= frame) {
+                if (VE_FRAME(gp) < 4400 && 4400 <= frame) {
                     Ground_801C5440(gp, 0, 0x6B6C4);
                     gp->u.venom2.xE0_state.x0.b2 = true;
                     mpJointListAdd(2);
                 }
-                if (gp->u.venom.x20.xE4 < 6100 && 6100 <= frame) {
+                if (VE_FRAME(gp) < 6100 && 6100 <= frame) {
                     Ground_801C5440(gp, 0, 0x6B6C3);
                     gp->u.venom2.xE0_state.x0.b0 = false;
                     gp->u.venom2.xE0_state.x0.b1 = false;
                     gp->u.venom2.xE0_state.x0.b2 = false;
                     mpLib_80057BC0(2);
                 }
-                if (gp->u.venom.x20.xE4 < 7210 && 7210 <= frame) {
+                if (VE_FRAME(gp) < 7210 && 7210 <= frame) {
                     gp->u.venom2.xE0_state.x0.b3 = true;
                 }
-                if (gp->u.venom.x20.xE4 < 6810 && 6810 <= frame) {
+                if (VE_FRAME(gp) < 6810 && 6810 <= frame) {
                     gp->u.venom2.xE0_state.x0.b4 = true;
                 }
-                if (gp->u.venom.x20.xE4 < 7410 && 7410 <= frame) {
+                if (VE_FRAME(gp) < 7410 && 7410 <= frame) {
                     gp->u.venom2.xE0_state.x0.b5 = true;
                 }
-                if (gp->u.venom.x20.xE4 < 9200 && 9200 <= frame) {
+                if (VE_FRAME(gp) < 9200 && 9200 <= frame) {
                     gp->u.venom2.xE0_state.x0.b3 = false;
                     gp->u.venom2.xE0_state.x0.b4 = false;
                     gp->u.venom2.xE0_state.x0.b5 = false;
                 }
-                gp->u.venom.x20.xE4 = frame;
+                VE_FRAME(gp) = frame;
             }
         }
 
@@ -1014,7 +1034,9 @@ void grVenom_80204F1C(Ground_GObj* arg) {}
 
 void grVenom_80204F20(Ground_GObj* arg0)
 {
+#ifndef TARGET_PS3
     s32* base = (s32*) &grVe_803E5348;
+#endif
     Ground* gp = arg0->user_data;
     HSD_JObj* jobj = arg0->hsd_obj;
     HSD_GObj* other;
@@ -1024,7 +1046,11 @@ void grVenom_80204F20(Ground_GObj* arg0)
 
     grVe_803E5348.arwing.arwing_gobj[gp->u.venom.xC8 = grVe_804D6A34] = arg0;
 
+#ifdef TARGET_PS3
+    other = grVenom_80203EAC(VE_GOBJID(VE_KIND(gp->u.venom.xC8)));
+#else
     other = grVenom_80203EAC(base[base[gp->u.venom.xC8 + 14] + 170]);
+#endif
     if (other != NULL) {
         Ground* other_gp = other->user_data;
         other_gp->x10_flags.b2 = 0;
@@ -1037,7 +1063,11 @@ void grVenom_80204F20(Ground_GObj* arg0)
     }
 
     scale = Ground_801C0498();
+#ifdef TARGET_PS3
+    state = VE_TYPE(gp->u.venom.xC8);
+#else
     state = base[gp->u.venom.xC8 + 11];
+#endif
     switch (state) {
     case 1:
     case 2:
@@ -1078,6 +1108,26 @@ typedef struct {
     f32 z;
 } VenomSpawnData;
 
+#ifdef TARGET_PS3
+void grVenom_802052E0(Ground_GObj* gobj, Vec3* pos)
+{
+    Vec3 jobj_pos;
+    Ground* gp;
+    Vec3* spawn;
+
+    if (gobj != NULL) {
+        gp = gobj->user_data;
+        Ground_GetMapGObj(5);
+        lb_8000B1CC(Ground_801C3FA4(gobj, 5), NULL, &jobj_pos);
+        spawn = VE_SPAWN(VE_TYPE(gp->u.venom.xC8));
+        pos->x = jobj_pos.x + spawn->x;
+        pos->y = jobj_pos.y + spawn->y;
+        pos->z = jobj_pos.z + spawn->z;
+    } else {
+        pos->x = pos->y = pos->z = 0.0F;
+    }
+}
+#else
 void grVenom_802052E0(Ground_GObj* gobj, Vec3* pos)
 {
     u8* new_var2;
@@ -1111,6 +1161,7 @@ void grVenom_802052E0(Ground_GObj* gobj, Vec3* pos)
         pos->x = pos->y = pos->z = 0.0F;
     }
 }
+#endif
 
 /// grVenom_802053B0
 
@@ -1155,6 +1206,17 @@ void grVenom_802053B0(Ground_GObj* gobj)
     jobj = gobj->hsd_obj;
     ptr = base + gp->u.venom.xC8;
 
+#ifdef TARGET_PS3
+    if (VE_GOBJ(gp->u.venom.xC8) == gobj) {
+        if (gp->u.venom.xD4 == 1) {
+            gp->u.venom.xD4 = 0;
+            grAnime_801C8138(gobj, gp->map_id,
+                             VE_MAPANIM(VE_TYPE(gp->u.venom.xC8)));
+            return;
+        }
+
+        switch (VE_TYPE(gp->u.venom.xC8)) {
+#else
     if ((u32) ptr[8] == (u32) gobj) {
         if (gp->u.venom.xD4 == 1) {
             gp->u.venom.xD4 = 0;
@@ -1164,6 +1226,7 @@ void grVenom_802053B0(Ground_GObj* gobj)
         }
 
         switch (ptr[11]) {
+#endif
         case 1:
         case 2:
         case 3:
@@ -1183,7 +1246,11 @@ void grVenom_802053B0(Ground_GObj* gobj)
         }
 
         if (grAnime_801C83D0(gobj, 0, 7)) {
+#ifdef TARGET_PS3
+            VE_GOBJ(gp->u.venom.xC8) = NULL;
+#else
             base[gp->u.venom.xC8 + 8] = 0;
+#endif
             Ground_801C4A08(gobj);
         }
     } else {
@@ -1216,10 +1283,19 @@ void grVenom_802056B0(Ground_GObj* gobj)
     joint_idx = grVe_803E5380;
     joints = grVe_803E5680;
     gp->u.venom.xD0 = 0;
+#ifdef TARGET_PS3
+    // grVenom_80205758 reads these as u.arwing; venom's x18 holds a pointer,
+    // so its x1C-x24 lie 4 bytes after arwing's xE0 here.
+    gp->u.arwing.xDC = 0.0F;
+    gp->u.arwing.xE0.z = 0.0F;
+    gp->u.arwing.xE0.y = 0.0F;
+    gp->u.arwing.xE0.x = 0.0F;
+#else
     gp->u.venom.x18.xDC = 0.0F;
     gp->u.venom.x24.xE8 = 0.0F;
     gp->u.venom.x20.xE4 = 0.0F;
     gp->u.venom.x1C.xE0 = 0.0F;
+#endif
     joint_offset = joint_idx[gp->u.venom.xC8];
     joint_id = joints[joint_offset];
     mpJointListAdd(joint_id);
@@ -1351,16 +1427,24 @@ typedef struct grVe_AnimArg {
 static inline s32 grVe_GetAnimArg(s32 fire_kind, Ground* gp,
                                   grVe_AnimData* anim_data)
 {
+#ifdef TARGET_PS3
+    return VE_ANIMARG(gp->u.venom.xF4 * 2 + fire_kind);
+#else
     anim_data = (grVe_AnimData*) ((s32*) anim_data + gp->u.venom.xF4 * 2);
     anim_data = (grVe_AnimData*) ((s32*) anim_data + fire_kind);
     return ((volatile grVe_AnimArg*) anim_data)->value;
+#endif
 }
 
 static inline s32 getFireKind(Ground_GObj* gobj, const s32* base)
 {
     s32 fire_kind = -1;
 
+#ifdef TARGET_PS3
+    switch (VE_KIND(GET_GROUND(gobj)->u.venom.xC8)) {
+#else
     switch (base[GET_GROUND(gobj)->u.venom.xC8 + 14]) {
+#endif
     case 0:
         break;
     case 1:
@@ -1410,6 +1494,15 @@ void grVenom_80205F30(Ground_GObj* gobj)
     }
 
     entry = base + gp->u.venom.xC8;
+#ifdef TARGET_PS3
+    if (VE_GOBJ(gp->u.venom.xC8) != NULL) {
+        if (VE_KIND(gp->u.venom.xC8) == 4) {
+            tmp_jobj = Ground_801C3FA4(gobj, 1);
+            HSD_JObjSetRotationZ(tmp_jobj, 0.0F);
+        }
+
+        state = VE_TYPE(gp->u.venom.xC8);
+#else
     if ((u32) entry[8] != 0U) {
         if (entry[14] == 4) {
             tmp_jobj = Ground_801C3FA4(gobj, 1);
@@ -1417,6 +1510,7 @@ void grVenom_80205F30(Ground_GObj* gobj)
         }
 
         state = base[gp->u.venom.xC8 + 11];
+#endif
         switch (state) {
         case 1:
         case 2:
@@ -1434,16 +1528,27 @@ void grVenom_80205F30(Ground_GObj* gobj)
                     fire_kind = getFireKind(gobj, base);
                     {
                         grVe_AnimData* anim_data = (grVe_AnimData*) base;
+#ifdef TARGET_PS3
+                        s32 idx0 = VE_KIND(gp->u.venom.xC8);
+                        s32 anim_arg =
+                            grVe_GetAnimArg(fire_kind, gp, anim_data);
+                        s32 anim_id = VE_ANIM(idx0);
+#else
                         s32 idx0 = base[gp->u.venom.xC8 + 14];
                         s32 anim_arg =
                             grVe_GetAnimArg(fire_kind, gp, anim_data);
                         s32 anim_id = anim_data->anim_ids[idx0];
+#endif
                         grAnime_801C8098(gobj, anim_id, 7, anim_arg, 0.0F,
                                          1.0F);
                     }
                 } else {
+#ifdef TARGET_PS3
+                    s32 anim_id = VE_ANIM(VE_KIND(gp->u.venom.xC8));
+#else
                     s32 idx0 = base[gp->u.venom.xC8 + 14];
                     s32 anim_id = base[idx0 + 0xD6];
+#endif
                     tmp_jobj = Ground_801C3FA4(gobj, anim_id);
                     HSD_JObjSetRotationZ(tmp_jobj, 0.0F);
                 }
@@ -1460,6 +1565,21 @@ void grVenom_80205F30(Ground_GObj* gobj)
                 break;
             }
 
+#ifdef TARGET_PS3
+            if ((other = VE_GOBJ(gp->u.venom.xC8)) != NULL) {
+                other_gp = other->user_data;
+                Ground_GetMapGObj(5);
+                lb_8000B1CC(Ground_801C3FA4(other, 5), NULL, &sp64);
+                {
+                    Vec3* spawn = VE_SPAWN(VE_TYPE(other_gp->u.venom.xC8));
+                    sp94.x = sp64.x + spawn->x;
+                    sp94.y = sp64.y + spawn->y;
+                    sp94.z = sp64.z + spawn->z;
+                }
+            } else {
+                sp94.x = sp94.y = sp94.z = 0.0F;
+            }
+#else
             if ((other = (HSD_GObj*) base[gp->u.venom.xC8 + 8]) != NULL) {
                 other_gp = other->user_data;
                 Ground_GetMapGObj(5);
@@ -1476,25 +1596,40 @@ void grVenom_80205F30(Ground_GObj* gobj)
             } else {
                 sp94.x = sp94.y = sp94.z = 0.0F;
             }
+#endif
 
             HSD_JObjSetTranslate(jobj, &sp94);
 
             {
+#ifdef TARGET_PS3
+                s32 anim_id = VE_ANIM(VE_KIND(gp->u.venom.xC8));
+#else
                 s32 idx0 = base[gp->u.venom.xC8 + 14];
                 s32 anim_id = base[idx0 + 0xD6];
+#endif
                 lb_8000B1CC(Ground_801C3FA4(gobj, anim_id), NULL, &sp94);
             }
             if (gp->u.venom.x18.linked_gobj != NULL) {
                 Ground* sub = gp->u.venom.x18.linked_gobj->user_data;
                 if (sub != NULL) {
+#ifdef TARGET_PS3
+                    // The linked Ground reads this as u.arwing.xE0
+                    // (grVenom_80205758), 4 bytes before venom's x1C here.
+                    sub->u.arwing.xE0 = sp94;
+#else
                     *(Vec3*) &sub->u.venom.x1C.xE0 = sp94;
+#endif
                 }
             }
 
             {
                 f32 rot_z;
+#ifdef TARGET_PS3
+                s32 anim_id = VE_ANIM(VE_KIND(gp->u.venom.xC8));
+#else
                 s32 idx0 = base[gp->u.venom.xC8 + 14];
                 s32 anim_id = base[idx0 + 0xD6];
+#endif
                 helper = Ground_801C3FA4(gobj, anim_id);
                 rot_z = HSD_JObjGetRotationZ(helper);
                 if (gp->u.venom.x18.linked_gobj != NULL) {
@@ -1511,7 +1646,11 @@ void grVenom_80205F30(Ground_GObj* gobj)
         case 11:
             if (!(gp->u.venom.xF0 & 7) && HSD_Randi(8) == 0) {
                 gp->u.venom.xFC = 0;
+#ifdef TARGET_PS3
+                type_idx = VE_TYPE(gp->u.venom.xC8);
+#else
                 type_idx = base[gp->u.venom.xC8 + 11];
+#endif
                 switch (type_idx) {
                 case 8:
                     if (gp->u.venom.xF0 > 0x3C && gp->u.venom.xF0 < 0xE6) {
@@ -1542,6 +1681,22 @@ void grVenom_80205F30(Ground_GObj* gobj)
                 HSD_GObj* far_other;
                 Ground* far_other_gp;
 
+#ifdef TARGET_PS3
+                if ((far_other = VE_GOBJ(gp->u.venom.xC8)) != NULL) {
+                    far_other_gp = far_other->user_data;
+                    Ground_GetMapGObj(5);
+                    lb_8000B1CC(Ground_801C3FA4(far_other, 5), NULL, &sp50);
+                    {
+                        Vec3* spawn =
+                            VE_SPAWN(VE_TYPE(far_other_gp->u.venom.xC8));
+                        sp94.x = sp50.x + spawn->x;
+                        sp94.y = sp50.y + spawn->y;
+                        sp94.z = sp50.z + spawn->z;
+                    }
+                } else {
+                    sp94.x = sp94.y = sp94.z = 0.0F;
+                }
+#else
                 if ((far_other = (HSD_GObj*) base[gp->u.venom.xC8 + 8]) !=
                     NULL)
                 {
@@ -1561,6 +1716,7 @@ void grVenom_80205F30(Ground_GObj* gobj)
                 } else {
                     sp94.x = sp94.y = sp94.z = 0.0F;
                 }
+#endif
             }
 
             if (-100.0F > sp94.z && sp94.z > -2000.0F && gp->u.venom.xFC != 0)
@@ -1604,6 +1760,20 @@ void grVenom_80205F30(Ground_GObj* gobj)
 
         gp->u.venom.xF0 = gp->u.venom.xF0 + 1;
     } else {
+#ifdef TARGET_PS3
+        if (gp->u.venom.x1C.gobj != NULL) {
+            Ground_801C4A08(gp->u.venom.x1C.gobj);
+        }
+        if (gp->u.venom.x20.gobj != NULL) {
+            Ground_801C4A08(gp->u.venom.x20.gobj);
+        }
+        if (gp->u.venom.x24.gobj != NULL) {
+            Ground_801C4A08(gp->u.venom.x24.gobj);
+        }
+        if (gp->u.venom.x28.gobj != NULL) {
+            Ground_801C4A08(gp->u.venom.x28.gobj);
+        }
+#else
         if (*(u32*) &gp->u.venom.x1C.xE0 != 0U) {
             Ground_801C4A08(*(HSD_GObj**) &gp->u.venom.x1C.xE0);
         }
@@ -1616,6 +1786,7 @@ void grVenom_80205F30(Ground_GObj* gobj)
         if (*(u32*) &gp->u.venom.x28.xEC != 0U) {
             Ground_801C4A08(*(HSD_GObj**) &gp->u.venom.x28.xEC);
         }
+#endif
         Ground_801C4A08(gobj);
     }
 }

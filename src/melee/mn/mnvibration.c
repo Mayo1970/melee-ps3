@@ -137,10 +137,19 @@ typedef struct MnVibrationData {
 } MnVibrationData;
 
 // The asset blocks are also addressed as a contiguous array in Init.
+#ifdef TARGET_PS3
+// GCC does not keep the four blocks in a row, so Init's writes past 0868 missed the others.
+static MnVibrationJointAssets mnVibration_Assets[4];
+#define mnVibration_804A0868 (mnVibration_Assets[0])
+#define mnVibration_804A0878 (mnVibration_Assets[1])
+#define mnVibration_804A0888 (mnVibration_Assets[2])
+#define mnVibration_804A0898 (mnVibration_Assets[3])
+#else
 static MnVibrationJointAssets mnVibration_804A0868;
 static MnVibrationJointAssets mnVibration_804A0878;
 static MnVibrationJointAssets mnVibration_804A0888;
 static MnVibrationJointAssets mnVibration_804A0898;
+#endif
 
 /// --- Function Implementation ---
 

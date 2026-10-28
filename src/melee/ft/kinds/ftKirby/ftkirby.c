@@ -2512,14 +2512,21 @@ MotionState ftKb_Init_UnkMotionStates0[] = {
 
 void ftKb_Init_800EE528(void)
 {
+#ifndef TARGET_PS3
     /// @todo Bad cast.
     s32* number_list = (s32*) ft_80459B88.copies;
+#endif
     ftKirby_CostumeArchive** struct_list = ftKb_Init_803C9FC8;
 
     s32 i;
     for (i = 0; i < Ft_Kind_Max; i++) {
         ftKirby_CostumeArchive* unk_struct;
+#ifdef TARGET_PS3
+        // The s32 view clears only half of the 64-bit pointers.
+        ft_80459B88.copies[i] = NULL;
+#else
         number_list[i] = 0;
+#endif
         unk_struct = struct_list[i];
         if (unk_struct) {
             unk_struct[0].joint = NULL;
@@ -2857,7 +2864,12 @@ HSD_JObj* ftKb_Init_UnkMotionStates6(Fighter_GObj* gobj)
 
 void ftKb_SpecialN_800EF040(Fighter_GObj* gobj, int arg1, KirbyHatStruct* hat)
 {
+#ifdef TARGET_PS3
+    // hat_dynamics[1] is part_mask only with 32-bit pointers.
+    u32 mask = ((ftKbCopyParts*) hat)->part_mask;
+#else
     u32 mask = (u32) hat->hat_dynamics[1];
+#endif
     if (mask != 0) {
         Fighter* fp = GET_FIGHTER(gobj);
         struct Fighter_804D6540_t* ft_data = Fighter_804D6540[fp->kind];
@@ -2976,7 +2988,12 @@ void ftKb_SpecialN_800EF0E4(Fighter_GObj* gobj, int arg1, u8* arg2)
                     HSD_ASSERT(0x43E, 0);
                 }
                 dst = fp->u.kb.hat.x14.data;
+#ifdef TARGET_PS3
+                // dst_off is total_dobjs * 4, a 32-bit pointer stride.
+                dst[total_dobjs] = dobj;
+#else
                 *(HSD_DObj**) ((u8*) dst + dst_off) = dobj;
+#endif
                 mobj = dobj->mobj;
                 if (mobj != NULL) {
                     hsdChangeClass(mobj, &ftMObj);
@@ -3084,7 +3101,12 @@ void ftKb_SpecialN_800EF438(Fighter_GObj* gobj, KirbyHatStruct* hat)
                         HSD_ASSERT(0x4B9, 0);
                     }
                     dst = fp->u.kb.hat.x1C.data;
+#ifdef TARGET_PS3
+                    // dst_off is total_dobjs * 4, a 32-bit pointer stride.
+                    dst[total_dobjs] = dobj;
+#else
                     *(HSD_DObj**) ((u8*) dst + dst_off) = dobj;
+#endif
                     mobj = dobj->mobj;
                     if (mobj != NULL) {
                         hsdChangeClass(mobj, &ftMObj);
@@ -3141,7 +3163,12 @@ void ftKb_SpecialN_800EF69C(Fighter_GObj* gobj, int arg1, KirbyHatStruct* hat)
             if (jobj != NULL &&
                 (bone->x8.x0.flags_b6 || bone->x8.x0.flags2_b7))
             {
+#ifdef TARGET_PS3
+                // Byte 9 is x8's second byte only with 32-bit pointers.
+                u8* b9p = &bone->x8.x0_1.lo;
+#else
                 u8* b9p = &((u8*) bone)[9];
+#endif
                 if ((*b9p >> 1) & 1) {
                     if ((*b9p >> 2) & 1) {
                         dobj = fp->x203C.data[bone->xC_u.x0.xD];
@@ -3162,7 +3189,11 @@ void ftKb_SpecialN_800EF69C(Fighter_GObj* gobj, int arg1, KirbyHatStruct* hat)
         HSD_ObjFree(&fighter_x2040_alloc_data, fp->u.kb.hat.x1C.data);
         fp->u.kb.hat.x14.data = NULL;
     }
+#ifdef TARGET_PS3
+    mask = ((ftKbCopyParts*) hat)->part_mask;
+#else
     mask = (u32) hat->hat_dynamics[1];
+#endif
     if (mask != 0) {
         ftKb_RemoveHatParts(gobj, mask);
     }
@@ -3711,9 +3742,20 @@ void ftKb_SpecialN_800F14B4(Fighter_GObj* gobj)
         fp->u.kb.hat.x24.xC[4] = lookup;
         fp->x5AC.xC[4] = lookup;
         ftParts_80074D7C(&fp->u.kb.hat.x24, 4, &fp->u.kb.hat.x14);
+#ifdef TARGET_PS3
+        {
+            // These words are colours, not an ftDynamics: the reader keeps +4
+            // (unrelocated) in ftDynamicBones and +8 in x4.
+            ftDynamics* colors = hat->hat_dynamics[4];
+            u32 diffuse = (u32) (uintptr_t) colors->x0.ftDynamicBones;
+            ftKb_SpecialN_800F1420(gobj, &diffuse);
+            *(u32*) &fp->x610_color_rgba[1] = colors->x4;
+        }
+#else
         ftKb_SpecialN_800F1420(gobj, (u32*) ((u8*) hat->hat_dynamics[4] + 4));
         *(u32*) &fp->x610_color_rgba[1] =
             *(u32*) ((u8*) hat->hat_dynamics[4] + 8);
+#endif
         Fighter_UpdateModelScale(gobj);
     }
 }

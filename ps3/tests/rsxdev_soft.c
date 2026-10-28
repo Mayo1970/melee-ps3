@@ -3,9 +3,11 @@
 #include "../gx/rsxdev.h"
 
 #include <math.h>
+#include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 
 #include "rsx_interp.h"
 
@@ -13,9 +15,14 @@
 #define RING_SIZE (16u << 20)
 #define SCREEN_W 640
 #define SCREEN_H 480
+#define MAX_BLOCKS 8192
 
 static u8* local;
-static u32 local_top;
+// The live allocations by offset; the game's caches free and allocate all the time.
+static struct {
+    u32 offset, size;
+} blocks[MAX_BLOCKS];
+static u32 nblocks;
 static u8* ring;
 static u32 ring_pos;
 
@@ -45,13 +52,33 @@ static struct {
 static u32 screen[SCREEN_W * SCREEN_H];
 static u32 presents;
 static char dump_prefix[256];
+static u32 dump_every = 1;
+// No frame before this present is drawn or written.
+u32 soft_dump_from;
+static void (*vblank_fn)(void);
 
 // Draws drawn and pixels written, for the tests.
 u32 soft_draws, soft_pixels;
+// Draws and clears are counted, not drawn: the host game build runs the backend at speed.
+bool soft_drop;
+// With soft_drop: the 3 frames before a dump are drawn (the XFB shown is an earlier frame's copy).
+bool soft_sparse;
+
+static bool dropping(void)
+{
+    return soft_drop &&
+           !(soft_sparse && dump_prefix[0] != 0 && presents >= soft_dump_from && dump_every - presents % dump_every <= 3);
+}
 
 void soft_set_dump(const char* prefix)
 {
     snprintf(dump_prefix, sizeof(dump_prefix), "%s", prefix);
+}
+
+// Only every nth present is written.
+void soft_set_dump_every(u32 n)
+{
+    dump_every = n ? n : 1;
 }
 
 const u32* soft_screen(void)
@@ -69,25 +96,52 @@ bool dev_init(void)
 {
     local = calloc(1, LOCAL_SIZE);
     ring = calloc(1, RING_SIZE);
-    local_top = 0x1000;
     return local != NULL && ring != NULL;
 }
 
+// First fit between the live blocks; offset 0 stays unused, as on the RSX.
 void* dev_local_alloc(u32 align, u32 size, u32* offset)
 {
-    u32 off = (local_top + align - 1) & ~(align - 1);
+    u32 prev_end = 0x1000, i;
 
-    if (off + size > LOCAL_SIZE) {
+    if (nblocks == MAX_BLOCKS) {
         return NULL;
     }
-    local_top = off + size;
-    *offset = off;
-    return local + off;
+    for (i = 0; i <= nblocks; i++) {
+        u32 off = (prev_end + align - 1) & ~(align - 1);
+        u32 limit = i < nblocks ? blocks[i].offset : LOCAL_SIZE;
+
+        if (off <= limit && size <= limit - off) {
+            memmove(&blocks[i + 1], &blocks[i], sizeof(blocks[0]) * (nblocks - i));
+            blocks[i].offset = off;
+            blocks[i].size = size;
+            nblocks++;
+            *offset = off;
+            return local + off;
+        }
+        if (i < nblocks) {
+            prev_end = blocks[i].offset + blocks[i].size;
+        }
+    }
+    return NULL;
 }
 
 void dev_local_free(void* ptr)
 {
-    (void) ptr;
+    u32 off = (u32) ((u8*) ptr - local), i;
+
+    if (ptr == NULL) {
+        return;
+    }
+    for (i = 0; i < nblocks; i++) {
+        if (blocks[i].offset == off) {
+            memmove(&blocks[i], &blocks[i + 1], sizeof(blocks[0]) * (nblocks - i - 1));
+            nblocks--;
+            return;
+        }
+    }
+    fprintf(stderr, "rsxdev_soft: free of %p, which is no allocation\n", ptr);
+    abort();
 }
 
 void dev_write_local(void* dst, const void* src, u32 size)
@@ -476,6 +530,10 @@ void dev_draw(u32 prim, u32 count)
     u32 i;
 
     soft_draws++;
+    if (dropping()) {
+        free(v);
+        return;
+    }
     for (i = 0; i < count; i++) {
         transform(i, &v[i]);
     }
@@ -529,6 +587,9 @@ void dev_clear(bool color, bool alpha, bool depth, u32 argb, u32 z24)
 {
     u32 x, y;
 
+    if (dropping()) {
+        return;
+    }
     for (y = sc_y; y < sc_y + sc_h && y < target.height; y++) {
         for (x = sc_x; x < sc_x + sc_w && x < target.width; x++) {
             u32* cp = (u32*) (local + target.color_offset + y * target.color_pitch + x * 4);
@@ -575,14 +636,17 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
     FILE* f;
     u32 x, y;
 
+    presents++;
+    if (soft_drop && (dump_prefix[0] == 0 || presents % dump_every != 0 || presents < soft_dump_from)) {
+        return;
+    }
     for (y = 0; y < SCREEN_H; y++) {
         for (x = 0; x < SCREEN_W; x++) {
             u32 sx = x * w / SCREEN_W, sy = y * h / SCREEN_H;
             screen[y * SCREEN_W + x] = *(u32*) (local + src_offset + sy * src_pitch + sx * 4);
         }
     }
-    presents++;
-    if (dump_prefix[0] == 0) {
+    if (dump_prefix[0] == 0 || presents % dump_every != 0) {
         return;
     }
     snprintf(path, sizeof(path), "%s%03u.ppm", dump_prefix, presents);
@@ -596,4 +660,41 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
         fwrite(rgb, 1, 3, f);
     }
     fclose(f);
+}
+
+// The vertical blank at 59.94 Hz on a host thread, from absolute times so it does not drift.
+static void* vblank_main(void* arg)
+{
+    struct timespec t;
+
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    for (;;) {
+        t.tv_nsec += 16683350;
+        if (t.tv_nsec >= 1000000000) {
+            t.tv_nsec -= 1000000000;
+            t.tv_sec++;
+        }
+        clock_nanosleep(CLOCK_MONOTONIC, TIMER_ABSTIME, &t, NULL);
+        vblank_fn();
+    }
+    return NULL;
+}
+
+void dev_set_vblank(void (*fn)(void))
+{
+    pthread_t thread;
+
+    vblank_fn = fn;
+    pthread_create(&thread, NULL, vblank_main, NULL);
+    pthread_detach(thread);
+}
+
+void dev_debug_state(char* buf, unsigned size)
+{
+    snprintf(buf, size, "software RSX: %u draws, %u presents, %u local blocks", soft_draws, presents, nblocks);
+}
+
+bool dev_debug_dump_stall(void)
+{
+    return false;
 }

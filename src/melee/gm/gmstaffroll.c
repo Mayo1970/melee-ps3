@@ -728,6 +728,20 @@ static inline void gm_801AB200_ptcl(s32 idx, GXColor* color)
 
     if (idx < 7) {
         lb_80011E24(gm_804D682C, &jobj, gm_803DD1C8[idx], -1);
+#ifdef TARGET_PS3
+        // The view's color (+4) is the material's diffuse on the GameCube;
+        // LP64 moves it to +8 (specular), so walk the real DObj here.
+        {
+            HSD_DObj* dobj = jobj->u.dobj;
+
+            if (idx == 0) {
+                dobj = dobj->next->next->next;
+            } else if ((unsigned) (idx - 2) <= 1u) {
+                dobj = dobj->next;
+            }
+            dobj->mobj->mat->diffuse = *color;
+        }
+#else
         if (idx == 0) {
             p = (StaffRollPtclNode*) jobj->u.ptcl;
             p = p->x4.ptr;
@@ -748,6 +762,7 @@ static inline void gm_801AB200_ptcl(s32 idx, GXColor* color)
             p = p->xC;
             p->x4.color = *(s32*) color;
         }
+#endif
     } else {
         staffInfo[idx].win[0]->active_color = *color;
         staffInfo[idx].win[1]->active_color = *color;

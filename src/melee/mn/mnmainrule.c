@@ -1271,7 +1271,12 @@ int mn_80231634(struct mn_80231634_t* arg0)
     if (arg0 == NULL) {
         return 0;
     }
+#ifdef TARGET_PS3
+    // The view's x10 is the joint's child on the GameCube only.
+    return (int) (intptr_t) ((HSD_JObj*) arg0)->child;
+#else
     return arg0->x10;
+#endif
 }
 
 void mn_8023164C(void)

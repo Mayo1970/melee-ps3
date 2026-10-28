@@ -59,9 +59,9 @@ struct grIceMt_YakumonoParam {
     s16 xA4;
     s16 xA6;
     s16 xA8;
-    s16* field_ixs;
-    s16* xB0;
-    s16* xB4;
+    s16* field_ixs DAT_TERMINATED(-1);
+    s16* xB0 DAT_TERMINATED(-1);
+    s16* xB4 DAT_TERMINATED(-1);
     s16 xB8;
     s16 pad;
     grZakoGenerator_SpawnDesc xBC;

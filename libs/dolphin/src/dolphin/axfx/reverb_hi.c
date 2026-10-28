@@ -4,8 +4,8 @@
 #include <dolphin/axfx.h>
 
 // functions
-static void DLsetdelay(struct AXFX_REVHI_DELAYLINE* dl, long lag);
-static void DLcreate(struct AXFX_REVHI_DELAYLINE* dl, long max_length);
+static void DLsetdelay(struct AXFX_REVHI_DELAYLINE* dl, s32 lag);
+static void DLcreate(struct AXFX_REVHI_DELAYLINE* dl, s32 max_length);
 static void DLdelete(struct AXFX_REVHI_DELAYLINE* dl);
 static int ReverbHICreate(struct AXFX_REVHI_WORK* rv, float coloration,
                           float time, float mix, float damping, float preDelay,
@@ -13,12 +13,12 @@ static int ReverbHICreate(struct AXFX_REVHI_WORK* rv, float coloration,
 static int ReverbHIModify(struct AXFX_REVHI_WORK* rv, float coloration,
                           float time, float mix, float damping, float preDelay,
                           float crosstalk);
-static void HandleReverb(long* sptr, struct AXFX_REVHI_WORK* rv, long k);
-static void ReverbHICallback(long* left, long* right, long* surround,
+static void HandleReverb(s32* sptr, struct AXFX_REVHI_WORK* rv, s32 k);
+static void ReverbHICallback(s32* left, s32* right, s32* surround,
                              struct AXFX_REVHI_WORK* rv);
 static void ReverbHIFree(struct AXFX_REVHI_WORK* rv);
 
-static void DLsetdelay(struct AXFX_REVHI_DELAYLINE* dl, long lag)
+static void DLsetdelay(struct AXFX_REVHI_DELAYLINE* dl, s32 lag)
 {
     dl->outPoint = dl->inPoint - (lag * 4);
     while (dl->outPoint < 0) {
@@ -26,7 +26,7 @@ static void DLsetdelay(struct AXFX_REVHI_DELAYLINE* dl, long lag)
     }
 }
 
-static void DLcreate(struct AXFX_REVHI_DELAYLINE* dl, long max_length)
+static void DLcreate(struct AXFX_REVHI_DELAYLINE* dl, s32 max_length)
 {
     dl->length = (max_length * 4);
     dl->inputs = __AXFXAlloc(max_length << 2);
@@ -48,8 +48,8 @@ static int ReverbHICreate(struct AXFX_REVHI_WORK* rv, float coloration,
 {
     u8 i;
     u8 k;
-    static long lens[8] = { 0x000006FD, 0x000007CF, 0x0000091D, 0x000001B1,
-                            0x00000095, 0x0000002F, 0x00000049, 0x00000043 };
+    static s32 lens[8] = { 0x000006FD, 0x000007CF, 0x0000091D, 0x000001B1,
+                           0x00000095, 0x0000002F, 0x00000049, 0x00000043 };
 
     if ((coloration < 0.0f) || (coloration > 1.0f) || (time < 0.01f) ||
         (time > 10.0f) || (mix < 0.0f) || (mix > 1.0f) || (crosstalk < 0.0f) ||
@@ -139,7 +139,24 @@ static int ReverbHIModify(struct AXFX_REVHI_WORK* rv, float coloration,
 const static double i2fMagic = 4503601774854144.0;
 const static float value0_6 = 0.6f;
 
-asm static void DoCrossTalk(register long* l, register long* r,
+#ifdef TARGET_PS3
+// The assembly below in C; not static, as axfx.h declares it. The right side's weights carry the 0.6.
+AXFX_NO_CONTRACT void DoCrossTalk(s32* l, s32* r, float cross, float invcross)
+{
+    f32 lToR = cross * value0_6;
+    f32 rToR = invcross * value0_6;
+    int i;
+
+    for (i = 0; i < 160; i++) {
+        f32 fl = (f32) l[i];
+        f32 fr = (f32) r[i];
+
+        l[i] = __AXFXFctiw(fl * invcross + fr * cross);
+        r[i] = __AXFXFctiw(fl * lToR + fr * rToR);
+    }
+}
+#else
+asm static void DoCrossTalk(register s32* l, register s32* r,
                             register float cross, register float invcross)
 {
     // clang-format off
@@ -247,12 +264,140 @@ loop:
 	blr
     // clang-format on
 }
+#endif
 
 const static float value0_3 = 0.3f;
 
-asm static void HandleReverb(register long* sptr,
+#ifdef TARGET_PS3
+// The assembly below in C, one channel at sptr; the delay line points are byte offsets.
+static AXFX_NO_CONTRACT void HandleReverb(s32* sptr, struct AXFX_REVHI_WORK* rv, s32 k)
+{
+    struct AXFX_REVHI_DELAYLINE* c = &rv->C[k * 3];
+    struct AXFX_REVHI_DELAYLINE* ap = &rv->AP[k * 3];
+    f32 allPass = rv->allPassCoeff;
+    f32 damping = rv->damping;
+    f32 wet = rv->level * value0_6;
+    f32 dry = value0_6 - wet;
+    f32 comb0 = rv->combCoef[k * 3];
+    f32 comb1 = rv->combCoef[k * 3 + 1];
+    f32 comb2 = rv->combCoef[k * 3 + 2];
+    f32 lp = rv->lpLastout[k];
+    u8* c0 = (u8*) c[0].inputs;
+    u8* c1 = (u8*) c[1].inputs;
+    u8* c2 = (u8*) c[2].inputs;
+    u8* ap0 = (u8*) ap[0].inputs;
+    u8* ap1 = (u8*) ap[1].inputs;
+    u8* ap2 = (u8*) ap[2].inputs;
+    s32 c0In = c[0].inPoint, c0Out = c[0].outPoint;
+    s32 c1In = c[1].inPoint, c1Out = c[1].outPoint;
+    s32 c2In = c[2].inPoint, c2Out = c[2].outPoint;
+    s32 ap0In = ap[0].inPoint, ap0Out = ap[0].outPoint;
+    s32 ap1In = ap[1].inPoint, ap1Out = ap[1].outPoint;
+    s32 ap2In = ap[2].inPoint, ap2Out = ap[2].outPoint;
+    f32 c0Last = c[0].lastOutput, c1Last = c[1].lastOutput, c2Last = c[2].lastOutput;
+    f32 ap0Last = ap[0].lastOutput, ap1Last = ap[1].lastOutput, ap2Last = ap[2].lastOutput;
+    int i;
+
+    for (i = 0; i < 160; i++) {
+        f32 x = (f32) sptr[i];
+        f32 in = x;
+        f32 t;
+        f32 v;
+
+        // The SDK stores the moved pointer at preDelayLine[k] + 0x1B8, not in preDelayPtr[k], so the
+        // pointer stays at the line's start: one sample of pre-delay.
+        if (rv->preDelayTime != 0) {
+            in = *rv->preDelayPtr[k];
+            *rv->preDelayPtr[k] = x;
+        }
+        *(f32*) (c0 + c0In) = AXFX_FMADDS(comb0, c0Last, in);
+        *(f32*) (c1 + c1In) = AXFX_FMADDS(comb1, c1Last, in);
+        c0Last = *(f32*) (c0 + c0Out);
+        c1Last = *(f32*) (c1 + c1Out);
+        if ((c0In += 4) == c[0].length) {
+            c0In = 0;
+        }
+        if ((c0Out += 4) == c[0].length) {
+            c0Out = 0;
+        }
+        if ((c1In += 4) == c[1].length) {
+            c1In = 0;
+        }
+        if ((c1Out += 4) == c[1].length) {
+            c1Out = 0;
+        }
+        t = c0Last + c1Last;
+        *(f32*) (c2 + c2In) = AXFX_FMADDS(comb2, c2Last, in);
+        c2Last = *(f32*) (c2 + c2Out);
+        if ((c2In += 4) == c[2].length) {
+            c2In = 0;
+        }
+        if ((c2Out += 4) == c[2].length) {
+            c2Out = 0;
+        }
+        t = t + c2Last;
+
+        v = AXFX_FMADDS(allPass, ap0Last, t);
+        *(f32*) (ap0 + ap0In) = v;
+        t = AXFX_FNMSUBS(allPass, v, ap0Last);
+        ap0Last = *(f32*) (ap0 + ap0Out);
+        if ((ap0In += 4) == ap[0].length) {
+            ap0In = 0;
+        }
+        if ((ap0Out += 4) == ap[0].length) {
+            ap0Out = 0;
+        }
+
+        v = AXFX_FMADDS(allPass, ap1Last, t);
+        *(f32*) (ap1 + ap1In) = v;
+        t = AXFX_FNMSUBS(allPass, v, ap1Last);
+        ap1Last = *(f32*) (ap1 + ap1Out);
+        if ((ap1In += 4) == ap[1].length) {
+            ap1In = 0;
+        }
+        if ((ap1Out += 4) == ap[1].length) {
+            ap1Out = 0;
+        }
+
+        t = AXFX_FMADDS(damping, lp, t * value0_3);
+        lp = t;
+        v = AXFX_FMADDS(allPass, ap2Last, t);
+        *(f32*) (ap2 + ap2In) = v;
+        t = AXFX_FNMSUBS(allPass, v, ap2Last);
+        ap2Last = *(f32*) (ap2 + ap2Out);
+        if ((ap2In += 4) == ap[2].length) {
+            ap2In = 0;
+        }
+        if ((ap2Out += 4) == ap[2].length) {
+            ap2Out = 0;
+        }
+
+        sptr[i] = __AXFXFctiwz(AXFX_FMADDS(wet, t, dry * x));
+    }
+    c[0].inPoint = c0In;
+    c[0].outPoint = c0Out;
+    c[1].inPoint = c1In;
+    c[1].outPoint = c1Out;
+    c[2].inPoint = c2In;
+    c[2].outPoint = c2Out;
+    c[0].lastOutput = c0Last;
+    c[1].lastOutput = c1Last;
+    c[2].lastOutput = c2Last;
+    ap[0].inPoint = ap0In;
+    ap[0].outPoint = ap0Out;
+    ap[1].inPoint = ap1In;
+    ap[1].outPoint = ap1Out;
+    ap[2].inPoint = ap2In;
+    ap[2].outPoint = ap2Out;
+    ap[0].lastOutput = ap0Last;
+    ap[1].lastOutput = ap1Last;
+    ap[2].lastOutput = ap2Last;
+    rv->lpLastout[k] = lp;
+}
+#else
+asm static void HandleReverb(register s32* sptr,
                              register struct AXFX_REVHI_WORK* rv,
-                             register long k)
+                             register s32 k)
 {
     // clang-format off
     nofralloc
@@ -611,8 +756,9 @@ L_00000C7C:
 	blr
     // clang-format on
 }
+#endif
 
-static void ReverbHICallback(long* left, long* right, long* surround,
+static void ReverbHICallback(s32* left, s32* right, s32* surround,
                              struct AXFX_REVHI_WORK* rv)
 {
     u8 k;

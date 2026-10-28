@@ -53,8 +53,14 @@ DatArchiveData* dat_archive_open(const void* bytes, size_t size,
         abort();
     }
     a->size = data_size;
+#ifdef TARGET_PS3
+    /* The game keeps the file while the archive lives, as on the GameCube;
+     * a copy would take the .dat pool's memory a second time. */
+    a->data = (uint8_t*) b + 0x20;
+#else
     a->data = malloc(data_size + 1);
     memcpy(a->data, b + 0x20, data_size);
+#endif
     const uint8_t* at = b + 0x20 + data_size;
     a->relocs = malloc((nrelocs + 1) * sizeof(uint32_t));
     a->nrelocs = nrelocs;
@@ -140,7 +146,9 @@ void dat_archive_close(DatArchiveData* a)
     if (a == NULL) {
         return;
     }
+#ifndef TARGET_PS3
     free(a->data);
+#endif
     free(a->relocs);
     free(a->publics);
     free(a->externs);

@@ -115,12 +115,22 @@ void ftCo_800BBED4(Fighter_GObj* gobj, Fighter_GObj* arg1)
         ftYs_SpecialN_SetupItemVel(arg1, &fp->self_vel);
         fp->facing_dir = ftYs_SpecialN_GetFacingDir(arg1);
         fp->dmg.x182c_behavior = ftYs_SpecialN_GetDatAttr18(arg1);
+#ifdef TARGET_PS3
+        // specialhi.vel.y and walk.fast_anim_frame are yoshiegg.x8 and x10
+        // only with 32-bit pointers.
+        fp->mv.co.yoshiegg.x8 = 0;
+#else
         fp->mv.ca.specialhi.vel.y = 0;
+#endif
         fp->mv.co.yoshiegg.x0 = arg1;
         fp->take_dmg_2_cb = ftCo_800BC3D0;
         ftCommon_8007EFC0(fp, 1);
         fp->mv.co.yoshiegg.x10 = ftYs_SpecialN_GetDatAttr20(arg1);
+#ifdef TARGET_PS3
+        fp->mv.co.yoshiegg.x14 = fp->mv.co.yoshiegg.x10;
+#else
         fp->mv.co.yoshiegg.x14 = fp->mv.co.walk.fast_anim_frame;
+#endif
         fp->mv.co.yoshiegg.xC = ftYs_SpecialN_GetDatAttr1C(arg1);
         ftCommon_InitGrab(fp, 0, ftYs_SpecialN_GetDatAttr24(arg1));
         HSD_JObjGetScale(jobj, &fp->mv.co.yoshiegg.x18);

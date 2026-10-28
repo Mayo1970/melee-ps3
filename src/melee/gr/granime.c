@@ -72,7 +72,12 @@ void grAnime_801C65B0(UnkArchiveStruct* arg0)
     if (arg0 == NULL) {
         return;
     }
+#ifdef TARGET_PS3
+    // grDatFiles_801C6038 marks it with (void*) -1, which is not -1U here.
+    if (arg0->unk0 != (HSD_Archive*) -1) {
+#else
     if ((uintptr_t) arg0->unk0 != -1U) {
+#endif
         if (arg0->unk8 == 0) {
             lbArchive_80016EFC(arg0->unk0);
         } else if (arg0->unk8 == 1) {

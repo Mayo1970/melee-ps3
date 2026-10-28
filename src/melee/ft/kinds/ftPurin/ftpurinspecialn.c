@@ -54,9 +54,16 @@ static void sdata2_order(void)
 static inline void ftPr_JObjSetRotationY(HSD_JObj* jobj, f32 y, f32* base)
 {
     (jobj ? ((void) 0) : __assert("jobj.h", 660, "jobj"));
+#ifdef TARGET_PS3
+    // base[8] is the DOL's assert string 0x20 bytes after the scale tables.
+    ((!(jobj->flags & JOBJ_USE_QUATERNION))
+         ? ((void) 0)
+         : __assert("jobj.h", 661, "!(jobj->flags & JOBJ_USE_QUATERNION)"));
+#else
     ((!(jobj->flags & JOBJ_USE_QUATERNION))
          ? ((void) 0)
          : __assert("jobj.h", 661, (char*) &base[8]));
+#endif
     jobj->rotate.y = y;
     if (!(jobj->flags & JOBJ_MTX_INDEP_SRT)) {
         HSD_JObjSetMtxDirty(jobj);
@@ -567,7 +574,12 @@ ftPr_SpecialAirNChargeRelease_Anim_inline(HSD_GObj* gobj, Vec3* scale,
     if (frame >= 0 && frame < 4) {
         scale->x = fp->u.pr.x2230.x;
         scale->y = fp->u.pr.x2230.y * scale_base[frame];
+#ifdef TARGET_PS3
+        // The DOL keeps ftPr_Init_803D05D8 right after scale_base's table.
+        scale->z = fp->u.pr.x2230.z * ftPr_Init_803D05D8[frame];
+#else
         scale->z = fp->u.pr.x2230.z * scale_base[frame + 4];
+#endif
         HSD_JObjSetScale(jobj, scale);
         fp->mv.pr.specialn.x8 += 1;
     } else {

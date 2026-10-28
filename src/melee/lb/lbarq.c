@@ -35,7 +35,13 @@ typedef struct lbArqGlobal {
 #endif
 static lbArqState lbArq_80014ABC(lbArqNode* arg0)
 {
+#ifdef TARGET_PS3
+    // GCC inlines this and hoists the load out of the wait loop, which then
+    // spins forever; the ARQ callback sets state on another thread.
+    return *(volatile lbArqState*) &arg0->state;
+#else
     return arg0->state;
+#endif
 }
 #ifdef __MWERKS__
 #pragma pop

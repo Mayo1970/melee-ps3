@@ -675,16 +675,27 @@ bool itLinkarrow_UnkMotion4_Anim(Item_GObj* gobj)
     case 4:
     case 6:
         rand = HSD_Randf();
+#ifdef TARGET_PS3
+        // The GameCube reaches it_803F6A84 by its DOL offset from it_803F6A28.
+        temp_r3 = &it_803F6A84[ip->xDD4_itemVar.linkarrow.x9C];
+        var_f32 = MTXDegToRad((temp_r3[8] * rand) + temp_r3[0]);
+#else
         temp_r3 = (f32*) &it_803F6A28 + ip->xDD4_itemVar.linkarrow.x9C;
         var_f32 = MTXDegToRad((temp_r3[31] * rand) + temp_r3[23]);
+#endif
         var_f31 = ip->xDD4_itemVar.linkarrow.x94 + var_f32;
         break;
     case 1:
     case 3:
     case 5:
         rand = HSD_Randf();
+#ifdef TARGET_PS3
+        temp_r3 = &it_803F6A84[ip->xDD4_itemVar.linkarrow.x9C];
+        var_f32 = MTXDegToRad((temp_r3[8] * rand) + temp_r3[0]);
+#else
         temp_r3 = (f32*) &it_803F6A28 + ip->xDD4_itemVar.linkarrow.x9C;
         var_f32 = MTXDegToRad((temp_r3[31] * rand) + temp_r3[23]);
+#endif
         var_f31 = ip->xDD4_itemVar.linkarrow.x94 - var_f32;
         break;
     default:

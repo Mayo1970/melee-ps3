@@ -571,7 +571,12 @@ static inline void gm_1832_sdata2_order(int unused)
 void fn_80185408(int x, float arg8, float arg9, float argA, float argB)
 {
     u8 _[0x30];
+#ifdef TARGET_PS3
+    // MTXOrtho writes 4 rows; the GameCube frame had room past a 3-row Mtx.
+    Mtx44 sp1C;
+#else
     Mtx sp1C;
+#endif
     GXSetNumChans(1);
     GXSetChanCtrl(GX_COLOR0A0, 0, GX_SRC_REG, GX_SRC_VTX, 0, GX_DF_NONE,
                   GX_AF_NONE);
@@ -685,7 +690,12 @@ void fn_801857C4(HSD_GObj* arg0)
 
     if (lbl_804735E8.xE1 != 0) {
         HSD_GObjFree(lbl_804D65F0);
+#ifdef TARGET_PS3
+        // HSD_ImageDesc is larger here, so xD0 is not 0x90 bytes past x40.
+        img_idx = lbl_804735E8.xD0 - 0x90;
+#else
         img_idx = (u8*) lbl_804735E8.x40;
+#endif
         i = 0;
         delay = 1;
         for (; i < 10; i++, img_idx++) {

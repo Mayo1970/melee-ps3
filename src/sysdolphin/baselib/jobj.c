@@ -641,7 +641,12 @@ s32 JObjLoad(HSD_JObj* jobj, HSD_Joint* joint, HSD_JObj* parent)
         jobj->u.ptcl = joint->u.ptcl;
         slist = joint->u.ptcl;
         while (slist != NULL) {
+#ifdef TARGET_PS3
+            // data holds the 32-bit word zero-extended; HSD_JObjDisp tests (u32) data.
+            slist->data = (void*) ((uintptr_t) slist->data | 0x80000000);
+#else
             *(u32*) &slist->data |= 0x80000000;
+#endif
             slist = slist->next;
         }
     } else {

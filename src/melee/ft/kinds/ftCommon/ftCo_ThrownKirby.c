@@ -156,8 +156,14 @@ static inline void inlineA0(Fighter_GObj* gobj)
     if (vel_mag > fp->mv.co.thrownkirby.x4) {
         fp->self_vel.x =
             (fp->self_vel.x * (vel_mag - fp->mv.co.thrownkirby.x4)) / vel_mag;
+#ifdef TARGET_PS3
+        // specialhi.vel is thrownkirby.x4 and x8 only with 32-bit pointers.
+        fp->self_vel.y =
+            (fp->self_vel.y * (vel_mag - fp->mv.co.thrownkirby.x4)) / vel_mag;
+#else
         fp->self_vel.y =
             (fp->self_vel.y * (vel_mag - fp->mv.ca.specialhi.vel.x)) / vel_mag;
+#endif
         if (fp->self_vel.y < 0) {
             fp->facing_dir = -1;
         } else {
@@ -264,9 +270,15 @@ void ftCo_800BE494(Fighter_GObj* gobj)
         Vec2 self_vel;
         ftKb_SpecialN_800F5874(&self_vel);
         fp->self_vel.y = self_vel.y;
+#ifdef TARGET_PS3
+        if (fp->mv.co.thrownkirby.x8) {
+            fp->self_vel.x = fp->mv.co.thrownkirby.x8 * self_vel.x;
+        } else {
+#else
         if (fp->mv.ca.specialhi.vel.y) {
             fp->self_vel.x = fp->mv.ca.specialhi.vel.y * self_vel.x;
         } else {
+#endif
             fp->self_vel.x = self_vel.x * (fp->self_vel.x < 0 ? -1 : +1);
         }
     } else if (fp->kind == Ft_Kind_Kirby &&

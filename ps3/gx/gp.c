@@ -6,8 +6,12 @@
 
 #include <dolphin/os.h>
 
+#include <gx_pipe.h>
+
+#include "../os/diag.h"
 #include "../os/intr.h"
 #include "../os/mem.h"
+#include "../os/prof.h"
 #include "../os/sync.h"
 #include "../os/udplog.h"
 #include "fifo.h"
@@ -21,6 +25,8 @@
 #define OP_METRICS 0x44
 #define OP_INVL_VC 0x48
 #define OP_LOAD_BP 0x61
+// The port's own: a memory range the CPU rewrote (gp_post_mem_changed). The GameCube has no opcode 0x7E.
+#define OP_PS3_MEM_CHANGED 0x7E
 #define OP_DRAW 0x80
 
 // PE token register, __peReg[7].
@@ -36,6 +42,9 @@ static const u8 color_size[8] = { 2, 3, 4, 2, 3, 4, 0, 0 };
 static GpState state;
 static const GpBackend* backend;
 static GpStats stats;
+// CP, XF and BP writes so far, and at the last draw: draws with none between them could be one RSX draw.
+static u32 reg_writes, draw_writes;
+static int draw_vat = -1;
 
 // Ring source when end is NULL, else a display list in memory.
 typedef struct Src {
@@ -142,6 +151,7 @@ static void cp_write(u8 addr, u32 v)
 {
     u32 n = addr & 0xF;
 
+    reg_writes++;
     switch (addr & 0xF0) {
     case CP_MATINDEX_A:
         state.matindex_a = v;
@@ -150,12 +160,18 @@ static void cp_write(u8 addr, u32 v)
         state.matindex_b = v;
         break;
     case CP_VCD_LO:
-        state.vcd_lo = v;
-        invalidate_vtx_sizes();
+        if (state.vcd_lo != v) {
+            state.vcd_lo = v;
+            state.cp_gen++;
+            invalidate_vtx_sizes();
+        }
         break;
     case CP_VCD_HI:
-        state.vcd_hi = v;
-        invalidate_vtx_sizes();
+        if (state.vcd_hi != v) {
+            state.vcd_hi = v;
+            state.cp_gen++;
+            invalidate_vtx_sizes();
+        }
         break;
     case CP_VAT_A:
     case CP_VAT_B:
@@ -163,8 +179,11 @@ static void cp_write(u8 addr, u32 v)
         if (n < 8) {
             u32* vat = (addr & 0xF0) == CP_VAT_A ? state.vat_a : (addr & 0xF0) == CP_VAT_B ? state.vat_b
                                                                                             : state.vat_c;
-            vat[n] = v;
-            invalidate_vtx_sizes();
+            if (vat[n] != v) {
+                vat[n] = v;
+                state.cp_gen++;
+                invalidate_vtx_sizes();
+            }
         }
         break;
     case CP_ARRAY_BASE:
@@ -178,6 +197,7 @@ static void cp_write(u8 addr, u32 v)
 
 static void xf_write(u32 addr, u32 v)
 {
+    reg_writes++;
     if (addr < XF_MEM_SIZE) {
         state.xf_mem[addr] = v;
         if (state.xf_mem_dirty_lo > addr) {
@@ -189,6 +209,10 @@ static void xf_write(u32 addr, u32 v)
     } else if (addr - XF_REG_BASE < XF_REG_COUNT) {
         u32 i = addr - XF_REG_BASE;
 
+        // The matrix indices (0x18, 0x19) and the projection (0x20-0x26) feed only the vertices and constants.
+        if (state.xf_regs[i] != v && (i < 0x18 || i > 0x26 || (i >= 0x1A && i <= 0x1F))) {
+            state.xf_gen++;
+        }
         state.xf_regs[i] = v;
         state.xf_reg_dirty[i >> 5] |= 1u << (i & 31);
     }
@@ -214,6 +238,7 @@ static void load_indexed(u8 op, u32 v)
 static void finish_work(void)
 {
     if (backend->finish != NULL) {
+        ps3_diag.gp_site = "finish";
         backend->finish(&state);
     }
 }
@@ -223,6 +248,7 @@ static void bp_write(u32 v)
     u32 reg = v >> 24;
     u32 value = v & 0xFFFFFF;
 
+    reg_writes++;
     if (reg == BP_MASK) {
         state.bp_mask = value;
         return;
@@ -230,6 +256,10 @@ static void bp_write(u32 v)
     // The mask applies to the next write only.
     value = (state.bp[reg] & ~state.bp_mask) | (value & state.bp_mask);
     state.bp_mask = 0xFFFFFF;
+    // A TEV register write that leaves bp[reg] as it was also leaves its register set as it was.
+    if (state.bp[reg] != value) {
+        state.bp_gen++;
+    }
     state.bp[reg] = value;
     state.bp_dirty[reg >> 5] |= 1u << (reg & 31);
 
@@ -250,11 +280,13 @@ static void bp_write(u32 v)
         break;
     case BP_EFB_COPY:
         if (backend->efb_copy != NULL) {
+            ps3_diag.gp_site = "EFB copy";
             backend->efb_copy(&state);
         }
         break;
     case BP_LOAD_TLUT1:
         if (backend->tlut_load != NULL) {
+            ps3_diag.gp_site = "TLUT load";
             backend->tlut_load(&state);
         }
         break;
@@ -289,6 +321,8 @@ static bool run_command(Src* s, bool in_list)
         return false;
     }
     op = p[0];
+    ps3_diag.gp_op = op;
+    ps3_diag.gp_site = "commands";
     stats.commands++;
     if (op & OP_DRAW) {
         int vat = op & 7;
@@ -307,6 +341,12 @@ static bool run_command(Src* s, bool in_list)
         }
         stats.draws++;
         stats.vertices += count;
+        if (reg_writes == draw_writes && vat == draw_vat) {
+            ps3_prof.batchable++;
+        }
+        draw_writes = reg_writes;
+        draw_vat = vat;
+        ps3_diag.gp_site = "draw";
         backend->draw(&state, (op >> 3) & 7, vat, count, p);
         return true;
     }
@@ -367,6 +407,15 @@ static bool run_command(Src* s, bool in_list)
         }
         bp_write(be32(p));
         break;
+    case OP_PS3_MEM_CHANGED:
+        if ((p = take(s, 8)) == NULL) {
+            return false;
+        }
+        if (backend->mem_changed != NULL) {
+            ps3_diag.gp_site = "memory changed";
+            backend->mem_changed(&state, be32(p), be32(p + 4));
+        }
+        break;
     default:
         // An unknown opcode loses the stream position, as on the GameCube; count it and go on.
         stats.unknown_opcodes++;
@@ -397,6 +446,7 @@ static volatile u32 present_xfb;
 static void run_present(void)
 {
     if (__atomic_exchange_n(&present_pending, 0, __ATOMIC_ACQ_REL) && backend->present != NULL) {
+        ps3_diag.gp_site = "present";
         backend->present(&state, __atomic_load_n(&present_xfb, __ATOMIC_ACQUIRE));
     }
 }
@@ -406,6 +456,15 @@ void gp_post_present(u32 xfb)
     __atomic_store_n(&present_xfb, xfb, __ATOMIC_RELEASE);
     __atomic_store_n(&present_pending, 1, __ATOMIC_RELEASE);
     gp_fifo_kick();
+}
+
+void gp_post_mem_changed(const void* p, u32 size)
+{
+    u32 paddr = OSCachedToPhysical((void*) p);
+
+    __GXPipe_u8(OP_PS3_MEM_CHANGED);
+    __GXPipe_u32(paddr);
+    __GXPipe_u32(size);
 }
 
 static void gp_main(void* arg)

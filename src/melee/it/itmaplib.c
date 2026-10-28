@@ -539,6 +539,11 @@ void it_80276CEC(Item_GObj* item_gobj)
 
     item = item_gobj->user_data;
     coll = &item->x378_itemColl;
+#ifdef TARGET_PS3
+    // With no contact the DOL stores r3, item_gobj's low word: never a line
+    // index, so checkNormalAngle's xC30 == xC2C fails.
+    coll_index = (u32) (uintptr_t) item_gobj;
+#endif
     if (coll->env_flags & Collide_LeftWallMask) {
         item->xAC_unk = coll->left_facing_wall.normal;
         coll_index = coll->left_facing_wall.index;

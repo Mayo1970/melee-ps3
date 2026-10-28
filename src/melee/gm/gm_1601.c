@@ -3252,6 +3252,12 @@ float fn_80166A8C(register Vec3* src, register Vec3* dst)
     register float x = src->x;
     asm { psq_st x, Vec3.x(dst), 1, qr3 }
     return x;
+#elif defined(TARGET_PS3)
+    // GQR3 stores u16 with scale 0: ps0 truncated and clamped to 0..65535,
+    // in dst's first two bytes.
+    float x = src->x;
+    *(u16*) dst = x >= 65535.0f ? 0xFFFF : x > 0.0f ? (u16) x : 0;
+    return x;
 #endif
 }
 
@@ -3382,11 +3388,24 @@ void gm_80166CCC(MatchEnd* arg0, MatchEnd* arg1)
         }
     }
 
+#ifdef TARGET_PS3
+    // team_standings has 5 entries; the GameCube's sixth .active read is the
+    // high byte of player_standings[0].self_destructs.
+    for (i = 0; i < 5; i++) {
+        if (arg1->team_standings[i].active != 0) {
+            team_count += 1;
+        }
+    }
+    if ((arg1->player_standings[0].self_destructs >> 8) != 0) {
+        team_count += 1;
+    }
+#else
     for (i = 0; i < 6; i++) {
         if (arg1->team_standings[i].active != 0) {
             team_count += 1;
         }
     }
+#endif
     if (arg0->n_team_winners > 1) {
         for (i = 0; i < 5; i++) {
             if (arg0->team_standings[i].active != 0) {
@@ -4046,6 +4065,29 @@ struct fn_80168A6C_src {
 
 void fn_80168A6C(void* arg0, void* arg1, s32 idx)
 {
+#ifdef TARGET_PS3
+    // The GameCube copies these pointers as eight words (the SceneDesc's
+    // model, lights, first camera and fogs); they are 8 bytes here.
+    struct {
+        DynamicModelDesc model;
+        LightList** lights;
+        HSD_CObjDesc* cam_desc;
+        HSD_CameraAnim** cam_anims;
+        SceneFogDesc* fogs;
+    }* dst = arg1;
+    SceneDesc* scene = arg0;
+
+    memzero(dst, sizeof(*dst));
+    if (scene->models[idx] != NULL) {
+        dst->model = *scene->models[idx];
+    }
+    if (scene->cameras != NULL) {
+        dst->cam_desc = scene->cameras->desc;
+        dst->cam_anims = scene->cameras->anims;
+    }
+    dst->lights = scene->lights;
+    dst->fogs = scene->fogs;
+#else
     struct fn_80168A6C_src* src = arg0;
 
     memzero(arg1, 0x20);
@@ -4064,11 +4106,17 @@ void fn_80168A6C(void* arg0, void* arg1, s32 idx)
 
     ((s32*) arg1)[4] = src->x8;
     ((s32*) arg1)[7] = src->xC;
+#endif
 }
 
 f32 gm_80168B34(CharacterKind ckind, int arg1, int arg2)
 {
     int base;
+#ifdef TARGET_PS3
+    // No branch sets base for the other fighters; the DOL keeps base in
+    // ckind's register (r3), so their icon is ckind.
+    base = ckind;
+#endif
     if (ckind == CKind_GKoops) {
         return 58.0F;
     }

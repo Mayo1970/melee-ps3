@@ -140,6 +140,110 @@ const static double i2fMagic = 4503601774854144.0;
 static void do_src1(struct AXFX_CHORUS_SRCINFO* src);
 static void do_src2(struct AXFX_CHORUS_SRCINFO* src);
 
+#ifdef TARGET_PS3
+// rlwinm r10, r4, 7, 21, 27 as the SDK has it: of the 128 table rows, only the first 8 are reached.
+#define CHORUS_TAB(posLo) \
+    (&rsmpTab12khz[((((posLo) << 7) | ((posLo) >> 25)) & 0x7F0) >> 2])
+
+// The assembly below in C. A carry out of posLo moves the four-sample window by one more sample.
+static AXFX_NO_CONTRACT void do_src1(struct AXFX_CHORUS_SRCINFO* src)
+{
+    u32 posLo = src->posLo;
+    u32 posHi = src->posHi;
+    u32 pitchLo = src->pitchLo;
+    u32 trigger = src->trigger;
+    u32 target = src->target;
+    s32* smpBase = src->smpBase;
+    s32* dest = src->dest;
+    s32* old = src->old;
+    f32 s0 = (f32) old[0];
+    f32 s1 = (f32) old[1];
+    f32 s2 = (f32) old[2];
+    f32 s3 = (f32) smpBase[posHi];
+    u32 i;
+
+    for (i = 0; i < 160; i++) {
+        const f32* tab = CHORUS_TAB(posLo);
+        u32 next = posLo + pitchLo;
+        f32 acc = s0 * tab[0];
+
+        acc = AXFX_FMADDS(s1, tab[1], acc);
+        acc = AXFX_FMADDS(s2, tab[2], acc);
+        acc = AXFX_FMADDS(s3, tab[3], acc);
+        dest[i] = __AXFXFctiwz(acc);
+        if (next < posLo) {
+            s0 = s1;
+            s1 = s2;
+            s2 = s3;
+            if (++posHi == trigger) {
+                posHi = target;
+            }
+            if (i != 159) {
+                s3 = (f32) smpBase[posHi];
+            }
+        }
+        posLo = next;
+    }
+    old[0] = __AXFXFctiwz(s0);
+    old[1] = __AXFXFctiwz(s1);
+    old[2] = __AXFXFctiwz(s2);
+    src->posLo = posLo;
+    src->posHi = posHi;
+}
+
+static AXFX_NO_CONTRACT void do_src2(struct AXFX_CHORUS_SRCINFO* src)
+{
+    u32 posLo = src->posLo;
+    u32 posHi = src->posHi;
+    u32 pitchLo = src->pitchLo;
+    u32 trigger = src->trigger;
+    u32 target = src->target;
+    s32* smpBase = src->smpBase;
+    s32* dest = src->dest;
+    s32* old = src->old;
+    f32 s0 = (f32) old[0];
+    f32 s1 = (f32) old[1];
+    f32 s2 = (f32) old[2];
+    f32 s3 = (f32) smpBase[posHi];
+    u32 i;
+
+    for (i = 0; i < 160; i++) {
+        const f32* tab = CHORUS_TAB(posLo);
+        u32 next = posLo + pitchLo;
+        f32 acc = s0 * tab[0];
+
+        acc = AXFX_FMADDS(s1, tab[1], acc);
+        acc = AXFX_FMADDS(s2, tab[2], acc);
+        acc = AXFX_FMADDS(s3, tab[3], acc);
+        dest[i] = __AXFXFctiwz(acc);
+        posHi++;
+        if (next < posLo) {
+            if (posHi == trigger) {
+                posHi = target;
+            }
+            s0 = s2;
+            s1 = s3;
+            s2 = (f32) smpBase[posHi++];
+        } else {
+            s0 = s1;
+            s1 = s2;
+            s2 = s3;
+        }
+        if (posHi == trigger) {
+            posHi = target;
+        }
+        if (i != 159) {
+            s3 = (f32) smpBase[posHi];
+        }
+        posLo = next;
+    }
+    old[0] = __AXFXFctiwz(s0);
+    old[1] = __AXFXFctiwz(s1);
+    old[2] = __AXFXFctiwz(s2);
+    src->posLo = posLo;
+    src->posHi = posHi;
+}
+#else
 asm static void do_src1(register struct AXFX_CHORUS_SRCINFO* src)
 {
     // clang-format off
@@ -389,12 +493,13 @@ L_00000344:
 	blr
     // clang-format on
 }
+#endif
 
 int AXFXChorusInit(struct AXFX_CHORUS* c)
 {
-    long* left;
-    long* right;
-    long* sur;
+    s32* left;
+    s32* right;
+    s32* sur;
     u32 i;
     int old;
 
@@ -462,12 +567,12 @@ int AXFXChorusSettings(struct AXFX_CHORUS* c)
 void AXFXChorusCallback(struct AXFX_BUFFERUPDATE* bufferUpdate,
                         struct AXFX_CHORUS* chorus)
 {
-    long* leftD;
-    long* rightD;
-    long* surD;
-    long* leftS;
-    long* rightS;
-    long* surS;
+    s32* leftD;
+    s32* rightD;
+    s32* surD;
+    s32* leftS;
+    s32* rightS;
+    s32* surS;
     u32 i;
     u8 nextCurrentLast;
 

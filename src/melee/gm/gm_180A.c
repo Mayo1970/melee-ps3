@@ -35,8 +35,19 @@ struct lbl_80472E48_t {
 }; /* size = 0x80 */
 ASSERT_SIZE(struct lbl_80472E48_t, 0x80);
 
+#ifdef TARGET_PS3
+// The GameCube reaches lbl_80472EC8 as x80 from lbl_80472E48; one object
+// keeps them adjacent here.
+static struct {
+    struct lbl_80472E48_t x0;
+    s32 x80[4];
+} gm_80472E48;
+#define lbl_80472E48 gm_80472E48.x0
+#define lbl_80472EC8 gm_80472E48.x80
+#else
 static struct lbl_80472E48_t lbl_80472E48;
 static s32 lbl_80472EC8[4];
+#endif
 
 static HSD_Archive* lbl_804D65C8;
 static DynamicModelDesc** lbl_804D65CC;

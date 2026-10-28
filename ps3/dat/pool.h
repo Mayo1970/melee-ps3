@@ -11,5 +11,7 @@ void* ps3_dat_malloc(size_t size);
 void* ps3_dat_calloc(size_t n, size_t size);
 void* ps3_dat_realloc(void* ptr, size_t size);
 void ps3_dat_free(void* ptr);
+// The bytes allocated now and at most, for the logs.
+void ps3_dat_pool_usage(size_t* now, size_t* most);
 
 #endif

@@ -355,8 +355,15 @@ void ftYs_Init_8012B6E8(Fighter* fp, struct S_UNK_YOSHI1* unk_struct_arg)
     float zero_float;
 
     attr_r26 = &fp->ft_data->ext_attr->yoshi;
+#ifdef TARGET_PS3
+    // x8 and xC are the second TempS of the lookup only with 32-bit pointers.
+    unk_struct1 = unk_struct_arg;
+    index = ((TempS*) unk_struct1->unk_struct)[1].x4;
+    ptr2EndIndex = &((TempS*) unk_struct1->unk_struct)[1].x0;
+#else
     index = (unk_struct1 = unk_struct_arg)->unk_struct->xC_start_index;
     ptr2EndIndex = (&unk_struct1->unk_struct->x8_end_index);
+#endif
     zero_float = 0.0f;
 
     for (i = 0; i < *ptr2EndIndex; i++) {
@@ -394,8 +401,15 @@ void ftYs_Init_8012B804(Fighter* fp, struct S_UNK_YOSHI1* unk_struct_arg,
         u8* index;
         s32 i;
 
+#ifdef TARGET_PS3
+        // x8 and xC are the second TempS of the lookup only with 32-bit
+        // pointers.
+        index = ((TempS*) unk_struct)[1].x4;
+        ptr2EndIndex = &((TempS*) unk_struct)[1].x0;
+#else
         index = unk_struct->xC_start_index;
         ptr2EndIndex = (&unk_struct->x8_end_index);
+#endif
 
         for (i = 0; i < *ptr2EndIndex; i++) {
             HSD_DObj* dobj_r3 = fp->dobj_list.data[index[i]];

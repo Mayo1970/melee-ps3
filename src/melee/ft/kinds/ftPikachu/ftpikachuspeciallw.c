@@ -135,7 +135,12 @@ void ftPk_SpecialLw_Enter(HSD_GObj* gobj)
     fp->cmd_vars[0] = 0;
     fp->x2210.throw_flags = 0;
     fp->mv.pk.specialhi.x4 = 1;
+#ifdef TARGET_PS3
+    // specialhi.x0 clears speciallw.x0 only with 32-bit pointers.
+    fp->mv.pk.speciallw.x0 = NULL;
+#else
     fp->mv.pk.specialhi.x0 = 0;
+#endif
     Fighter_ChangeMotionState(gobj, ftPk_MS_SpecialLwStart, Ft_MF_None, 0.0f,
                               1.0f, 0.0f, 0);
     ftAnim_8006EBA4(gobj);
@@ -147,7 +152,11 @@ void ftPk_SpecialAirLw_Enter(HSD_GObj* gobj)
     fp->cmd_vars[0] = 0;
     fp->x2210.throw_flags = 0;
     fp->mv.pk.specialhi.x4 = 1;
+#ifdef TARGET_PS3
+    fp->mv.pk.speciallw.x0 = NULL;
+#else
     fp->mv.pk.specialhi.x0 = 0;
+#endif
     Fighter_ChangeMotionState(gobj, ftPk_MS_SpecialAirLwStart, Ft_MF_None,
                               0.0f, 1.0f, 0.0f, 0);
     ftAnim_8006EBA4(gobj);

@@ -180,7 +180,7 @@ struct plAllocInfo;
     float x98;       ///<
 }* Fighter_804D6524; ///< fighter scale modifiers - used in 0x800d105c
 /* 4D6528 */ extern struct Fighter_ShakeTable_t {
-    Vec2* x0;
+    Vec2* x0 DAT_COUNT(x4);
     int x4;
 }* Fighter_SmashChargeShakeTable; ///< smash-charge shake table
 
@@ -206,7 +206,7 @@ typedef struct ftCo_ItemThrowAttrs {
 } ftCo_ItemThrowAttrs;
 
 typedef struct Fighter_804D6540_t {
-    Fighter_804D6540_x0_t* x0;
+    Fighter_804D6540_x0_t* x0 DAT_COUNT(x4);
     int x4;
 } Fighter_804D6540_t;
 extern Fighter_804D6540_t** Fighter_804D6540;
@@ -224,9 +224,17 @@ struct ftDamageShifts {
     /* +4 */ int count;
 };
 
+/// The respawn platform's model and animation (#ftCo_800D4FF4).
+struct ftLoadCommonData_x20 {
+    HSD_Joint* joint;
+    HSD_AnimJoint* anim;
+};
+
 struct ftLoadCommonData {
     /* +00 */ ftCommonData* common;
-    /* +04 */ ftCo_ItemThrowAttrs* item_throw;
+    /// By motion state, #ftCo_MS_LightThrowF through #ftCo_MS_HeavyThrowLw4.
+    /* +04 */ ftCo_ItemThrowAttrs* item_throw
+        DAT_COUNT(ftCo_MS_HeavyThrowLw4 - ftCo_MS_LightThrowF + 1);
     /// One row per swing type (#fn_800CCEC4)
     /* +08 */ float (*x8)[5] DAT_COUNT(6);
     /// Staling, one per entry of the stale move queue (#ft_80089118)
@@ -238,7 +246,7 @@ struct ftLoadCommonData {
         x18 DAT_COUNT(FtColAnim_SpycloakStart);
     /// Spycloak animations, IDs 0x7B through 0x80 (#ft_800C0098).
     /* +1C */ struct Fighter_804D653C_t* x1C DAT_COUNT(6);
-    /* +20 */ UNK_T x20;
+    /* +20 */ struct ftLoadCommonData_x20* x20;
     /// By #Fighter::dmg's @c x18F8
     /* +24 */ struct ftDamageShifts* x24 DAT_COUNT(3);
     /* +28 */ struct Fighter_ShakeTable_t* grab_mash_shake;

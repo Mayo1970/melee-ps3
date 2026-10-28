@@ -124,7 +124,12 @@ void grRCruise_801FF168(void)
     HSD_JObjSetFlagsAll(jobj, JOBJ_HIDDEN);
     grgobj = grRCruise_801FF2C8(3);
     gp2 = GET_GROUND(grgobj);
+#ifdef TARGET_PS3
+    // grRCruise_801FFADC reads it as scroll.anim_gobj, at another offset here.
+    gp2->u.scroll.anim_gobj = jgobj;
+#else
     gp2->u.rcruise2.xEC = jgobj;
+#endif
     grRCruise_801FF2C8(0);
     grRCruise_801FF2C8(2);
     grRCruise_801FF2C8(5);
@@ -234,8 +239,16 @@ void grRCruise_801FF5B4(Ground_GObj* gobj)
     Ground_InitMapColl(jobj, gp->map_id);
     grAnime_801C8138(gobj, gp->map_id, 0);
     gp->u.rcruise.x10 = 1;
+#ifdef TARGET_PS3
+    // map.chikuwa is rcruise.entries on the GameCube (17 entries of 0x18
+    // bytes); here the fields lie apart and an entry is 0x20 bytes.
+    gp->u.rcruise.entries =
+        HSD_MemAlloc(17 * sizeof(*gp->u.rcruise.entries));
+    HSD_ASSERT(410, gp->u.rcruise.entries);
+#else
     gp->u.map.chikuwa = HSD_MemAlloc(sizeof(*gp->u.map.chikuwa));
     HSD_ASSERT(410, gp->u.map.chikuwa);
+#endif
     grRCruise_80201410(gobj);
     Ground_801C10B8(gobj, grRCruise_801FF444);
     grRCruise_80200540(gobj);
@@ -1032,7 +1045,13 @@ void grRCruise_80201410(Ground_GObj* gobj)
     Ground* gp = GET_GROUND(gobj);
     int i;
 
+#ifdef TARGET_PS3
+    // One entry per lbl_803E5014 desc; an entry is 16 bytes here, a desc 8.
+    gp->u.map.vanish =
+        HSD_MemAlloc(ARRAY_SIZE(lbl_803E5014) * sizeof(*gp->u.map.vanish));
+#else
     gp->u.map.vanish = HSD_MemAlloc(sizeof(lbl_803E5014));
+#endif
     HSD_ASSERT(1453, gp->u.map.vanish);
 
     for (i = 0; i < ARRAY_SIZE(lbl_803E5014); i++) {

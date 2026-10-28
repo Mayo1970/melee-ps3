@@ -16,6 +16,11 @@ typedef struct Ps3Diag {
     const char* volatile intr_site;
     // What the GP thread waits for: 0 nothing, 1 ring data, 2 a display flip, 3 an RSX label.
     volatile unsigned gp_wait;
+    // The GP thread's step (a name), the last opcode it read, and the backend's last draw: where it stopped.
+    const char* volatile gp_site;
+    volatile unsigned gp_op, gp_draw;
+    // The thread queue the main thread sleeps on (OSSleepThread), NULL while it runs.
+    const void* volatile main_sleep;
     // 1 while the GX producer waits for ring space.
     volatile unsigned ring_space_wait;
     volatile unsigned vblanks;

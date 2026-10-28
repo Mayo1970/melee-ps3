@@ -318,6 +318,19 @@ void grGreens_802139C4(Ground_GObj* gobj)
 {
     Ground* gp = gobj->user_data;
     ftCo_800C06E8(gobj, 9, grGreens_80213B1C);
+#ifdef TARGET_PS3
+    // grGreens_80213C10 reads Whispy's words as greens2; the greens view has
+    // 8-byte pointers at x4 and x8 here, which moves its later words.
+    gp->u.greens2.x0 = 0;
+    gp->u.greens2.x4 = 0;
+    gp->u.greens2.x8 = 0;
+    gp->u.greens2.xC = randrange(yakumono_param->x38_windTimerMax,
+                                 yakumono_param->x34_windTimerMin);
+    gp->u.greens2.x10 = 1;
+    gp->u.greens2.x1C = 0;
+    gp->u.greens2.x14 = HSD_Randi(2);
+    gp->u.greens2.x18 = 0;
+#else
     gp->u.greens.x0_flags.whole_thing = 0;
     gp->u.greens.x4 = NULL;
     gp->u.greens.x8_blocks = NULL;
@@ -327,6 +340,7 @@ void grGreens_802139C4(Ground_GObj* gobj)
     gp->u.greens.x1C = 0;
     gp->u.greens.x14 = HSD_Randi(2);
     gp->u.greens.x18 = 0;
+#endif
     grAnime_801C8138(gobj, gp->map_id, 0);
 }
 

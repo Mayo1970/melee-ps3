@@ -5,7 +5,7 @@
 #include <dolphin/dsp.h>
 
 static s16 __AXOutBuffer[2][320];
-static long __AXOutSBuffer[160];
+static s32 __AXOutSBuffer[160];
 AXPROFILE __AXLocalProfile;
 DSPTaskInfo task;
 u16 ax_dram_image[8192];

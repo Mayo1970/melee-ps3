@@ -554,6 +554,21 @@ void mnEvent_8024E1B4(HSD_GObj* gobj)
         tmp = data;
         iter = data;
         for (i = 0; i < 9; i++) {
+#ifdef TARGET_PS3
+            // The GameCube steps iter by 4 bytes, one 32-bit pointer.
+            if (tmp->gobjs[i] != NULL) {
+                HSD_GObjFree(tmp->gobjs[i]);
+                tmp->gobjs[i] = NULL;
+            }
+            if (tmp->texts[i] != NULL) {
+                HSD_SisLib_803A5CC4(tmp->texts[i]);
+                tmp->texts[i] = NULL;
+            }
+            if (tmp->icons[i] != NULL) {
+                HSD_SisLib_803A5CC4(tmp->icons[i]);
+                tmp->icons[i] = NULL;
+            }
+#else
             if (iter->gobjs[0] != NULL) {
                 HSD_GObjFree(tmp->gobjs[i]);
                 iter->gobjs[0] = NULL;
@@ -567,6 +582,7 @@ void mnEvent_8024E1B4(HSD_GObj* gobj)
                 iter->icons[0] = NULL;
             }
             iter = (MnEventData*) ((u8*) iter + 4);
+#endif
         }
         HSD_GObjFree(gobj);
     }

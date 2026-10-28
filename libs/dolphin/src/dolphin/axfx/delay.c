@@ -6,16 +6,16 @@
 void AXFXDelayCallback(struct AXFX_BUFFERUPDATE* bufferUpdate,
                        struct AXFX_DELAY* delay)
 {
-    long l;
-    long r;
-    long s;
-    long* lBuf;
-    long* rBuf;
-    long* sBuf;
+    s32 l;
+    s32 r;
+    s32 s;
+    s32* lBuf;
+    s32* rBuf;
+    s32* sBuf;
     u32 i;
-    long* left;
-    long* right;
-    long* sur;
+    s32* left;
+    s32* right;
+    s32* sur;
 
     left = bufferUpdate->left;
     right = bufferUpdate->right;
@@ -46,9 +46,9 @@ void AXFXDelayCallback(struct AXFX_BUFFERUPDATE* bufferUpdate,
 int AXFXDelaySettings(struct AXFX_DELAY* delay)
 {
     unsigned long i;
-    long* l;
-    long* r;
-    long* s;
+    s32* l;
+    s32* r;
+    s32* s;
     int old;
 
     AXFXDelayShutdown(delay);
@@ -91,7 +91,12 @@ int AXFXDelayInit(struct AXFX_DELAY* delay)
     delay->right = NULL;
     delay->sur = NULL;
     OSRestoreInterrupts(old);
+#ifdef TARGET_PS3
+    // MWCC returns Settings' 1 from r3; axdriver.c registers the callback only on 1.
+    return AXFXDelaySettings(delay);
+#else
     AXFXDelaySettings(delay);
+#endif
 }
 
 int AXFXDelayShutdown(struct AXFX_DELAY* delay)

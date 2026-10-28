@@ -49,6 +49,9 @@ struct _m2c_stack_ftCo_800A3554 {
 /* 0A2040 */ bool ftCo_IsCpuControlled(Fighter* fp);
 /* 0A2804 */ bool ftCo_800A5908(Item* ip);
 /* 0A287C */ bool ftCo_800A5980(Fighter* fp);
+#ifdef TARGET_PS3
+bool ftCo_800A5980_Item(Item* ip);
+#endif
 /* 0A28BC */ bool ftCo_800A59C0(Item* ip);
 /* 0A28E0 */ bool ftCo_800A59E4(Item* ip);
 /* 0A2924 */ bool ftCo_800A5A28(Item* ip);

@@ -561,18 +561,32 @@ struct grVenom_GroundVars {
     /* +1C gp+E0 */ union grVenom_GroundVars_x1C {
         f32 xE0;
         s32 xE0_int;
+#ifdef TARGET_PS3
+        // These four are starfox.article_gobjs on the same Ground; as 8-byte
+        // slots xF0-x100 also keep starfox's offsets.
+        HSD_GObj* gobj;
+#endif
     } x1C;
     /* +20 gp+E4 */ union grVenom_GroundVars_x20 {
         f32 xE4;
         s32 xE4_int;
+#ifdef TARGET_PS3
+        HSD_GObj* gobj;
+#endif
     } x20;
     /* +24 gp+E8 */ union grVenom_GroundVars_x24 {
         f32 xE8;
         s32 xE8_int;
+#ifdef TARGET_PS3
+        HSD_GObj* gobj;
+#endif
     } x24;
     /* +28 gp+EC */ union grVenom_GroundVars_x28 {
         f32 xEC;
         s32 xEC_int;
+#ifdef TARGET_PS3
+        HSD_GObj* gobj;
+#endif
     } x28;
     /* +2C gp+F0 */ s32 xF0;
     /* +30 gp+F4 */ s32 xF4;
@@ -606,6 +620,11 @@ struct grVenom_GroundVars2 {
             u8 b7 : 1;
         } x0;
     } xE0_state;
+#ifdef TARGET_PS3
+    // The GameCube keeps this frame in venom.x20.xE4, just past xE0_state;
+    // here that lies on xD4/xD8.
+    f32 xE4;
+#endif
 };
 
 struct grArwing_GroundVars {
@@ -921,6 +940,10 @@ struct grInishie2_GroundVars3 {
     s16 xCA;
     Vec3 xCC;
     Vec3 xD8;
+#ifdef TARGET_PS3
+    // inishie22.xC4 (8 bytes here) would cover xC8_flags and xCA.
+    HSD_GObj* parent;
+#endif
 };
 
 struct grStadium_GroundVars {
@@ -1483,7 +1506,13 @@ struct grBigBlue_GroundVars {
             /*  +8 gp+CC */ void* xCC;
             /*  +C gp+D0 */ f32 xD0;
             /* +10 gp+D4 */ HSD_JObj* xD4[3];
+#ifdef TARGET_PS3
+            // Keeps data[] at manager.data; a 4-byte pad put it under the low
+            // half of manager.event_extra.
+            /* pad */ void* pad_3;
+#else
             /* pad */ char pad_3[4];
+#endif
             /* +20 gp+E4 */ struct grBigBlue_GroundData data[3];
         } x0_s;
         struct grBigBlue_ManagerVars manager;
@@ -1558,10 +1587,19 @@ struct grCastle_GroundVars6 {
 
 struct grCastle_GroundVars7 {
     /* +00 gp+C4 */ s16 xC4;
+#ifdef TARGET_PS3
+    // xD4/xD8 keep castle11's offsets on the same Ground; the 8-byte xD0
+    // goes past them, clear of castle8.plat[0].state at +0xC.
+    u8 pad_xC6[0xE];
+    u32 xD4;
+    s32 xD8;
+    HSD_GObj* xD0;
+#else
     /* +02 gp+C6 */ u8 pad_xC6[0xA];
     /* +0C gp+D0 */ HSD_GObj* xD0;
     /* +10 gp+D4 */ u32 xD4;
     /* +14 gp+D8 */ s32 xD8;
+#endif
 };
 
 struct grCastle_Platform {

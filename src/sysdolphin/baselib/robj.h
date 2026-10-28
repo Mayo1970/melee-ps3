@@ -50,12 +50,12 @@ struct HSD_Exp {
 
 struct HSD_ExpDesc {
     f32 (*func)(void*);
-    HSD_RvalueList* rvalue;
+    HSD_RvalueList* rvalue DAT_TERMINATED(0);
 };
 
 struct HSD_ByteCodeExpDesc {
     u8* bytecode;
-    HSD_RvalueList* rvalue;
+    HSD_RvalueList* rvalue DAT_TERMINATED(0);
 };
 
 struct HSD_RObj {

@@ -1768,9 +1768,15 @@ void ftData_80085CD8(Fighter* fp, Fighter* arg1, int msid)
                 if ((temp_r3_3 != NULL) && (temp_r3->x14 == temp_r3_3->x5A4)) {
                     memcpy(fp->x59C, temp_r3_3->x59C, temp_r3->x8);
                     temp_r4 = fp->x59C;
+#ifdef TARGET_PS3
+                    // The copied file is unrelocated here, and
+                    // lbArchiveRelocate makes no native data: parse it.
+                    temp_ret = HSD_ArchiveParse(&sp14, temp_r4->x0, temp_r3->x8);
+#else
                     temp_ret = lbArchiveRelocate(
                         &sp14, temp_r4->x0, temp_r3->x8,
                         (intptr_t) temp_r4 - (intptr_t) temp_r3_3->x59C);
+#endif
                     if (temp_ret == -1) {
                         HSD_ASSERTREPORT(
                             0x9FA, 0, "lbArchiveRelocate error! %x\n", msid);
@@ -1826,9 +1832,15 @@ FigaTree* ftData_80085E50(Fighter* arg0, int msid)
                 if ((temp_r3_3 != NULL) && (temp_r3->x14 == temp_r3_3->x5A4)) {
                     memcpy(arg0->x59C, temp_r3_3->x59C, temp_r3->x8);
                     temp_r4 = arg0->x59C;
+#ifdef TARGET_PS3
+                    // The copied file is unrelocated here, and
+                    // lbArchiveRelocate makes no native data: parse it.
+                    temp_ret = HSD_ArchiveParse(&sp10, temp_r4->x0, temp_r3->x8);
+#else
                     temp_ret = lbArchiveRelocate(
                         &sp10, temp_r4->x0, temp_r3->x8,
                         (intptr_t) temp_r4 - (intptr_t) temp_r3_3->x59C);
+#endif
                     if (temp_ret == -1) {
                         HSD_ASSERTREPORT(
                             0xA30, 0, "lbArchiveRelocate error! %x\n", msid);

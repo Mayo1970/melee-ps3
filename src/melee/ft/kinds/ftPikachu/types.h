@@ -96,8 +96,16 @@ union ftPikachu_MotionVars {
     } specialhi;
 
     struct ftPikachu_SpecialLwVars {
+#ifdef TARGET_PS3
+        // ftpikachuspeciallw.c writes x4 as specialhi.x4; a 64-bit x0 first
+        // would move it.
+        s32 x0_gc;
+        bool x4;
+        Item_GObj* x0;
+#else
         Item_GObj* x0;
         bool x4;
+#endif
     } speciallw;
 };
 

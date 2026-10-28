@@ -8,4 +8,8 @@
 // `type_name` after `native` in the serialized data. Natively each object is allocated on its own.
 void* ps3_dat_element(HSD_Archive* archive, const void* native, const char* type_name, int index);
 
+// A command script's pointer word: the native readers keep scripts as serialized bytes, so the word is an
+// offset into the data of the archive that holds `at`, the script.
+void* ps3_dat_script(const void* at, u32 offset);
+
 #endif

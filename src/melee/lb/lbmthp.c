@@ -649,8 +649,15 @@ void lbMthp_8001F800(void)
     if (MoviePlayer.power != 0) {
         MoviePlayer.unk_70 = 0;
 
+#ifdef TARGET_PS3
+        // The DVD callback clears unk_110; GCC inlines fn_8001F294 and loads
+        // it once.
+        while (*(volatile s32*) &MoviePlayer.unk_110) {
+        }
+#else
         while (fn_8001F294()) {
         }
+#endif
 
         OSCancelAlarm(&MoviePlayer.alarm);
         HSD_VIWaitXFBFlush();

@@ -7,6 +7,8 @@
 
 #include <dolphin/os.h>
 
+#include "../os/diag.h"
+#include "../os/prof.h"
 #include "../os/udplog.h"
 #include "fpgen.h"
 #include "rsxdev.h"
@@ -62,6 +64,7 @@ typedef struct VpEntry {
 typedef struct TexEntry {
     bool used, efb;
     u32 addr, fmt, width, height, levels, tlut_fmt;
+    u32 bytes; // GX texture data read, all levels
     u32 hash, tlut_hash;
     void* mem;
     u32 offset, pitch;
@@ -140,6 +143,26 @@ typedef struct DrawRecord {
 static DrawRecord records[16];
 static u32 draw_seq;
 
+// What the last draw derived from the registers, valid while the GpState generations it read stay.
+static struct {
+    bool layout_ok, tev_ok, vp_ok, state_ok, tex_ok, consts_ok;
+    u32 layout_cp;
+    int layout_vat;
+    VtxLayout* layout;
+    u32 tev_bp, tev_xf;
+    const FpEntry* f;
+    float tev[XF_TEV_CONSTS][4];
+    u16 tev_mask;
+    u32 vp_xf;
+    u16 vp_attrs, vp_tev;
+    bool vp_pos3;
+    const VpEntry* v;
+    // The RSX raster state as apply_state left it, and its result.
+    u32 state_bp, state_xf;
+    bool state_pass;
+    u32 tex_bp, tex_frame, tex_tluts;
+} memo;
+
 static void unsupported(u32 bit, const char* what)
 {
     if (!(stats.unsupported & bit)) {
@@ -190,6 +213,7 @@ static void clear_fp_cache(void)
         }
     }
     fp_current = NULL;
+    memo.tev_ok = false;
 }
 
 static FpEntry* fp_build(FpEntry* e, int slots)
@@ -634,7 +658,12 @@ static void update_constants(GpState* s, const VtxLayout* l, float tev[XF_TEV_CO
                     s->xf_reg_dirty[1] || s->xf_reg_dirty[2];
     int i;
 
+    // The same layout and TEV values as the last upload: the DQ and TEV rows are on the RSX.
+    if (!xf_dirty && memo.consts_ok) {
+        return;
+    }
     if (xf_dirty) {
+        ps3_prof.xf_reloads++;
         xf_constants(s, vc_new);
         s->xf_mem_dirty_lo = XF_MEM_SIZE;
         s->xf_mem_dirty_hi = 0;
@@ -659,6 +688,7 @@ static void update_constants(GpState* s, const VtxLayout* l, float tev[XF_TEV_CO
         upload_rows(C_DQ, 3);
         upload_rows(C_TEV, XF_TEV_CONSTS);
     }
+    memo.consts_ok = true;
 }
 
 // Vertex layouts
@@ -799,8 +829,10 @@ static bool tex_upload(TexEntry* e, const u8* src, const u8* tlut, u32 tlut_entr
             return false;
         }
         dev_write_local(e->mem, tex_temp, e->pitch * h);
+        size = e->pitch * h;
     }
     stats.texture_uploads++;
+    ps3_prof.upload_bytes += size;
     return true;
 }
 
@@ -887,6 +919,7 @@ static const TexEntry* tex_get(const GpState* s, int unit, DevTexture* d)
             e->width = w;
             e->height = h;
             e->levels = levels;
+            e->bytes = size;
             e->hash = hash;
             e->tlut_hash = tlut_hash;
             e->tlut_fmt = tlut_fmt;
@@ -989,44 +1022,112 @@ static DrawRecord* record_draw(const char* kind, u32 prim, u32 count, const DevT
     return r;
 }
 
+
 static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
 {
     static TevConfig cfg;
-    float tev[XF_TEV_CONSTS][4];
-    VtxLayout* l = get_layout(s, vat);
+    VtxLayout* l;
     const FpEntry* f;
     const VpEntry* v;
     DrawRecord* r;
     XfKey key;
-    u16 tev_mask;
     u32 io, i, numtexgens = s->xf_regs[0x3F] & 0xF;
     u8* out;
+    bool tev_hit, reused = true;
+    uint64_t t0 = ps3_prof_now(), t = t0;
 
     stats.draws++;
     stats.vertices += count;
+    if (!memo.layout_ok || memo.layout_cp != s->cp_gen || memo.layout_vat != vat) {
+        memo.layout = get_layout(s, vat);
+        memo.layout_cp = s->cp_gen;
+        memo.layout_vat = vat;
+        memo.layout_ok = true;
+        memo.consts_ok = false;
+    }
+    l = memo.layout;
     if (!(l->attrs & (1u << VA_POS)) || (((s->bp[0x00] >> 14) & 3) == 3 && prim <= 4)) {
         stats.dropped_draws++;
         return;
     }
     numtexgens = numtexgens > 8 ? 8 : numtexgens;
-    memset(tev, 0, sizeof(tev));
-    build_tev(s, (int) numtexgens, &cfg, tev, &tev_mask);
-    f = fp_get(&cfg);
-    xf_make_key(s, l->attrs, l->pos3, tev_mask, &key);
-    v = vp_get(&key);
-    if (f == NULL || v == NULL || !apply_state(s)) {
+    ps3_diag.gp_draw = stats.draws;
+    ps3_diag.gp_site = "draw: TEV";
+    tev_hit = memo.tev_ok && memo.tev_bp == s->bp_gen && memo.tev_xf == s->xf_gen;
+    if (!tev_hit) {
+        reused = false;
+        memo.tev_ok = false;
+        memo.consts_ok = false;
+        memo.tex_ok = false;
+        memset(memo.tev, 0, sizeof(memo.tev));
+        build_tev(s, (int) numtexgens, &cfg, memo.tev, &memo.tev_mask);
+        memo.f = fp_get(&cfg);
+        if (memo.f != NULL) {
+            memo.tev_bp = s->bp_gen;
+            memo.tev_xf = s->xf_gen;
+            memo.tev_ok = true;
+        }
+    }
+    f = memo.f;
+    ps3_prof_lap(PROF_DRAW_TEV, &t);
+    ps3_diag.gp_site = "draw: XF";
+    if (!memo.vp_ok || memo.vp_xf != s->xf_gen || memo.vp_attrs != l->attrs || memo.vp_pos3 != l->pos3 ||
+        memo.vp_tev != memo.tev_mask) {
+        reused = false;
+        xf_make_key(s, l->attrs, l->pos3, memo.tev_mask, &key);
+        memo.v = vp_get(&key);
+        memo.vp_ok = memo.v != NULL;
+        memo.vp_xf = s->xf_gen;
+        memo.vp_attrs = l->attrs;
+        memo.vp_pos3 = l->pos3;
+        memo.vp_tev = memo.tev_mask;
+    }
+    v = memo.v;
+    ps3_prof_lap(PROF_DRAW_XF, &t);
+    ps3_diag.gp_site = "draw: state";
+    if (f == NULL || v == NULL) {
         stats.dropped_draws++;
         return;
     }
+    if (!memo.state_ok || memo.state_bp != s->bp_gen || memo.state_xf != s->xf_gen) {
+        reused = false;
+        memo.state_pass = apply_state(s);
+        memo.state_bp = s->bp_gen;
+        memo.state_xf = s->xf_gen;
+        memo.state_ok = true;
+    }
+    if (!memo.state_pass) {
+        stats.dropped_draws++;
+        return;
+    }
+    if (reused) {
+        ps3_prof.state_reuses++;
+    }
+    ps3_prof_lap(PROF_DRAW_STATE, &t);
+    ps3_diag.gp_site = "draw: vertices";
     out = dev_ring_alloc(count * l->out_size, &io);
     if (out == NULL || !vtx_convert(l, s, data, count, out)) {
         stats.dropped_draws++;
         return;
     }
-    update_constants(s, l, tev, tev_mask);
+    ps3_prof_lap(PROF_DRAW_VTX, &t);
+    ps3_diag.gp_site = "draw: constants";
+    update_constants(s, l, memo.tev, memo.tev_mask);
+    ps3_prof_lap(PROF_DRAW_CONST, &t);
+    ps3_diag.gp_site = "draw: programs and textures";
     use_vp(v);
     use_fp(f);
-    bind_textures(s, &cfg);
+    // The textures are checked once per frame and after each TLUT load (bind_textures).
+    if (!memo.tex_ok || !textures_bound || memo.tex_bp != s->bp_gen || memo.tex_frame != frame ||
+        memo.tex_tluts != tlut_loads) {
+        bind_textures(s, &cfg);
+        memo.tex_bp = s->bp_gen;
+        memo.tex_frame = frame;
+        memo.tex_tluts = tlut_loads;
+        memo.tex_ok = true;
+    }
+    ps3_prof_lap(PROF_DRAW_TEX, &t);
+    ps3_diag.gp_site = "draw: RSX commands";
     for (i = 0; i < 16; i++) {
         if ((l->attrs >> i) & 1) {
             dev_attrib((int) i, io + l->attr[i].offset, l->out_size, l->attr[i].count, l->attr[i].type);
@@ -1057,6 +1158,7 @@ static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
     }
     dev_draw(prim_type(prim), count);
     dev_mark(r->seq);
+    ps3_prof.ticks[PROF_DRAW] += ps3_prof_now() - t0;
 }
 
 // EFB copies
@@ -1263,6 +1365,7 @@ static void efb_copy(GpState* s)
     u32 v = s->bp[BP_EFB_COPY], tl = s->bp[0x49], wh = s->bp[0x4A];
     u32 sx = tl & 0x3FF, sy = (tl >> 10) & 0x3FF, sw = (wh & 0x3FF) + 1, sh = ((wh >> 10) & 0x3FF) + 1;
     u32 addr = (s->bp[0x4B] & 0xFFFFFF) << 5;
+    uint64_t t = ps3_prof_now();
 
     stats.efb_copies++;
     if (trace_left != 0) {
@@ -1350,7 +1453,9 @@ static void efb_copy(GpState* s)
     // The pass changed the RSX state the GX draws keep, and a texture at addr may now be the copy.
     fp_current = NULL;
     textures_bound = false;
+    memo.state_ok = false;
     memset(tex_memo, 0, sizeof(tex_memo));
+    ps3_prof_lap(PROF_COPY, &t);
 }
 
 static void tlut_load(GpState* s)
@@ -1375,6 +1480,34 @@ static void tex_invalidate(GpState* s)
     (void) s;
 }
 
+// The textures read from [addr, addr + size) go, so the next use decodes the new data (movie frames).
+static void mem_changed(GpState* s, u32 addr, u32 size)
+{
+    bool waited = false;
+    int i;
+
+    (void) s;
+    for (i = 0; i < TEX_CACHE; i++) {
+        TexEntry* e = &tex_cache[i];
+
+        if (!e->used || e->efb || e->addr >= addr + size || addr >= e->addr + e->bytes) {
+            continue;
+        }
+        // Earlier draws may still sample it.
+        if (!waited) {
+            dev_finish();
+            waited = true;
+        }
+        dev_local_free(e->mem);
+        e->used = false;
+    }
+    if (waited) {
+        memset(bound, 0, sizeof(bound));
+        memset(tex_memo, 0, sizeof(tex_memo));
+        textures_bound = false;
+    }
+}
+
 static void finish(GpState* s)
 {
     (void) s;
@@ -1393,7 +1526,7 @@ static void present(GpState* s, u32 xfb)
     gx_rsx_present(xfb);
 }
 
-static const GpBackend backend = { draw, efb_copy, tlut_load, tex_invalidate, finish, present };
+static const GpBackend backend = { draw, efb_copy, tlut_load, tex_invalidate, finish, present, mem_changed };
 
 const GpBackend* gx_rsx_backend(void)
 {
@@ -1460,6 +1593,7 @@ bool gx_rsx_init(void)
 
 void gx_rsx_present(u32 xfb)
 {
+    uint64_t t = ps3_prof_now();
     int i;
 
     for (i = 0; i < XFBS; i++) {
@@ -1479,6 +1613,8 @@ void gx_rsx_present(u32 xfb)
             vp_current = NULL;
             textures_bound = false;
             vc_valid = false;
+            memo.state_ok = false;
+            ps3_prof_lap(PROF_PRESENT, &t);
             return;
         }
     }

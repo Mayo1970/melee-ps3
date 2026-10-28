@@ -15,6 +15,7 @@ static PsMutex lock = PS_MUTEX_INIT;
 static padData last[PORTS];
 static bool pressure_on[PORTS];
 static int read_port[MAX_READ] = { -1, -1, -1, -1 };
+static int chan_port[MAX_READ] = { -1, -1, -1, -1 };
 
 void ps3_pad_init(void)
 {
@@ -52,11 +53,17 @@ static void convert(const padData* d, Ps3Pad* p)
 void ps3_pad_read(Ps3Pad* pads, int n)
 {
     padInfo info;
-    int port, k = 0;
+    int port, c, used = 0;
 
     memset(pads, 0, sizeof(*pads) * (size_t) n);
     ps_mutex_lock(&lock);
     if (ioPadGetInfo(&info) == 0) {
+        // A GameCube channel is a fixed port: a pad keeps its channel while others come and go.
+        for (c = 0; c < MAX_READ; c++) {
+            if (chan_port[c] >= 0 && !info.status[chan_port[c]]) {
+                chan_port[c] = -1;
+            }
+        }
         for (port = 0; port < PORTS; port++) {
             padData d;
 
@@ -73,18 +80,26 @@ void ps3_pad_read(Ps3Pad* pads, int n)
             if (ioPadGetData((u32) port, &d) == 0 && d.len > 0) {
                 last[port] = d;
             }
-            if (k < n && k < MAX_READ) {
-                read_port[k] = port;
-                convert(&last[port], &pads[k]);
-                k++;
+            for (c = 0; c < MAX_READ && chan_port[c] != port; c++) {
+            }
+            if (c == MAX_READ) {
+                for (c = 0; c < MAX_READ && chan_port[c] >= 0; c++) {
+                }
+                if (c < MAX_READ) {
+                    chan_port[c] = port;
+                }
             }
         }
     }
-    ps3_diag.pads = (unsigned) k;
-    ps3_diag.pad0_buttons = k > 0 ? pads[0].buttons : 0;
-    for (; k < MAX_READ; k++) {
-        read_port[k] = -1;
+    for (c = 0; c < MAX_READ; c++) {
+        read_port[c] = c < n ? chan_port[c] : -1;
+        if (read_port[c] >= 0) {
+            convert(&last[read_port[c]], &pads[c]);
+            used++;
+        }
     }
+    ps3_diag.pads = (unsigned) used;
+    ps3_diag.pad0_buttons = n > 0 ? pads[0].buttons : 0;
     ps_mutex_unlock(&lock);
 }
 

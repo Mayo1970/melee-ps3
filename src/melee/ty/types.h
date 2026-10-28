@@ -107,20 +107,33 @@ struct TyDspEntry {
 };
 ASSERT_SIZE(struct TyDspEntry, 0x10);
 
+/// A view over ToyListEntry; x10 is its trophy_id.
 struct ToySubStructS_ {
+#ifdef TARGET_PS3
+    u8 pad0[0x20];
+#else
     u8 pad0[0x10];
+#endif
     s16 x10;
 };
 
+/// A view over ToyED8Data (x0 to x58) and TyDisplayData (x140 on).
 struct ToyGlobalsS_ {
     HSD_GObj* x0;
     u8 x4;
     HSD_GObj* x8;
     HSD_GObj* xC;
     s32 x10;
+#ifdef TARGET_PS3
+    // ToyED8Data's pointer slots: GameCube offset o is at 2 * o here.
+    u8 pad14[0x60 - 0x24];
+    void* x30;
+    u8 pad34[0xA0 - 0x68];
+#else
     u8 pad14[0x1C];
     void* x30;
     u8 pad34[0x1C];
+#endif
     void* x50;
     HSD_Archive* x54;
     s32 x58;
@@ -133,11 +146,19 @@ struct ToyGlobalsS_ {
     s16 x154;
 };
 
+/// A view over ToyCameraControl's x00, x04 and archive.
 struct TyFiguponED4 {
+#ifdef TARGET_PS3
+    uintptr_t x0;
+    uintptr_t x4;
+    u8 pad_08[0x8];
+    uintptr_t xC;
+#else
     /* 0x00 */ u32 x0;
     /* 0x04 */ u32 x4;
     /* 0x08 */ u8 pad_08[0x4];
     /* 0x0C */ u32 xC;
+#endif
 };
 
 struct ToyModelFile {
@@ -161,7 +182,12 @@ struct TyDisplayData {
     /* 0x138 */ ToyListEntry* first_entry;
     /* 0x13C */ ToyListEntry* last_entry;
     /* 0x140 */ ToyListEntry* selected_entry;
+#ifdef TARGET_PS3
+    // The four texts of tyDispData (x144 to x150).
+    HSD_Text* pad_144[4];
+#else
     /* 0x144 */ u8 pad_144[0x154 - 0x144];
+#endif
     /* 0x154 */ s16 selectedIdx;
     /* 0x156 */ u8 pad_156;
     /* 0x157 */ s8 visible_count;
@@ -290,7 +316,12 @@ struct TyDspBgData {
 
 struct TyDspArchiveHolder {
     /*  +0 */ UNK_T x0;
+#ifdef TARGET_PS3
+    // Toy_80308250 fills it as a ToyListEntry; archive is that entry's.
+    u8 pad_4[0x20];
+#else
     /*  +4 */ u8 pad_4[0x10];
+#endif
     /* +14 */ HSD_Archive* archive;
 };
 
@@ -315,10 +346,17 @@ struct TyListGobjEntry {
     /* +16 */ s8 x16;
 };
 
+/// A view over TyListArg.
 struct TyListRow {
+#ifdef TARGET_PS3
+    void* pad_0[3];
+    HSD_JObj* jobj;
+    void* pad_10[2];
+#else
     /* 0x00 */ u8 pad_0[0xC];
     /* 0x0C */ HSD_JObj* jobj;
     /* 0x10 */ u8 pad_10[0x18 - 0x10];
+#endif
     /* 0x18 */ HSD_Text* text0;
     /* 0x1C */ HSD_Text* text1;
     /* 0x20 */ HSD_Text* text2;
@@ -358,15 +396,26 @@ struct TyCleanupObj {
 };
 
 struct TyGObjX8_ {
+#ifdef TARGET_PS3
+    // A view over an HSD_GObj; x28 is its hsd_obj.
+    u8 pad[0x40];
+#else
     u8 pad[0x28];
+#endif
     HSD_CObj* x28;
 };
 
+/// A view over Toy6E68.
 struct TyCameraData_ {
     void* x0;
     void* x4;
     TyGObjX8_* x8;
+#ifdef TARGET_PS3
+    void* padC;
+    void* pad10[2];
+#else
     u8 padC[0x18 - 0x0C];
+#endif
     f32 x18;
     f32 x1C;
     f32 x20;
@@ -377,42 +426,76 @@ struct TyCameraData_ {
     s32 x58;
 };
 
+/// A view over HSD_SObj.
 struct ToyDataJObj {
     /* 0x00 */ void* x0;
     /* 0x04 */ struct ToyDataJObj* x4;
+#ifdef TARGET_PS3
+    // HSD_SObj's prev and gobj grow by 8 bytes.
+    u8 pad08[0x40 - 0x08 + 0x8];
+#else
     /* 0x08 */ u8 pad08[0x40 - 0x08];
+#endif
     /* 0x40 */ s32 x40;
 };
 
+/// A view over an HSD_GObj; x28 is its hsd_obj.
 struct ToyDataX8 {
+#ifdef TARGET_PS3
+    u8 pad0[0x40];
+#else
     /* 0x00 */ u8 pad0[0x28];
+#endif
     /* 0x28 */ ToyDataJObj* x28;
 };
 
+/// A view over ToyED8Data.
 struct tyLightData {
+#ifdef TARGET_PS3
+    char _pad0[0x18];
+    HSD_GObj* x0C;
+    char _pad1[0xB0 - 0x20];
+#else
     /* 0x00 */ char _pad0[0x0C];
     /* 0x0C */ HSD_GObj* x0C;
     /* 0x10 */ char _pad1[0x48];
+#endif
     /* 0x58 */ void* x58;
 };
 
+/// A view over TyDisplayData.
 struct tyDispData {
+#ifdef TARGET_PS3
+    ToyListEntry pad_entries[13];
+    ToyListEntry* pad_ptrs[3];
+#else
     u8 pad[0x144];
+#endif
     HSD_Text* x144;
     HSD_Text* x148;
     HSD_Text* x14C;
     HSD_Text* x150;
 };
 
+/// A view over Toy6E68.
 struct un_804D6E68_t {
+#ifdef TARGET_PS3
+    u8 pad[0x30];
+#else
     /* 0x00 */ u8 pad[0x18];
+#endif
     /* 0x18 */ f32 x18;
 };
 
+/// A view over HSD_SObj.
 struct ToyJObjNode {
     u8 x0[0x4];
     void* x4;
+#ifdef TARGET_PS3
+    u8 x8[0x40 - 0x8 + 0x8];
+#else
     u8 x8[0x40 - 0x8];
+#endif
     s32 x40;
 };
 
@@ -441,7 +524,12 @@ struct Toy6E68 {
     ToyTransitionObj* x4;
     void* x8;
     ToyTransitionObj* xC;
+#ifdef TARGET_PS3
+    // Two more GObjs: _Toy_8030FA50 fills the object as void*[6].
+    void* pad10[2];
+#else
     u8 pad10[0x18 - 0x10];
+#endif
     f32 x18;
     f32 x1C;
     f32 x20;
@@ -464,8 +552,13 @@ struct Toy6E68 {
     s8 x61;
 };
 
+/// A view over ToyListEntry; x14 is its archive.
 struct Ty25Entry {
+#ifdef TARGET_PS3
+    u8 pad[0x28];
+#else
     u8 pad[0x14];
+#endif
     void* x14;
 };
 
@@ -495,13 +588,23 @@ struct TyListState {
 };
 ASSERT_SIZE(struct TyListState, 0x2AC);
 
+/// A view over an HSD_GObj; cobj is its hsd_obj.
 struct TyListData {
+#ifdef TARGET_PS3
+    u8 pad[0x40];
+#else
     u8 pad[0x28];
+#endif
     HSD_CObj* cobj;
 };
 
+/// A view over an HSD_GObj; x20 and x24 are the words of gxlink_prios.
 struct TyListWaitData {
+#ifdef TARGET_PS3
+    u8 pad[0x38];
+#else
     u8 pad[0x20];
+#endif
     u32 x20;
     s32 x24;
 };
@@ -514,6 +617,18 @@ struct ToyED8Data {
     /*  +4 */ HSD_GObj* gobj;
     /*  +8 */ ToyDataX8* x8;
     /*  +C */ HSD_GObj* gobj2;
+#ifdef TARGET_PS3
+    // Every GameCube word is a pointer slot (at 2 * its offset), so the views
+    // above and lb_8001204C's nine joints from x10 keep one layout.
+    void* pad_10[2];
+    HSD_JObj* jobjs[3];
+    void* pad_24[3];
+    HSD_JObj* x30;
+    void* pad_34[7];
+    HSD_Archive* archive;
+    // The TyMnBg archive (ToyGlobalsS_::x54).
+    void* x54;
+#else
     /* +10 */ u8 pad_10[0x18 - 0x10];
     /* +18 */ HSD_JObj* jobjs[3];
     /* +24 */ u8 pad_24[0x30 - 0x24];
@@ -521,6 +636,7 @@ struct ToyED8Data {
     u8 pad_34[0x50 - 0x34];
     /* 0x50 */ HSD_Archive* archive;
     /* 0x54 */ u32 x54;
+#endif
     UNK_T x58;
 };
 STATIC_ASSERT(offsetof(struct ToyED8Data, x0) == 0x0);
@@ -531,9 +647,14 @@ STATIC_ASSERT(offsetof(struct ToyED8Data, x30) == 0x30);
 STATIC_ASSERT(offsetof(struct ToyED8Data, archive) == 0x50);
 STATIC_ASSERT(offsetof(struct ToyED8Data, x54) == 0x54);
 ASSERT_SIZE(struct ToyED8Data, 0x5C);
+/// A view over ToyED8Data; data is its archive.
 struct TyArchiveData {
     HSD_GObj* gobj;
+#ifdef TARGET_PS3
+    u8 pad[0xA0 - 0x8];
+#else
     u8 pad[0x4C];
+#endif
     void* data;
 };
 
@@ -570,8 +691,13 @@ struct ToyTable {
     ToyEntry entries[9];
 };
 
+/// A view over ToyListEntry.
 typedef struct ToyEntryData {
+#ifdef TARGET_PS3
+    void* x0[2];
+#else
     u8 x0[0x8];
+#endif
     char* x8;
     char* xC;
     s16 x10;

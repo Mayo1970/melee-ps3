@@ -352,9 +352,17 @@ void grHomeRun_8021D680(Ground_GObj* gobj)
         }
     }
     gp->u.homerun.xE8_flags.b0 = 0;
+#ifdef TARGET_PS3
+    // grHomeRun_8021CB20 sets the 8-byte homerun.xCC/xD0; unk.xCC/xD0 are
+    // the halves of homerun.back here.
+    if (gp->u.homerun.xD0 != NULL && gp->u.homerun.xCC == NULL) {
+        gp->u.homerun.xCC = grHomeRun_8021EC58(0);
+        jobj2 = gp->u.homerun.xD0;
+#else
     if ((u32) gp->u.unk.xD0 != 0 && (u32) gp->u.unk.xCC == 0) {
         gp->u.unk.xCC = (intptr_t) grHomeRun_8021EC58(0);
         jobj2 = (HSD_JObj*) gp->u.unk.xD0;
+#endif
         lb_8000B1CC(jobj2, NULL, &pos2);
 
         scale = Ground_801C0498();
@@ -364,7 +372,11 @@ void grHomeRun_8021D680(Ground_GObj* gobj)
         y = -pos2.y + 0.0F * (grHr_804D6AE4 * scale);
 
         scale = Ground_801C0498();
+#ifdef TARGET_PS3
+        text = gp->u.homerun.xCC;
+#else
         text = (HSD_Text*) (intptr_t) gp->u.unk.xCC;
+#endif
         text->pos_x = pos2.x + (-1.0F) * (grHr_804D6AE4 * scale);
         text->pos_y = y;
         text->pos_z = z;

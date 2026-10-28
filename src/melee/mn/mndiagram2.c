@@ -787,6 +787,12 @@ typedef struct MnDiagram2DataLayout {
     u8 stat_name_ids[0x90];
     AnimLoopSettings anim[2];
 } MnDiagram2DataLayout;
+#ifdef TARGET_PS3
+// The GameCube reaches mnDiagram2_803EEB60 at +0x90 from 803EEAD0 (DOL order).
+#define DIAGRAM2_ANIM(base) (mnDiagram2_803EEB60)
+#else
+#define DIAGRAM2_ANIM(base) ((base)->anim)
+#endif
 
 /// @brief Animation completion callback - destroys GObj when animation ends.
 void mnDiagram2_OnAnimComplete(HSD_GObj* gobj)
@@ -819,7 +825,7 @@ void mnDiagram2_UpdateScrollArrows(HSD_GObj* gobj)
     data = HSD_GObjGetUserData(gobj);
 
     jobj = data->down_arrow;
-    mn_8022ED6C(jobj, &base->anim[1]);
+    mn_8022ED6C(jobj, &DIAGRAM2_ANIM(base)[1]);
     if (data->is_name_mode) {
         if (data->scroll_offset + 10 < 0x18) {
             HSD_JObjClearFlagsAll(jobj, JOBJ_HIDDEN);
@@ -835,7 +841,7 @@ void mnDiagram2_UpdateScrollArrows(HSD_GObj* gobj)
     }
 
     jobj = data->up_arrow;
-    mn_8022ED6C(jobj, &base->anim[1]);
+    mn_8022ED6C(jobj, &DIAGRAM2_ANIM(base)[1]);
     if (data->scroll_offset) {
         HSD_JObjClearFlagsAll(jobj, JOBJ_HIDDEN);
     } else {
@@ -843,7 +849,7 @@ void mnDiagram2_UpdateScrollArrows(HSD_GObj* gobj)
     }
 
     jobj = data->left_arrow;
-    mn_8022ED6C(jobj, &base->anim[1]);
+    mn_8022ED6C(jobj, &DIAGRAM2_ANIM(base)[1]);
     if (data->is_name_mode) {
         if (data->selected_name_idx) {
             HSD_JObjClearFlagsAll(jobj, JOBJ_HIDDEN);
@@ -859,7 +865,7 @@ void mnDiagram2_UpdateScrollArrows(HSD_GObj* gobj)
     }
 
     jobj = data->right_arrow;
-    mn_8022ED6C(jobj, &base->anim[1]);
+    mn_8022ED6C(jobj, &DIAGRAM2_ANIM(base)[1]);
     if (data->is_name_mode != 0) {
         if (data->selected_name_idx !=
             mnDiagram_GetNextNameIndex(data->selected_name_idx))

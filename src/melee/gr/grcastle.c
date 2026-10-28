@@ -776,12 +776,19 @@ void grCastle_801CE3AC(Ground_GObj* gobj)
     HSD_JObj* jobj;
     Ground* gp = GET_GROUND(gobj);
 
-    if (gp->u.castle5.xCC != NULL) {
+#ifdef TARGET_PS3
+    // grCastle_801CE578 stores this GObj as the u32 castle11.xCC; the 8-byte
+    // castle5.xCC would also take castle11.xD0.
+#define CS_XCC ((HSD_GObj*) (uintptr_t) gp->u.castle11.xCC)
+#else
+#define CS_XCC gp->u.castle5.xCC
+#endif
+    if (CS_XCC != NULL) {
         Quaternion rot;
         Vec3 pos;
         Vec3 offset;
 
-        jobj = HSD_GObjGetHSDObj(gp->u.castle5.xCC);
+        jobj = HSD_GObjGetHSDObj(CS_XCC);
         rot = grCs_803B7EB8;
 
         offset.z = 0.0f;
@@ -799,6 +806,7 @@ void grCastle_801CE3AC(Ground_GObj* gobj)
         HSD_JObjSetRotation(jobj, &rot);
     }
 }
+#undef CS_XCC
 
 void grCastle_801CE578(Ground_GObj* gobj)
 {

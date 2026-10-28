@@ -134,6 +134,10 @@ int it_80291DAC(Item_GObj* gobj, int arg1)
     } else {
         return level;
     }
+#ifdef TARGET_PS3
+    // The GameCube falls off here with gobj in r3, a negative s32.
+    return -1;
+#endif
 }
 
 void it_80291F14(Item_GObj* gobj, int charge_level)

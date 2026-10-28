@@ -13,10 +13,19 @@ struct ftKoopa_FighterVars {
 union ftKoopa_MotionVars {
     /// @todo Proper state name.
     struct ftKoopa_State1Vars {
+#ifdef TARGET_PS3
+        // Shares storage with specials (b_held, facing_dir); 64-bit
+        // pointers would move x4 and xC off specials.x4 and specials.xC.
+        s32 x0;
+        bool x4;
+        s32 x8;
+        bool xC;
+#else
         UNK_T x0;
         bool x4;
         UNK_T x8;
         bool xC;
+#endif
     } unk1;
     /// @todo Possibly #ftKoopa_State1Vars.
     struct ftKoopa_SpecialSVars {

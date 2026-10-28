@@ -16,6 +16,15 @@ typedef union {
     f32 f;
 } ByteCodeVal;
 
+#ifdef TARGET_PS3
+// ByteCodeVal reads a slot's first 4 bytes: here the high half of the 8-byte data, so words go there.
+#define BC_WORD(x) ((void*) ((uintptr_t) (u32) (x) << 32))
+#define BC_INT(data) (((ByteCodeVal*) &(data))->i)
+#else
+#define BC_WORD(x) ((void*) (x))
+#define BC_INT(data) ((int) (data))
+#endif
+
 float HSD_ByteCodeEval(u8* bytecode, const f32* args, s32 nb_args)
 {
     HSD_SList* stack;
@@ -48,7 +57,7 @@ float HSD_ByteCodeEval(u8* bytecode, const f32* args, s32 nb_args)
             case 2:
                 HSD_ASSERT(281, operand < nb_args);
                 stack = HSD_SListAllocAndPrepend(
-                    stack, (void*) ((ByteCodeVal*) &args[operand])->i);
+                    stack, BC_WORD(((ByteCodeVal*) &args[operand])->i));
                 break;
             case 5:
                 for (i = 0; i < operand; i++) {
@@ -72,7 +81,7 @@ float HSD_ByteCodeEval(u8* bytecode, const f32* args, s32 nb_args)
             }
             case 3:
                 HSD_ASSERT(307, stack);
-                if ((int) stack->data != 0) {
+                if (BC_INT(stack->data) != 0) {
                     bytecode += operand;
                 }
                 stack = HSD_SListRemove(stack);
@@ -81,7 +90,7 @@ float HSD_ByteCodeEval(u8* bytecode, const f32* args, s32 nb_args)
                 bytecode += operand;
                 break;
             case 6:
-                stack = HSD_SListAllocAndPrepend(stack, (void*) operand);
+                stack = HSD_SListAllocAndPrepend(stack, BC_WORD(operand));
                 break;
             case 0xFF:
                 HSD_Panic(__FILE__, 323, "not yet implemented.\n");
@@ -219,7 +228,11 @@ float HSD_ByteCodeEval(u8* bytecode, const f32* args, s32 nb_args)
             break;
         case 0x31:
             HSD_ASSERT(480, stack);
+#ifdef TARGET_PS3
+            stack->data = BC_WORD(!BC_INT(stack->data));
+#else
             stack->data = (void*) !(s32) stack->data;
+#endif
             break;
         case 0x17:
             HSD_ASSERT(501, stack);
@@ -501,21 +514,21 @@ float HSD_ByteCodeEval(u8* bytecode, const f32* args, s32 nb_args)
             HSD_ASSERT(678, stack->next);
             d1 = ((ByteCodeVal*) &stack->data)->i;
             stack = HSD_SListRemove(stack);
-            stack->data = (void*) (((ByteCodeVal*) &stack->data)->i & d1);
+            stack->data = BC_WORD(((ByteCodeVal*) &stack->data)->i & d1);
             break;
         case 0x3A:
             HSD_ASSERT(683, stack);
             HSD_ASSERT(683, stack->next);
             d1 = ((ByteCodeVal*) &stack->data)->i;
             stack = HSD_SListRemove(stack);
-            stack->data = (void*) (((ByteCodeVal*) &stack->data)->i | d1);
+            stack->data = BC_WORD(((ByteCodeVal*) &stack->data)->i | d1);
             break;
         case 0x3B:
             HSD_ASSERT(688, stack);
             HSD_ASSERT(688, stack->next);
             d1 = ((ByteCodeVal*) &stack->data)->i;
             stack = HSD_SListRemove(stack);
-            stack->data = (void*) (((ByteCodeVal*) &stack->data)->i ^ d1);
+            stack->data = BC_WORD(((ByteCodeVal*) &stack->data)->i ^ d1);
             break;
         case 0x27:
             HSD_ASSERT(694, stack);

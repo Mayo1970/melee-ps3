@@ -150,7 +150,12 @@ union ftYoshi_MotionVars {
         /* fp+2350 */ f32 x10;
         /* fp+2354 */ f32 x14;
         /* fp+2358 */ f32 x18;
+#ifdef TARGET_PS3
+        // x20 and x24 clear mv.co.guard's; a 64-bit x1C would move them.
+        /* fp+235C */ s32 x1C;
+#else
         /* fp+235C */ UNK_T x1C;
+#endif
         /* fp+2360 */ int x20;
         /* fp+2364 */ int x24;
     } guard;

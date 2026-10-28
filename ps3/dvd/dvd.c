@@ -1,5 +1,5 @@
 // The SDK's DVD functions over a disc image or an extracted disc on the HDD or a USB drive.
-// A read happens in the call; its callback waits for ps3_dvd_dispatch, as it waited for the DVD interrupt.
+// A read thread does async reads; the callback waits for ps3_dvd_dispatch, as it waited for the DVD interrupt.
 #include "dvd.h"
 
 #include <dirent.h>
@@ -68,6 +68,17 @@ static struct {
 } pending[MAX_PENDING];
 static u32 pending_head, pending_tail;
 static void (*notify)(void);
+
+// Async reads for the read thread. Read in the call, a callback chain kept the interrupt lock for a whole file.
+static struct {
+    DVDFileInfo* file;
+    void* addr;
+    s32 length, offset;
+    DVDCallback callback;
+} requests[MAX_PENDING];
+static u32 req_head, req_tail;
+static PsMutex req_lock = PS_MUTEX_INIT;
+static PsCond req_cond = PS_COND_INIT;
 
 static u32 be32(const u8* p)
 {
@@ -538,7 +549,6 @@ static BOOL post(DVDFileInfo* file, DVDCallback callback, s32 result)
 
     if (pending_tail - pending_head == MAX_PENDING) {
         OSRestoreInterrupts(enabled);
-        OSReport("dvd: %d reads wait for dispatch; one more is refused\n", MAX_PENDING);
         return FALSE;
     }
     pending[pending_tail % MAX_PENDING].file = file;
@@ -558,12 +568,67 @@ static void raise_dvd(void)
     ps3_intr_raise(PS3_INTR_DVD);
 }
 
+static bool read_file(DVDFileInfo* file, void* addr, s32 length, s32 offset)
+{
+    bool ok = disc.source != SRC_NONE && length >= 0 && offset >= 0 && (u32) offset <= file->length;
+
+    if (ok) {
+        ps_mutex_lock(&io_lock);
+        ok = disc.source == SRC_FOLDER ? folder_read(file->startAddr, (u32) offset, addr, (u32) length)
+                                       : image_read((u64) file->startAddr + (u32) offset, addr, (u32) length);
+        ps_mutex_unlock(&io_lock);
+    }
+    if (!ok) {
+        OSReport("dvd: reading %d bytes at %d failed\n", length, offset);
+    }
+    return ok;
+}
+
+// Reads in request order, so the callbacks keep that order too.
+static void reader_main(void* arg)
+{
+    for (;;) {
+        DVDFileInfo* file;
+        void* addr;
+        s32 length, offset, result;
+        DVDCallback callback;
+
+        ps_mutex_lock(&req_lock);
+        while (req_head == req_tail) {
+            ps_cond_wait(&req_cond, &req_lock);
+        }
+        file = requests[req_head % MAX_PENDING].file;
+        addr = requests[req_head % MAX_PENDING].addr;
+        length = requests[req_head % MAX_PENDING].length;
+        offset = requests[req_head % MAX_PENDING].offset;
+        callback = requests[req_head % MAX_PENDING].callback;
+        ps_mutex_unlock(&req_lock);
+        result = read_file(file, addr, length, offset) ? length : DVD_RESULT_FATAL_ERROR;
+        // Full only while interrupts stay off: wait for the dispatch to make room.
+        while (!post(file, callback, result)) {
+            ps_mutex_lock(&req_lock);
+            ps_cond_timedwait(&req_cond, &req_lock, 1000);
+            ps_mutex_unlock(&req_lock);
+        }
+        ps_mutex_lock(&req_lock);
+        req_head++;
+        ps_cond_broadcast(&req_cond);
+        ps_mutex_unlock(&req_lock);
+    }
+}
+
 void DVDInit(void)
 {
+    static bool started;
+
     ps3_intr_set_handler(PS3_INTR_DVD, ps3_dvd_dispatch);
     ps3_dvd_set_notify(raise_dvd);
     if (disc.source == SRC_NONE) {
         ps3_dvd_mount_default();
+    }
+    if (!started) {
+        started = true;
+        ps_thread_start(reader_main, NULL, "DVD");
     }
 }
 
@@ -644,25 +709,25 @@ BOOL DVDClose(DVDFileInfo* fileInfo)
 BOOL DVDReadAsyncPrio(DVDFileInfo* fileInfo, void* addr, s32 length, s32 offset,
                       DVDCallback callback, s32 prio)
 {
-    bool ok = disc.source != SRC_NONE && length >= 0 && offset >= 0 &&
-              (u32) offset <= fileInfo->length;
-
     ps3_diag.dvd_reads++;
-    if (ok) {
-        ps_mutex_lock(&io_lock);
-        ok = disc.source == SRC_FOLDER
-                 ? folder_read(fileInfo->startAddr, (u32) offset, addr, (u32) length)
-                 : image_read((u64) fileInfo->startAddr + (u32) offset, addr, (u32) length);
-        ps_mutex_unlock(&io_lock);
-    }
-    if (!ok) {
-        OSReport("dvd: reading %d bytes at %d failed\n", length, offset);
-    }
     fileInfo->callback = callback;
     if (callback == NULL) {
-        return ok;
+        return read_file(fileInfo, addr, length, offset);
     }
-    return post(fileInfo, callback, ok ? length : DVD_RESULT_FATAL_ERROR);
+    ps_mutex_lock(&req_lock);
+    while (req_tail - req_head == MAX_PENDING) {
+        ps_cond_wait(&req_cond, &req_lock);
+    }
+    requests[req_tail % MAX_PENDING].file = fileInfo;
+    requests[req_tail % MAX_PENDING].addr = addr;
+    requests[req_tail % MAX_PENDING].length = length;
+    requests[req_tail % MAX_PENDING].offset = offset;
+    requests[req_tail % MAX_PENDING].callback = callback;
+    req_tail++;
+    fileInfo->cb.state = DVD_STATE_BUSY;
+    ps_cond_broadcast(&req_cond);
+    ps_mutex_unlock(&req_lock);
+    return TRUE;
 }
 
 DVDDiskID* DVDGetCurrentDiskID(void)

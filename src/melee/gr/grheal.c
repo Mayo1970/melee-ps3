@@ -240,7 +240,12 @@ void stageGObj1_OnInit(Ground_GObj* gobj)
         }
 
         for (next_count = 0; next_count < gm_80473A18._94[1]; next_count++) {
+#ifdef TARGET_PS3
+            // gmallstar.c writes them to x96; _94[2..] past its bound lets GCC drop the loop.
+            next_players[next_count] = gm_80473A18.x96[next_count];
+#else
             next_players[next_count] = gm_80473A18._94[next_count + 2];
+#endif
         }
 
         next_jobjs[0] = Ground_801C3FA4(gobj, 58);

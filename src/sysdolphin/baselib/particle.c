@@ -23,6 +23,10 @@ typedef struct {
 
 #include <math.h>
 #include <string.h>
+#ifdef TARGET_PS3
+#include <stddef.h>
+#include <stdlib.h>
+#endif
 
 #include "gobjobject.h"
 #include "mtx.h"
@@ -119,8 +123,209 @@ void hsd_803983A4(HSD_Generator* gen)
     }
 }
 
+#ifdef TARGET_PS3
+// A bank is 32-bit words and self-relative offsets, which the GameCube turns
+// into 32-bit pointers in place. Here they stay words (addresses below 4 GB).
+#define PS3_WORD_PTR(w) ((void*) (uintptr_t) (u32) (w))
+
+// Load gives each bank native copies of its pointer tables and texture and
+// form groups; the next Load into the bank frees them.
+static void* ps3_bank_natives[65];
+
+static void ps3_bank_locate(int* cmdBank, int* texBank, int* formBank)
+{
+    u32 base = (u32) (uintptr_t) cmdBank;
+    u32* table;
+    s32 num, num2, i;
+
+    switch (*(u16*) cmdBank) {
+    case 0:
+        num = 0;
+        num2 = cmdBank[1];
+        table = (u32*) cmdBank + 2;
+        for (i = 0; i < num2; i++) {
+            table[i] += base;
+        }
+        break;
+    case 0x40:
+    case 0x41:
+    case 0x42:
+    case 0x43:
+        num = cmdBank[1];
+        num2 = cmdBank[2] + num;
+        table = (u32*) cmdBank + 3 - num;
+        for (i = 0; i < cmdBank[2]; i++) {
+            if (cmdBank[3 + i] != 0) {
+                cmdBank[3 + i] += base;
+            }
+        }
+        break;
+    default:
+        return;
+    }
+    for (i = num; i < num2; i++) {
+        s32* cmd = PS3_WORD_PTR(table[i]);
+        if (cmd != NULL) {
+            cmd[2] = (cmd[2] & 0xF1FFFFFF) | 0x08000000;
+        }
+    }
+
+    base = (u32) (uintptr_t) texBank;
+    for (i = 1; i <= texBank[0]; i++) {
+        u32* tg;
+        u32 n, k;
+
+        if (texBank[i] == 0) {
+            continue;
+        }
+        texBank[i] += base;
+        tg = PS3_WORD_PTR(texBank[i]);
+        n = tg[0];
+        // The texture words, then palette words for the TLUT formats.
+        if (tg[1] == 8 || tg[1] - 9 <= 1) {
+            u16 palnum = ((u16*) tg)[10], palflag = ((u16*) tg)[11];
+            n += (palflag & 1) ? 1 : palnum != 0 ? palnum : tg[0];
+        }
+        for (k = 0; k < n; k++) {
+            if (tg[6 + k] != 0) {
+                tg[6 + k] += base;
+            }
+        }
+    }
+
+    if (formBank != NULL) {
+        base = (u32) (uintptr_t) formBank;
+        for (i = 1; i <= texBank[0]; i++) {
+            u32* fg;
+            u32 k;
+
+            if (formBank[i] == 0) {
+                continue;
+            }
+            formBank[i] += base;
+            fg = PS3_WORD_PTR(formBank[i]);
+            for (k = 0; k < fg[0]; k++) {
+                if (fg[1 + k] != 0) {
+                    fg[1 + k] += base;
+                }
+            }
+        }
+    }
+}
+
+// The texture words of a group, as ps3_bank_locate relocated them.
+static u32 ps3_tex_words(const u32* tg)
+{
+    u32 n = tg[0];
+
+    if (tg[1] == 8 || tg[1] - 9 <= 1) {
+        u16 palnum = ((const u16*) tg)[10], palflag = ((const u16*) tg)[11];
+        n += (palflag & 1) ? 1 : palnum != 0 ? palnum : tg[0];
+    }
+    return n;
+}
+
+static void ps3_bank_load(int bank, const int* cmdBank, const int* texBank,
+                          const u32* ref, const int* formBank)
+{
+    s32 groups = texBank[0], count = 0, n, i;
+    const u32* table;
+    size_t size;
+    u8* mem;
+
+    switch (*(u16*) cmdBank) {
+    case 0:
+        n = cmdBank[1];
+        table = (const u32*) cmdBank + 2;
+        break;
+    case 0x40:
+    case 0x41:
+    case 0x42:
+    case 0x43:
+        count = cmdBank[1];
+        n = cmdBank[2] + count;
+        table = (const u32*) cmdBank + 3 - count;
+        break;
+    default:
+        OSPanic(__FILE__, 207, "psInitDataBanks: unknown version\n");
+        return;
+    }
+    if (formBank != NULL && *formBank != *texBank) {
+        OSPanic(__FILE__, 177,
+                "illigal form data (strange number of group)\n");
+    }
+
+    size = sizeof(void*) * (size_t) (n + 2 * groups);
+    for (i = 1; i <= groups; i++) {
+        const u32* tg = PS3_WORD_PTR(texBank[i]);
+        const u32* fg = formBank != NULL ? PS3_WORD_PTR(formBank[i]) : NULL;
+
+        if (tg != NULL) {
+            size += offsetof(HSD_PSTexGroup, texTable) +
+                    sizeof(u8*) * ps3_tex_words(tg);
+        }
+        if (fg != NULL) {
+            size += offsetof(HSD_PSFormGroup, formTable) + sizeof(u8*) * fg[0];
+        }
+    }
+    free(ps3_bank_natives[bank]);
+    mem = ps3_bank_natives[bank] = calloc(1, size);
+    if (mem == NULL) {
+        OSPanic(__FILE__, __LINE__, "no memory for particle bank %d\n", bank);
+    }
+
+    hsd_804D0948[bank] = (u32*) ref;
+    psFormGroupArray[bank] = groups;
+    psNumCmdList[bank] = n;
+    ptclref_804D0E5C[bank] = (HSD_PSCmdList**) mem;
+    // The first count entries (version 0x4x) lie before the table, in the
+    // header; the GameCube reads them as pointers. NULL here.
+    for (i = 0; i < n; i++) {
+        ptclref_804D0E5C[bank][i] =
+            i >= count ? PS3_WORD_PTR(table[i]) : NULL;
+    }
+    mem += sizeof(void*) * (size_t) n;
+    psTexGroupArray[bank] = (HSD_PSTexGroup**) mem;
+    mem += sizeof(void*) * (size_t) groups;
+    psCmdListArray[bank] = formBank != NULL ? (HSD_PSFormGroup**) mem : NULL;
+    mem += sizeof(void*) * (size_t) groups;
+    for (i = 1; i <= groups; i++) {
+        const u32* tg = PS3_WORD_PTR(texBank[i]);
+        const u32* fg = formBank != NULL ? PS3_WORD_PTR(formBank[i]) : NULL;
+        u32 k;
+
+        if (tg != NULL) {
+            HSD_PSTexGroup* t = (HSD_PSTexGroup*) mem;
+            u32 words = ps3_tex_words(tg);
+
+            memcpy(t, tg, offsetof(HSD_PSTexGroup, texTable));
+            for (k = 0; k < words; k++) {
+                t->texTable[k] = PS3_WORD_PTR(tg[6 + k]);
+            }
+            psTexGroupArray[bank][i - 1] = t;
+            mem += offsetof(HSD_PSTexGroup, texTable) + sizeof(u8*) * words;
+        }
+        if (fg != NULL) {
+            HSD_PSFormGroup* f = (HSD_PSFormGroup*) mem;
+
+            f->num = fg[0];
+            for (k = 0; k < fg[0]; k++) {
+                f->formTable[k] = PS3_WORD_PTR(fg[1 + k]);
+            }
+            psCmdListArray[bank][i - 1] = f;
+            mem += offsetof(HSD_PSFormGroup, formTable) + sizeof(u8*) * fg[0];
+        }
+    }
+}
+#endif
+
 void psInitDataBankLoad(int bank, const int* cmdBank, const int* texBank,
                         const u32* ref, const int* formBank)
+#ifdef TARGET_PS3
+{
+    ps3_bank_load(bank, cmdBank, texBank, ref, formBank);
+}
+#else
 {
     u16 version;
 
@@ -160,8 +365,14 @@ void psInitDataBankLoad(int bank, const int* cmdBank, const int* texBank,
         OSPanic(__FILE__, 207, "psInitDataBanks: unknown version\n");
     }
 }
+#endif
 
 void psInitDataBankLocate(int* cmdBank, int* texBank, int* formBank)
+#ifdef TARGET_PS3
+{
+    ps3_bank_locate(cmdBank, texBank, formBank);
+}
+#else
 {
     s32 num;
     s32* ptr;
@@ -315,6 +526,8 @@ void psInitDataBankLocate(int* cmdBank, int* texBank, int* formBank)
         }
     }
 }
+
+#endif
 
 void psInitDataBank(int bank, int* cmdBank, int* texBank, u32* ref,
                     int* formBank)
@@ -3021,7 +3234,18 @@ typedef struct {
 
 void hsd_8039D0A0(HSD_Generator* gen)
 {
+#ifdef TARGET_PS3
+    // The GameCube reaches hsd_804D0908 and hsd_804D0F60 by their DOL offsets
+    // from psPointJObj (ParticleData); the statics lie apart here.
+#define PD_JOBJ psPointJObj
+#define PD_PARTICLE hsd_804D0908
+#define PD_ALLOC hsd_804D0F60.alloc_data
+#else
     ParticleData* data = (ParticleData*) psPointJObj;
+#define PD_JOBJ data->jobj
+#define PD_PARTICLE data->particle
+#define PD_ALLOC data->alloc_data
+#endif
     HSD_Particle* prev;
     HSD_Particle* prt;
     HSD_Particle* next;
@@ -3030,7 +3254,7 @@ void hsd_8039D0A0(HSD_Generator* gen)
 
     prev = NULL;
     idnum = gen->idnum;
-    head = &data->particle[gen->linkNo];
+    head = &PD_PARTICLE[gen->linkNo];
     prt = *head;
 
     while (prt != NULL) {
@@ -3058,13 +3282,13 @@ void hsd_8039D0A0(HSD_Generator* gen)
 
             if (prt->kind & 0x8000) {
                 s32 jidx = (prt->kind >> 12) & 7;
-                if (data->jobj[jidx] != NULL) {
-                    HSD_JObjUnref(data->jobj[jidx]);
-                    data->jobj[jidx] = NULL;
+                if (PD_JOBJ[jidx] != NULL) {
+                    HSD_JObjUnref(PD_JOBJ[jidx]);
+                    PD_JOBJ[jidx] = NULL;
                 }
             }
 
-            HSD_ObjFree(&data->alloc_data, prt);
+            HSD_ObjFree(&PD_ALLOC, prt);
             numActiveParticles--;
         } else {
             prev = prt;
@@ -3072,3 +3296,6 @@ void hsd_8039D0A0(HSD_Generator* gen)
         prt = next;
     }
 }
+#undef PD_JOBJ
+#undef PD_PARTICLE
+#undef PD_ALLOC

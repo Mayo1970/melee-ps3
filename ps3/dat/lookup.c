@@ -1,5 +1,5 @@
-// Untyped archive lookups as typed ones (linked with -Wl,--wrap=HSD_ArchiveGetPublicAddress). Upstream's adapter
-// answers them with the serialized bytes; the lbArchive loaders use them, and with LP64 they need native objects.
+// Untyped archive lookups as typed ones (-Wl,--wrap=HSD_ArchiveGetPublicAddress). Upstream's adapter answers
+// them with the serialized bytes; the lbArchive loaders use them, and with LP64 they need native objects.
 #include <stdlib.h>
 #include <string.h>
 
@@ -7,6 +7,9 @@
 #include <dat/reader-internal.h>
 #include <dolphin/os.h>
 #include <sysdolphin/baselib/archive.h>
+
+#include "../os/sync.h"
+#include "pool.h"
 
 void* __real_HSD_ArchiveGetPublicAddress(HSD_Archive* archive, const char* name);
 
@@ -174,4 +177,113 @@ void* ps3_dat_element(HSD_Archive* archive, const void* native, const char* type
     }
     OSReport("dat: element %d of %s %p: not an object of the archive\n", index, type_name, native);
     return NULL;
+}
+
+// Each parsed archive's buffer and native data, newest last. The GameCube parses in place and the game reuses
+// buffers without a release (fighter motions), so a parse frees the native data of the archives it overlaps.
+#define MAX_SPANS 1024
+
+typedef struct Span {
+    uintptr_t start, end;
+    // The native reader's copy of the archive's data, which holds the scripts.
+    u8* data;
+    u32 data_size;
+    DatArchive* native;
+    void* infos[3];
+} Span;
+
+static Span spans[MAX_SPANS];
+static unsigned nspans;
+static PsMutex spans_lock = PS_MUTEX_INIT;
+
+static void release(const Span* sp)
+{
+    unsigned i;
+
+    dat_close(sp->native);
+    for (i = 0; i < 3; i++) {
+        free(sp->infos[i]);
+    }
+}
+
+s32 __real_HSD_ArchiveParse(HSD_Archive* archive, u8* src, size_t size);
+void __real_HSD_ArchiveReleaseNative(HSD_Archive* archive);
+
+s32 __wrap_HSD_ArchiveParse(HSD_Archive* archive, u8* src, size_t size)
+{
+    uintptr_t start = (uintptr_t) src, end = start + size;
+    unsigned i, k = 0;
+    s32 r;
+
+    ps_mutex_lock(&spans_lock);
+    for (i = 0; i < nspans; i++) {
+        if (spans[i].end <= start || spans[i].start >= end) {
+            spans[k++] = spans[i];
+        } else {
+            release(&spans[i]);
+        }
+    }
+    nspans = k;
+    ps_mutex_unlock(&spans_lock);
+    // Step 3 diagnostics, as the line below.
+    OSReport("dat: parse %p, %u bytes\n", src, (u32) size);
+    r = __real_HSD_ArchiveParse(archive, src, size);
+    {
+        size_t now, most;
+
+        ps3_dat_pool_usage(&now, &most);
+        OSReport("dat: parse %p -> %d; pool %u KB, at most %u KB\n", src, r, (u32) (now >> 10), (u32) (most >> 10));
+    }
+    if (r == 0) {
+        const DatArchiveData* raw = archive->native_data->archive;
+        Span sp = { start, end, raw->data, raw->size, archive->native_data,
+                    { archive->reloc_info, archive->public_info, archive->extern_info } };
+
+        ps_mutex_lock(&spans_lock);
+        // The oldest one is no longer tracked, and not freed: it may still be in use.
+        if (nspans == MAX_SPANS) {
+            memmove(&spans[0], &spans[1], sizeof(spans[0]) * --nspans);
+        }
+        spans[nspans++] = sp;
+        ps_mutex_unlock(&spans_lock);
+    }
+    return r;
+}
+
+void __wrap_HSD_ArchiveReleaseNative(HSD_Archive* archive)
+{
+    unsigned i;
+
+    if (archive != NULL && archive->native_data != NULL) {
+        ps_mutex_lock(&spans_lock);
+        for (i = 0; i < nspans; i++) {
+            if (spans[i].native == archive->native_data) {
+                memmove(&spans[i], &spans[i + 1], sizeof(spans[0]) * (nspans - i - 1));
+                nspans--;
+                break;
+            }
+        }
+        ps_mutex_unlock(&spans_lock);
+    }
+    __real_HSD_ArchiveReleaseNative(archive);
+}
+
+void* ps3_dat_script(const void* at, u32 offset)
+{
+    uintptr_t p = (uintptr_t) at;
+    void* target = NULL;
+    unsigned i;
+
+    ps_mutex_lock(&spans_lock);
+    for (i = nspans; i-- > 0;) {
+        if (p - (uintptr_t) spans[i].data < spans[i].data_size) {
+            target = spans[i].data + offset;
+            break;
+        }
+    }
+    ps_mutex_unlock(&spans_lock);
+    if (target == NULL) {
+        OSPanic(__FILE__, __LINE__, "script pointer at %p is in no archive\n", at);
+    }
+    return target;
 }

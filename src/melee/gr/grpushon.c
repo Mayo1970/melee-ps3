@@ -671,7 +671,12 @@ s32 fn_802192A4(void* arg0, HSD_GObj* gobj, s32* result)
             (scale * (-50.0f + grPushOn_803E7CCC[i * 3 + 2]) < sp14.y) &&
             (scale * grPushOn_803E7CCC[i * 3 + 2] > sp14.y))
         {
+#ifdef TARGET_PS3
+            // result is ftColl_8007BAC0's desc pointer: store all 8 bytes.
+            *(void**) result = yakumono_param->x0;
+#else
             *result = (s32) yakumono_param->x0;
+#endif
             return 1;
         }
     }

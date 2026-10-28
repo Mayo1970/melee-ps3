@@ -27,7 +27,12 @@ void hsd_803B3398(void* src, size_t size)
 
     if ((u32) temp_r3 < (u32) hsd_804D79A4 + (u32) hsd_804D79A8 - size) {
         memcpy(temp_r3, src, size);
+#ifdef TARGET_PS3
+        // The GameCube adds to the 32-bit pointer as a word; here that is the high half.
+        hsd_804D79A0 += size;
+#else
         *((u32*) &hsd_804D79A0) += size;
+#endif
         return;
     }
 

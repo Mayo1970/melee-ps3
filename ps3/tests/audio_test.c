@@ -1,5 +1,5 @@
-// Host test: the SDK's AX library over ps3/audio, the audio program on a thread. Tones in turn: PCM16 left,
-// PCM8 through the rate converter right, ADPCM, PCM16 through AUX A; each checked for side, pitch, level.
+// Host test: the SDK's AX library over ps3/audio, the audio program on a thread. Tones in turn: PCM16 left, PCM8
+// through the rate converter right, ADPCM, PCM16 through AUX A (side, pitch, level), then AUX A with each AXFX effect.
 #include <math.h>
 #include <signal.h>
 #include <stdarg.h>
@@ -13,6 +13,7 @@
 #include <dolphin/ai.h>
 #include <dolphin/ar.h>
 #include <dolphin/ax.h>
+#include <dolphin/axfx.h>
 #include <dolphin/os.h>
 
 #include "../os/intr.h"
@@ -27,6 +28,12 @@ void ps3_audio_stats(u32* frames, u32* ticks, u32* silent_ticks, u32* bad_comman
 #define GAP_FRAMES 30
 #define SEGMENTS 4
 #define TIMEOUT_SECONDS 600
+#define FX_COUNT 4
+#define FX_TONE_FRAMES 100
+#define FX_PERIOD 200
+#define FX_START (GAP_FRAMES + SEGMENTS * (TONE_FRAMES + GAP_FRAMES))
+#define FX_TAIL_MIN 16 // an output peak above this, with no input, is a tail frame
+#define AUX_SAMPLES 160 // per AUX channel and AX frame
 
 void OSReport(char* fmt, ...)
 {
@@ -47,12 +54,28 @@ void DCFlushRange(void* addr, u32 nBytes) {}
 void DCFlushRangeNoSync(void* addr, u32 nBytes) {}
 void DCInvalidateRange(void* addr, u32 nBytes) {}
 
+// AXFX's own allocator, which AXFXSetHooks replaces as axdriver.c does.
+volatile OSHeapHandle __OSCurrHeap = -1;
+
+void* OSAllocFromHeap(int heap, unsigned long size)
+{
+    fprintf(stderr, "AXFX allocated %lu bytes without the hooks\n", size);
+    abort();
+}
+
+void OSFreeToHeap(int heap, void* ptr)
+{
+    fprintf(stderr, "AXFX freed without the hooks\n");
+    abort();
+}
+
 static u8 pcm16[1600 * 2] __attribute__((aligned(32)));
 static u8 pcm8[1600] __attribute__((aligned(32)));
 static u8 adpcm[256] __attribute__((aligned(32)));
 static u8 aux_pcm16[1600 * 2] __attribute__((aligned(32)));
 static u32 ar_stack[16];
 static AXVPB* voices[SEGMENTS];
+static AXVPB* fx_voices[FX_COUNT];
 static volatile int frame;
 
 static const struct {
@@ -157,8 +180,129 @@ static AXVPB* make_voice(u16 format, u32 start, u32 end, u32 ratio, u16 l, u16 r
     return v;
 }
 
-// AUX A returns its input untouched, two frames later.
-static void aux_passthrough(void* data, void* context) {}
+static struct AXFX_REVERBHI fx_hi;
+static struct AXFX_REVERBSTD fx_std;
+static struct AXFX_CHORUS fx_chorus;
+static struct AXFX_DELAY fx_delay;
+static int fx_allocs, fx_frees;
+// The effect on AUX A, or -1 to return its input untouched, two frames later.
+static volatile int fx_current = -1;
+
+// What each effect got and gave on AUX A.
+static struct {
+    const char* name;
+    int tail_wanted;
+    int frames, tone_frames, tail_frames;
+    int layout_errors; // input surround not zero, or left not equal to right
+    int saturated;     // outputs at INT_MIN or INT_MAX, as a NaN or an overflow gives
+    s64 in_peak, out_peak;
+} fx[FX_COUNT] = { { "reverb_hi", 1 }, { "reverb_std", 1 }, { "chorus", 0 }, { "delay", 1 } };
+
+static void* fx_alloc(unsigned long size)
+{
+    fx_allocs++;
+    return calloc(1, size);
+}
+
+static void fx_free(void* ptr)
+{
+    fx_frees++;
+    free(ptr);
+}
+
+// The game's parameters (axdriver.c, lbaudio_ax.c); the chorus varies its delay, so both resamplers run.
+static int fx_init(void)
+{
+    AXFXSetHooks(fx_alloc, fx_free);
+    fx_hi.time = 3.0f;
+    fx_hi.preDelay = 0.1f;
+    fx_hi.damping = 0.5f;
+    fx_hi.coloration = 0.5f;
+    fx_hi.crosstalk = 0.3f;
+    fx_hi.mix = 0.5f;
+    fx_std.time = 1.88f;
+    fx_std.preDelay = 0.002f;
+    fx_std.damping = 0.64f;
+    fx_std.coloration = 0.5f;
+    fx_std.mix = 1.0f;
+    fx_chorus.baseDelay = 15;
+    fx_chorus.variation = 4;
+    fx_chorus.period = 500;
+    fx_delay.delay[0] = 260;
+    fx_delay.delay[1] = 310;
+    fx_delay.delay[2] = 6;
+    fx_delay.feedback[0] = fx_delay.feedback[1] = 24;
+    fx_delay.output[0] = fx_delay.output[1] = 35;
+    return AXFXReverbHiInit(&fx_hi) == 1 && AXFXReverbStdInit(&fx_std) == 1 &&
+           AXFXChorusInit(&fx_chorus) == 1 && AXFXDelayInit(&fx_delay) == 1;
+}
+
+static s64 peak(const s32* x)
+{
+    s64 p = 0;
+    int i;
+    for (i = 0; i < AUX_SAMPLES; i++) {
+        s64 v = x[i] < 0 ? -(s64) x[i] : x[i];
+        p = v > p ? v : p;
+    }
+    return p;
+}
+
+static s64 max64(s64 a, s64 b)
+{
+    return a > b ? a : b;
+}
+
+static int saturated(const s32* x)
+{
+    int n = 0;
+    int i;
+    for (i = 0; i < AUX_SAMPLES; i++) {
+        n += x[i] == 0x7FFFFFFF || x[i] == -0x7FFFFFFF - 1;
+    }
+    return n;
+}
+
+static void aux_callback(void* data, void* context)
+{
+    struct AXFX_BUFFERUPDATE* b = data;
+    int e = fx_current;
+    s64 in_peak;
+    s64 out_peak;
+    int i;
+
+    if (e < 0) {
+        return;
+    }
+    for (i = 0; i < AUX_SAMPLES; i++) {
+        fx[e].layout_errors += b->left[i] != b->right[i] || b->surround[i] != 0;
+    }
+    in_peak = peak(b->left);
+    switch (e) {
+    case 0:
+        AXFXReverbHiCallback(b, &fx_hi);
+        break;
+    case 1:
+        AXFXReverbStdCallback(b, &fx_std);
+        break;
+    case 2:
+        AXFXChorusCallback(b, &fx_chorus);
+        break;
+    case 3:
+        AXFXDelayCallback(b, &fx_delay);
+        break;
+    }
+    out_peak = max64(peak(b->left), max64(peak(b->right), peak(b->surround)));
+    fx[e].saturated += saturated(b->left) + saturated(b->right) + saturated(b->surround);
+    fx[e].frames++;
+    if (in_peak != 0) {
+        fx[e].tone_frames++;
+    } else if (fx[e].tone_frames != 0 && out_peak > FX_TAIL_MIN) {
+        fx[e].tail_frames++;
+    }
+    fx[e].in_peak = max64(fx[e].in_peak, in_peak);
+    fx[e].out_peak = max64(fx[e].out_peak, out_peak);
+}
 
 static void on_frame(void)
 {
@@ -171,6 +315,15 @@ static void on_frame(void)
             AXSetVoiceState(voices[seg], 1);
         } else if (at == TONE_FRAMES) {
             AXSetVoiceState(voices[seg], 0);
+        }
+    }
+    if (f >= FX_START && (f - FX_START) / FX_PERIOD < FX_COUNT) {
+        int e = (f - FX_START) / FX_PERIOD;
+        if ((f - FX_START) % FX_PERIOD == 0) {
+            fx_current = e;
+            AXSetVoiceState(fx_voices[e], 1);
+        } else if ((f - FX_START) % FX_PERIOD == FX_TONE_FRAMES) {
+            AXSetVoiceState(fx_voices[e], 0);
         }
     }
 }
@@ -214,7 +367,8 @@ int main(void)
 {
     AXPBADPCM info;
     AXPBADPCMLOOP loop;
-    u32 needed = (u32) ((GAP_FRAMES + SEGMENTS * (TONE_FRAMES + GAP_FRAMES)) * 240.0);
+    u32 tones_end = (u32) ((GAP_FRAMES + SEGMENTS * (TONE_FRAMES + GAP_FRAMES)) * 240.0);
+    u32 needed = (FX_START + FX_COUNT * FX_PERIOD + 10) * 240;
     Span spans[16];
     int nspans = 0;
     int failures = 0;
@@ -223,6 +377,8 @@ int main(void)
     int callbacks;
     u32 i;
     int s;
+    int e;
+    int old;
     struct sigaction sa;
 
     memset(&sa, 0, sizeof(sa));
@@ -260,8 +416,15 @@ int main(void)
         AXSetVoiceAdpcm(voices[2], &info);
         AXSetVoiceAdpcmLoop(voices[2], &loop);
         voices[3] = make_voice(0x0A, aa, aa + 1599, 0x10000, 0, 0, VOLUME);
+        for (e = 0; e < FX_COUNT; e++) {
+            fx_voices[e] = make_voice(0x0A, aa, aa + 1599, 0x10000, 0, 0, VOLUME);
+        }
     }
-    AXRegisterAuxACallback(aux_passthrough, NULL);
+    if (!fx_init()) {
+        fprintf(stderr, "an AXFX effect failed to start\n");
+        return 1;
+    }
+    AXRegisterAuxACallback(aux_callback, NULL);
     AXRegisterCallback(on_frame);
 
     while (host_captured < needed) {
@@ -274,9 +437,12 @@ int main(void)
     // Both counts at one moment: the program keeps running while the test checks.
     callbacks = frame;
     ps3_audio_stats(&frames, &ticks, &silent, &bad);
+    old = OSDisableInterrupts();
+    AXRegisterAuxACallback(NULL, NULL);
+    OSRestoreInterrupts(old);
 
     // Tones, as runs of frames where either side is above -40 dB.
-    for (i = 0; i < host_captured && nspans < 16; i++) {
+    for (i = 0; i < tones_end && i < host_captured && nspans < 16; i++) {
         int on = fabsf(host_capture[2 * i]) > 0.01f || fabsf(host_capture[2 * i + 1]) > 0.01f;
         if (on && (nspans == 0 || spans[nspans - 1].end + 480 < i)) {
             spans[nspans].start = i;
@@ -307,6 +473,42 @@ int main(void)
             failures += !ok;
         }
     }
+    for (e = 0; e < FX_COUNT; e++) {
+        // On AUX A: the input's layout (left equals right, no surround), saturation, range and tail.
+        int ok = fx[e].layout_errors == 0 && fx[e].saturated == 0 && fx[e].out_peak > 0 &&
+                 fx[e].out_peak <= 4 * fx[e].in_peak && abs(fx[e].tone_frames - FX_TONE_FRAMES) <= 2 &&
+                 (fx[e].tail_wanted ? fx[e].tail_frames >= 20 : fx[e].tail_frames <= 5);
+        printf("%s: %d frames, %d with input, %d of tail after it; input peak %lld, output peak %lld; "
+               "layout errors %d, saturated %d%s\n",
+               fx[e].name, fx[e].frames, fx[e].tone_frames, fx[e].tail_frames, (long long) fx[e].in_peak,
+               (long long) fx[e].out_peak, fx[e].layout_errors, fx[e].saturated, ok ? "" : "  FAIL");
+        failures += !ok;
+    }
+    // In the output: the effect's return starts two frames after a direct tone would (tone 0 at GAP_FRAMES).
+    for (e = 0; e < FX_COUNT && nspans != 0; e++) {
+        u32 at = spans[0].start + (u32) (FX_START + e * FX_PERIOD - GAP_FRAMES + 2) * 240;
+        u32 bad_samples = 0;
+        int c;
+        for (i = at; i < at + FX_PERIOD * 240; i++) {
+            bad_samples += !isfinite(host_capture[2 * i]) || !isfinite(host_capture[2 * i + 1]) ||
+                           fabsf(host_capture[2 * i]) > 0.999f || fabsf(host_capture[2 * i + 1]) > 0.999f;
+        }
+        for (c = 0; c < 2; c++) {
+            double tone_lv = level(host_capture + 2 * (at + 10 * 240) + c, 85 * 240);
+            double tail_lv = level(host_capture + 2 * (at + 105 * 240) + c, 45 * 240);
+            int ok = bad_samples == 0 && tone_lv > 0.01 && (fx[e].tail_wanted ? tail_lv > 0.001 : tail_lv < 0.001);
+            printf("%s %s: level %.4f with the tone, %.4f after it; %u samples not finite or clipped%s\n",
+                   fx[e].name, c == 0 ? "L" : "R", tone_lv, tail_lv, bad_samples, ok ? "" : "  FAIL");
+            failures += !ok;
+        }
+    }
+    AXFXReverbHiShutdown(&fx_hi);
+    AXFXReverbStdShutdown(&fx_std);
+    AXFXChorusShutdown(&fx_chorus);
+    AXFXDelayShutdown(&fx_delay);
+    printf("AXFX hooks: %d allocations, %d frees%s\n", fx_allocs, fx_frees,
+           fx_allocs != 0 && fx_allocs == fx_frees ? "" : "  FAIL");
+    failures += fx_allocs == 0 || fx_allocs != fx_frees;
     printf("AX frame callbacks %d, command lists run %u, AI periods %u, silent periods %u, "
            "bad command lists %u\n",
            callbacks, frames, ticks, silent, bad);

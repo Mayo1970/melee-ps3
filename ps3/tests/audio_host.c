@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <time.h>
 #include <unistd.h>
 
 #include "../audio/audio_backend.h"
@@ -99,10 +100,25 @@ static void* spu_main(void* arg)
 static void* port_main(void* arg)
 {
     uint64_t k = 1;
+#ifdef HOST_AUDIO_REALTIME
+    struct timespec start;
+
+    clock_gettime(CLOCK_MONOTONIC, &start);
+#endif
 
     for (;;) {
         uint64_t written = (uint64_t) __atomic_load_n(&shared->ticks, __ATOMIC_ACQUIRE) * AX_OUT_FRAMES;
-        if (written >= k * AX_PORT_BLOCK + PLAY_LAG) {
+        bool due = true;
+#ifdef HOST_AUDIO_REALTIME
+        // The host game build plays at 48 kHz, as the console's port, so the game's AX frames keep their pace.
+        struct timespec t;
+        int64_t ns;
+
+        clock_gettime(CLOCK_MONOTONIC, &t);
+        ns = (int64_t) (t.tv_sec - start.tv_sec) * 1000000000 + (t.tv_nsec - start.tv_nsec);
+        due = (uint64_t) ns * 48 / 1000000 >= (k - 1) * AX_PORT_BLOCK;
+#endif
+        if (due && written >= k * AX_PORT_BLOCK + PLAY_LAG) {
             uint32_t at = (uint32_t) (k % PORT_BLOCKS) * AX_PORT_BLOCK * 2;
             __atomic_store_n(&read_index, k % PORT_BLOCKS, __ATOMIC_RELEASE);
             if (host_captured + AX_PORT_BLOCK <= HOST_CAPTURE_FRAMES) {

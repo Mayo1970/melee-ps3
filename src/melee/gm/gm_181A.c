@@ -66,8 +66,15 @@ typedef struct lbl_80472ED8_t {
 } lbl_80472ED8_t;
 ASSERT_SIZE(lbl_80472ED8_t, 0x6BC);
 
+#ifdef TARGET_PS3
+// The spawn table pointers move record (lbl_80473594 on the GameCube) here.
+#define RECORD_OFFSET offsetof(lbl_80472ED8_t, record)
+#else
+#define RECORD_OFFSET 0x6BC
+#endif
+
 typedef struct RegClearRecordOverlay {
-    u8 pad[0x6BC];
+    u8 pad[RECORD_OFFSET];
     RegClearRecordState record[1];
 } RegClearRecordOverlay;
 
@@ -110,8 +117,21 @@ static RecordBlock lbl_803D8D08[6] = {
         0x0FFFFFFF, 0x0FFFFFFF } },
 };
 
+#ifdef TARGET_PS3
+// The GameCube reaches lbl_80473594 as record[0] past lbl_80472ED8; one
+// object keeps them adjacent here.
+static struct {
+    lbl_80472ED8_t a;
+    RegClearRecordState rec;
+} gm_80472ED8;
+_Static_assert(offsetof(__typeof__(gm_80472ED8), rec) == RECORD_OFFSET,
+               "record");
+#define lbl_80472ED8 gm_80472ED8.a
+#define lbl_80473594 gm_80472ED8.rec
+#else
 lbl_80472ED8_t lbl_80472ED8;
 RegClearRecordState lbl_80473594;
+#endif
 
 int gm_80181A14(void)
 {
@@ -568,7 +588,7 @@ bool gm_IsMultimanSmashMode(void)
 /// lbl_80472ED8+0x6BC (0x80472ED8 + 0x6BC == 0x80473594), and gm_80182578
 /// below already reads the same storage via lbl_80473594.
 typedef struct {
-    u8 pad_0[0x6BC];
+    u8 pad_0[RECORD_OFFSET];
     u8 x6BC;
     u8 pad_6BD;
     u16 x6BE;

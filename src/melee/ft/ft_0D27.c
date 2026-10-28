@@ -126,8 +126,14 @@ void fn_800D299C(Fighter_GObj* gobj, int idx, f32 arg8, f32 arg9)
     if (fp->x2184 == NULL) {
         fp->x2184 = HSD_JObjLoadJoint(&lbl_803C6FF0);
     }
+#ifdef TARGET_PS3
+    // walk's frames overlap mushroom.x4 and x8 with 64-bit pointers.
+    fp->mv.co.mushroom.scale_start = arg8;
+    fp->mv.co.mushroom.scale_end = arg9;
+#else
     fp->mv.co.walk.middle_anim_frame = arg8;
     fp->mv.co.walk.fast_anim_frame = arg9;
+#endif
     HSD_JObjAddAnim(fp->x2184, it_80293660(idx), NULL, NULL);
     ftAnim_80070734(fp->x2184, 0.0F);
     HSD_JObjAnim(fp->x2184);
@@ -139,8 +145,13 @@ bool fn_800D2A3C(HSD_GObj* gobj)
     HSD_JObjAnim(fp->x2184);
     {
         f32 scale = HSD_JObjGetScaleX(fp->x2184);
+#ifdef TARGET_PS3
+        f32 mid = fp->mv.co.mushroom.scale_start;
+        f32 fast = fp->mv.co.mushroom.scale_end;
+#else
         f32 mid = fp->mv.co.walk.middle_anim_frame;
         f32 fast = fp->mv.co.walk.fast_anim_frame;
+#endif
         ftLib_SetScale(gobj, (fast - mid) * scale + mid);
     }
     if (HSD_AObjGetFlags(fp->x2184->aobj) & 0x40000000) {

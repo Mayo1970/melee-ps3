@@ -626,10 +626,18 @@ void ftMh_Init_OnLoad(HSD_GObj* gobj)
         fp->cur_pos.x = ftData_attr->x30_pos2.x;
         fp->cur_pos.y = ftData_attr->x30_pos2.y;
         fp->cur_pos.z = 0;
+#ifdef TARGET_PS3
+        // unk0.x34..x40 are the item pointers only with 32-bit pointers.
+        fp->mv.mh.fingerbeam.x34 = NULL;
+        fp->mv.mh.fingerbeam.x38 = NULL;
+        fp->mv.mh.fingerbeam.x3C = NULL;
+        fp->mv.mh.fingerbeam.x40 = NULL;
+#else
         fp->mv.mh.unk0.x34 = 0;
         fp->mv.mh.unk0.x38 = 0;
         fp->mv.mh.unk0.x3C = 0;
         fp->mv.mh.unk0.x40 = 0;
+#endif
         fp->mv.mh.unk0.x28 = -1;
         fp->mv.mh.unk0.x2C = -1;
         fp->mv.mh.unk0.x30 = -1;

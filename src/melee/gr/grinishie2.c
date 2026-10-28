@@ -568,7 +568,11 @@ void grInishie2_801FD7A8(HSD_GObj* gobj)
             gp->u.inishie2.xC4_flags.b4 = 0;
 
             if (gobj_2 != NULL) {
+#ifdef TARGET_PS3
+                GET_GROUND(gobj_2)->u.inishie23.parent = gobj;
+#else
                 GET_GROUND(gobj_2)->u.inishie22.xC4 = gobj;
+#endif
             }
         }
     }
@@ -734,7 +738,11 @@ static inline void grInishie2_801FDED8_inline(HSD_GObj* gobj)
     lb_8000B1CC(Ground_801C3FA4(gobj, 0), NULL, &pos);
 
     if ((checkBlastZone(&pos) != 0) && gp->u.inishie23.xC8_flags.b0) {
+#ifdef TARGET_PS3
+        HSD_GObj* gobj_2 = gp->u.inishie23.parent;
+#else
         HSD_GObj* gobj_2 = gp->u.inishie22.xC4;
+#endif
         Ground* gp_2 = GET_GROUND(gobj_2);
         gp_2->u.inishie2.xC4_flags.b4 = 1;
         gp_2->u.inishie2.xCC =

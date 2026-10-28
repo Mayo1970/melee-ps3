@@ -28,6 +28,15 @@ struct lbl_8046B488_event_player_init_cb_t {
 };
 ASSERT_SIZE(struct lbl_8046B488_event_player_init_cb_t, 0x1C0);
 
+#ifdef TARGET_PS3
+// The GameCube keeps the callback in pad_1BC; here the 8-byte x1B8 moves
+// x1C0 to 0x1C4 and leaves no room for it.
+static GmEventPlayerInitCallback gm_8046B644;
+#define X1C0_OFFSET offsetof(struct lbl_8046B488_t, x1C0)
+#else
+#define X1C0_OFFSET 0x1C0
+#endif
+
 struct lbl_8046B488_t* gm_1601_GetUnkData(void)
 {
     return &lbl_8046B488;
@@ -299,9 +308,9 @@ void fn_80169A84(u8 arg0, s8* arg1, s8* arg2)
             s8* q;
             u8 tmp;
             q = &lbl_8046B488.x0 + HSD_Randi(0x1B);
-            tmp = q[0x1C0];
+            tmp = q[X1C0_OFFSET];
             i += 1;
-            q[0x1C0] = (u8) *p;
+            q[X1C0_OFFSET] = (u8) *p;
             *p = tmp;
             p += 1;
         } while (i < CKind_Playable_Count);
@@ -329,7 +338,9 @@ void fn_80169A84(u8 arg0, s8* arg1, s8* arg2)
             p = arg1;
             arg1 = arg2;
             while (*arg1 != -2) {
-                while ((result = (q = &lbl_8046B488.x0 + idx)[0x1C0]) == -1) {
+                while ((result = (q = &lbl_8046B488.x0 + idx)[X1C0_OFFSET]) ==
+                       -1)
+                {
                     idx = (idx + 1) % 27;
                 }
                 result = Player_800325C8(result, 0);
@@ -576,9 +587,13 @@ void gm_8016A21C(StartMeleeRules* arg0)
 static inline GmEventPlayerInitCallback*
 gm_8016A404_event_player_init_cb(struct lbl_8046B488_t* gp)
 {
+#ifdef TARGET_PS3
+    return &gm_8046B644;
+#else
     struct lbl_8046B488_event_player_init_cb_t* state =
         (struct lbl_8046B488_event_player_init_cb_t*) gp;
     return &state->event_player_init_cb;
+#endif
 }
 
 static inline struct gm_8016A22C_header*
@@ -608,6 +623,9 @@ void gm_8016A22C(s8 k0, s8 k1, s8 k2, u8 a3, u8 a4, u8 a5, int mode, int a7,
     u8 x7_tmp;
 
     memzero(gp, 0x1C0);
+#ifdef TARGET_PS3
+    *gm_8016A404_event_player_init_cb(gp) = NULL;
+#endif
 
     lbl_8046B488.x0 = k0;
     lbl_8046B488.x1 = k1;
@@ -853,12 +871,19 @@ void fn_8016A4C8(void)
                     Player_SetUnk4D(spawn_slot, tmp);
                     Player_SetFlagsAEBit1(spawn_slot, 1);
                 }
+#ifdef TARGET_PS3
+                if (*gm_8016A404_event_player_init_cb(gp) != NULL) {
+                    (*gm_8016A404_event_player_init_cb(gp))(spawn_slot,
+                                                            lbl_8046B488.x7);
+                }
+#else
                 if (((struct lbl_8046B488_event_player_init_cb_t*) gp)
                         ->event_player_init_cb != NULL)
                 {
                     ((struct lbl_8046B488_event_player_init_cb_t*) gp)
                         ->event_player_init_cb(spawn_slot, lbl_8046B488.x7);
                 }
+#endif
                 Player_SetStructFunc(spawn_slot, fn_8016A488);
                 Player_80031AD0(spawn_slot);
                 ifStatus_802F6508(spawn_slot);

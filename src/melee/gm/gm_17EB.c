@@ -23,7 +23,14 @@ typedef struct {
     u8 b7 : 1, b6 : 1, b5 : 1, b4 : 1, b3 : 1, b2 : 1, b1 : 1, b0 : 1;
 } u8_bits;
 
+#ifdef TARGET_PS3
+// The game views this as UnkAllstarData, which the function pointers make
+// larger than 0x78 bytes here.
+static UnkAllstarData lbl_80472CB0_s;
+#define lbl_80472CB0 ((u8*) &lbl_80472CB0_s)
+#else
 static u8 lbl_80472CB0[0x78];
+#endif
 
 AllstarStageEntry lbl_803D85F0[55] = {
     { 4, 0, 0x3c, 0xaf, { 0, 0, 9 } },

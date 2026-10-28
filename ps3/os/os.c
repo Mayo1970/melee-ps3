@@ -201,7 +201,8 @@ void DCInvalidateRange(void* addr, u32 nBytes)
     __asm__ volatile("sync" ::: "memory");
 }
 
+// TRUE keeps the game's crash screen (dberror.c) out: its thread spun on beside OSPanic and wrote to a dead stack frame.
 BOOL DBIsDebuggerPresent(void)
 {
-    return FALSE;
+    return TRUE;
 }

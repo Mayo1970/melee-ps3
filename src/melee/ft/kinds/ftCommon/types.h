@@ -33,7 +33,12 @@ union ftCommon_MotionVars {
     struct ftCommon_MotionVars_common {
         /* fp+2340 */ int x0;
         /* fp+2344 */ Vec3 x4;
+#ifdef TARGET_PS3
+        // Written as Bowser's specials.x10 (s32); a pointer would shift x14 on.
+        /* fp+2350 */ s32 x10;
+#else
         /* fp+2350 */ UNK_T x10;
+#endif
         /* fp+2354 */ float x14;
         /* fp+2358 */ float x18;
         /* fp+235C */ float x1C;
@@ -270,7 +275,13 @@ union ftCommon_MotionVars {
     } yoshiegg;
     struct ftCommon_MotionVars_capturekoopa {
         /* fp+2340 */ bool x0;
+#ifdef TARGET_PS3
+        // ftCo_CaptureKoopa.c views x8 as mv.ca.specialhi.vel.y and x10 as
+        // walk.fast_anim_frame; a pointer here would move them.
+        /* fp+2344 */ s32 x4;
+#else
         /* fp+2344 */ UNK_T x4;
+#endif
         /* fp+2348 */ float x8;
         /* fp+234C */ float xC;
         /* fp+2350 */ float x10;
@@ -375,6 +386,13 @@ union ftCommon_MotionVars {
         /* fp+2340 */ HSD_GObjEvent x0;
         /* fp+2344 */ HSD_GObjEvent x4;
         /* fp+2348 */ int x8;
+#ifdef TARGET_PS3
+        // The scale range kept in walk.middle/fast_anim_frame overlaps x4 and
+        // x8 with 64-bit pointers; here it goes past common.x58.
+        u8 pad_x14[0x64 - 0x14];
+        float scale_start;
+        float scale_end;
+#endif
     } mushroom;
     struct ftCommon_MotionVars_barrel {
         /* fp+2340 */ int x0;

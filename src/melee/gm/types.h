@@ -741,7 +741,7 @@ struct TmData {
     u8 x32;
     u8 x33;
     u8 pad_x34[0x37 - 0x34];
-#if defined(MUST_MATCH) || defined(LINT)
+#if defined(MUST_MATCH) || defined(LINT) || defined(TARGET_PS3)
 #pragma pack(push, 1)
 #endif
     struct TmUnkMenuData {
@@ -762,7 +762,7 @@ struct TmData {
         u8 xF;
         u8 pad_X10[0x12 - 0x10];
     } x37[64];
-#if defined(MUST_MATCH) || defined(LINT)
+#if defined(MUST_MATCH) || defined(LINT) || defined(TARGET_PS3)
 #pragma pack(pop)
 #endif
     u8 pad_x4B7[0x4B8 - 0x4B7];
@@ -786,6 +786,12 @@ struct TmData {
     u8 pad_x540[0x574 - 0x540];
 };
 ASSERT_SIZE(struct TmData, 0x574);
+#ifdef TARGET_PS3
+// The tournament code reads x37 and x4B8 by their GameCube offsets.
+_Static_assert(offsetof(struct TmData, x37) == 0x37, "TmData.x37");
+_Static_assert(offsetof(struct TmData, x4B8) == 0x4B8, "TmData.x4B8");
+_Static_assert(offsetof(struct TmData, x4E0) % 8 == 0, "TmData.x4E0");
+#endif
 
 struct NameData {
     // a lot of this is shared with a struct for character stats as well

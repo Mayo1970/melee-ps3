@@ -2803,6 +2803,24 @@ bool ftCo_800A5980(Fighter* fp)
     return false;
 }
 
+#ifdef TARGET_PS3
+// The callers pass an Item; with 32-bit pointers motion_id's offset holds the
+// item's kind, so this tests the kind.
+bool ftCo_800A5980_Item(Item* ip)
+{
+    FtMotionId msid = ip->kind;
+    if (msid >= ftCo_MS_LandingFallSpecial && msid < ftCo_MS_Attack100Start) {
+        return true;
+    }
+    if (msid == ftCo_MS_Furafura || msid == ftCo_MS_Catch ||
+        msid == ftCo_MS_CatchPull || msid == ftCo_MS_CatchAttack)
+    {
+        return true;
+    }
+    return false;
+}
+#endif
+
 bool ftCo_800A59C0(Item* ip)
 {
     if (ip->xCC_item_attr->x0_78 == 3) {
@@ -6031,7 +6049,11 @@ void ftCo_800ADC28(Fighter* fp)
 
 static inline bool ftCo_ItemCheck(Item* ip)
 {
+#ifdef TARGET_PS3
+    return ftCo_800A5980_Item(ip);
+#else
     return ftCo_800A5980((Fighter*) ip);
+#endif
 }
 
 static inline f32 ftCo_800ADE48_inline0(f32 y)

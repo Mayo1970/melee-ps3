@@ -311,8 +311,13 @@ void grIzumi_801CBE64(Ground_GObj* gobj)
         grLib_801C96F8(0x7536, 0x1E, &y);
     }
     gp->u.izumi.xCC = grIzumi_801CBCE8(2);
+#ifdef TARGET_PS3
+    // IzumiUnkCC's x18 is Ground::x18 on the GameCube; here +0x18 is xC_callback.
+    GET_GROUND(gp->u.izumi.xCC)->x18 = gp->u.izumi.xC8;
+#else
     ((IzumiUnkCC*) HSD_GObjGetUserData(gp->u.izumi.xCC))->x18 =
         gp->u.izumi.xC8;
+#endif
     jobj = Ground_801C3FA4(gobj, 4);
     { // this looks like inlines, but there's a lot of small differences
         u8 _[4];
@@ -325,7 +330,12 @@ void grIzumi_801CBE64(Ground_GObj* gobj)
             HSD_GObj* plat =
                 grIzumi_801CCBDC(yakumono_param->x0, &x38, 0, gp->u.izumi.xD0);
             Ground* platground = GET_GROUND(plat);
+#ifdef TARGET_PS3
+            // grIzumi_801CC358 reads izumi3.xDC; izumi2.xDC lies 4 bytes on here.
+            platground->u.izumi3.xDC = yakumono_param->xC;
+#else
             platground->u.izumi2.xDC = yakumono_param->xC;
+#endif
             platground->x10_flags.b3 = 1;
             platground->x18 = gp->u.izumi.xC8;
         }
@@ -335,7 +345,11 @@ void grIzumi_801CBE64(Ground_GObj* gobj)
             HSD_GObj* plat =
                 grIzumi_801CCBDC(yakumono_param->x8, &x38, 1, gp->u.izumi.xD4);
             Ground* platground = GET_GROUND(plat);
+#ifdef TARGET_PS3
+            platground->u.izumi3.xDC = yakumono_param->xC;
+#else
             platground->u.izumi2.xDC = yakumono_param->xC;
+#endif
             platground->x10_flags.b3 = 1;
             platground->x18 = gp->u.izumi.xC8;
         }

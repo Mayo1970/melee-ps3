@@ -31,6 +31,14 @@
 #include <sysdolphin/baselib/jobj.h>
 #include <sysdolphin/baselib/random.h>
 
+#ifdef TARGET_PS3
+// The GameCube reaches these s16 state blocks as gp+0x100, icemt.x100 and
+// icemt.x108 too, all in icemt1.x34 there; here only icemt1.x34 is that.
+#define IM_BLOCK_A(gp) ((s16*) &(gp)->u.icemt1.x34[2])
+#define IM_BLOCK_B(gp) (IM_BLOCK_A(gp) + 7)
+#define IM_BLOCK_C(gp) ((s16*) &(gp)->u.icemt1.x34[4])
+#endif
+
 /* 1F8C64 */ static void fn_801F8C64(Item_GObj* gobj, Ground* u1, Vec3* u2,
                                      HSD_GObj* u3, f32 u4);
 /* 1F91EC */ static void
@@ -784,6 +792,11 @@ void stageGObj10_GObjProc(Ground_GObj* arg0)
         }
         sp30 += gp->u.icemt10.x20;
     } else {
+#ifdef TARGET_PS3
+        // The DOL leaves r30 from HSD_GObj_RunProcs: the proc mask's low word,
+        // 0 whenever this proc runs.
+        var_r30 = 0;
+#endif
         mgobj = Ground_GetMapGObj(gp->u.icemt10.x0.ids.upper);
         HSD_ASSERT(1219, mgobj);
         jobj = mgobj->hsd_obj;
@@ -911,11 +924,18 @@ void stageGObj2_OnInit(Ground_GObj* arg0)
     gp->u.icemt1.x0_b0 = false;
     sp14 = grIm_804DB58C;
     grIceMt_801F8CDC(arg0, (s16*) &sp14, 2, &gp->u.icemt1.x34[0]);
+#ifdef TARGET_PS3
+    grIceMt_801F91EC(arg0, IM_BLOCK_A(gp), grIceMt_801FA500(arg0, jobj), -1,
+                     0x25, 0x109, 0x27E, fn_801F9338);
+    grIceMt_801F91EC(arg0, IM_BLOCK_B(gp), grIceMt_801FA500(arg0, jobj2), -1,
+                     38, 265, 638, fn_801F9448);
+#else
     grIceMt_801F91EC(arg0, (s16*) ((u8*) gp + 0x100),
                      grIceMt_801FA500(arg0, jobj), -1, 0x25, 0x109, 0x27E,
                      fn_801F9338);
     grIceMt_801F91EC(arg0, &gp->u.icemt.x108[3], grIceMt_801FA500(arg0, jobj2),
                      -1, 38, 265, 638, fn_801F9448);
+#endif
 }
 
 bool stageGObj2_Callback1(Ground_GObj* param1)
@@ -926,8 +946,13 @@ bool stageGObj2_Callback1(Ground_GObj* param1)
 void stageGObj2_GObjProc(Ground_GObj* param1)
 {
     Ground* gp = GET_GROUND(param1);
+#ifdef TARGET_PS3
+    grIceMt_801F929C(param1, IM_BLOCK_A(gp));
+    grIceMt_801F929C(param1, IM_BLOCK_B(gp));
+#else
     grIceMt_801F929C(param1, &gp->u.icemt1.x34[2]);
     grIceMt_801F929C(param1, &gp->u.icemt.x108[3]);
+#endif
     grIceMt_801F98A8(param1);
     Ground_UpdateMapColl(param1);
 }
@@ -1038,8 +1063,13 @@ void stageGObj4_OnInit(Ground_GObj* arg0)
     sp14.x4 = grIm_804DB59C;
     grIceMt_801F8CDC(arg0, (s16*) &sp14, 4, &gp->u.icemt1.x34[0]);
     r = grIceMt_801FA500(arg0, jobj3);
+#ifdef TARGET_PS3
+    grIceMt_801F91EC(arg0, IM_BLOCK_C(gp), grIceMt_801FA500(arg0, jobj2), r,
+                     117, 265, 638, fn_801F9558);
+#else
     grIceMt_801F91EC(arg0, gp->u.icemt.x108, grIceMt_801FA500(arg0, jobj2), r,
                      117, 265, 638, fn_801F9558);
+#endif
 }
 
 bool stageGObj4_Callback1(Ground_GObj* param1)
@@ -1050,7 +1080,11 @@ bool stageGObj4_Callback1(Ground_GObj* param1)
 void stageGObj4_GObjProc(Ground_GObj* gobj)
 {
     Ground* gp = gobj->user_data;
+#ifdef TARGET_PS3
+    grIceMt_801F929C(gobj, IM_BLOCK_C(gp));
+#else
     grIceMt_801F929C(gobj, &gp->u.icemt1.x34[4]);
+#endif
     grIceMt_801F98A8(gobj);
     Ground_UpdateMapColl(gobj);
 }
@@ -1444,7 +1478,11 @@ void fn_801F9338(void* user_data, int joint_id, CollData* coll, int coll_x50,
     {
         HSD_GObj* gobj;
         Ground* gp = user_data;
+#ifdef TARGET_PS3
+        s16* s = IM_BLOCK_A(gp);
+#else
         s16* s = gp->u.icemt.x100;
+#endif
         if ((s32) coll->x34_flags.b1234 == 1 && s[0] == 0) {
             gobj = Ground_GetMapGObj(2);
             s[0] = 1;
@@ -1470,7 +1508,11 @@ void fn_801F9448(void* user_data, int joint_id, CollData* coll, int coll_x50,
     {
         HSD_GObj* gobj;
         Ground* gp = user_data;
+#ifdef TARGET_PS3
+        s16* s = IM_BLOCK_B(gp);
+#else
         s16* s = &gp->u.icemt.x108[3];
+#endif
         if ((s32) coll->x34_flags.b1234 == 1 && s[0] == 0) {
             gobj = Ground_GetMapGObj(2);
             s[0] = 1;
@@ -1496,7 +1538,11 @@ void fn_801F9558(void* user_data, int joint_id, CollData* coll, int coll_x50,
     {
         HSD_GObj* gobj;
         Ground* gp = user_data;
+#ifdef TARGET_PS3
+        s16* s = IM_BLOCK_C(gp);
+#else
         s16* s = gp->u.icemt.x108;
+#endif
         if ((s32) coll->x34_flags.b1234 == 1 && s[0] == 0) {
             gobj = Ground_GetMapGObj(4);
             s[0] = 1;

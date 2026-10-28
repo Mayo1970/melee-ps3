@@ -10,6 +10,7 @@
 #include <gx_pipe.h>
 
 #include "../os/diag.h"
+#include "../os/prof.h"
 #include "../os/sync.h"
 
 // The producer publishes at least this often, so the GP works while the game still writes.
@@ -70,9 +71,12 @@ static u64 load(u64* p)
 
 static void wait_consumed(u64 pos)
 {
+    uint64_t t;
+
     if (load(&consumed) >= pos) {
         return;
     }
+    t = ps3_prof_now();
     ps_mutex_lock(&lock);
     __atomic_store_n(&prod_waiting, 1, __ATOMIC_SEQ_CST);
     ps3_diag.ring_space_wait = 1;
@@ -82,6 +86,7 @@ static void wait_consumed(u64 pos)
     ps3_diag.ring_space_wait = 0;
     __atomic_store_n(&prod_waiting, 0, __ATOMIC_SEQ_CST);
     ps_mutex_unlock(&lock);
+    ps3_prof_lap(PROF_MAIN_RING, &t);
 }
 
 static void publish(u64 pos)
@@ -186,7 +191,12 @@ static u64 wait_published(u64 pos)
             continue;
         }
         ps_cond_broadcast(&idle_cond);
-        ps_cond_wait(&data_cond, &lock);
+        {
+            uint64_t t = ps3_prof_now();
+
+            ps_cond_wait(&data_cond, &lock);
+            ps3_prof_lap(PROF_GP_IDLE, &t);
+        }
     }
     ps3_diag.gp_wait = 0;
     __atomic_store_n(&cons_waiting, 0, __ATOMIC_SEQ_CST);

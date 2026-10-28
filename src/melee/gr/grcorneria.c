@@ -778,7 +778,13 @@ void grCorneria_801DDDA8(HSD_GObj* gobj, Vec3* vec)
         jobj = Ground_801C3FA4(gobj, 4);
         lb_8000B1CC(jobj, NULL, &pos);
         idx = arwing_types[gp->u.arwing.xC8];
+#ifdef TARGET_PS3
+        // gp2 is the ship (corneria view); arwing.xDC is its offset_x only
+        // on the GameCube, as grCorneria_801DDE88 reads it.
+        vec->x = gp2->u.corneria.offset_x + (-pos.z + lbl_803E2068[idx].x);
+#else
         vec->x = gp2->u.arwing.xDC + (-pos.z + lbl_803E2068[idx].x);
+#endif
         vec->y = pos.y + lbl_803E2068[idx].y;
         vec->z = pos.x + lbl_803E2068[idx].z;
     } else {
@@ -1493,7 +1499,14 @@ void grCorneria_801DFC2C(Ground_GObj* gobj)
 
     gp->u.corneria.xC6.value = 0;
     gp->u.corneria.offset_y.flags.b0 = 0;
+#ifdef TARGET_PS3
+    // 0x18 is xC8 up to offset_y in the GameCube layout.
+    memzero(&gp->u.corneria.xC8,
+            offsetof(struct grCorneria_GroundVars, offset_y) -
+                offsetof(struct grCorneria_GroundVars, xC8));
+#else
     memzero(&gp->u.corneria.xC8, 0x18);
+#endif
     gp->u.corneria.xC4.value = 0;
     gp->x11_flags.b012 = 1;
 }

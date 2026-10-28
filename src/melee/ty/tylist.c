@@ -493,11 +493,22 @@ void _tyList_80313774(void)
     if (Toy_GetTrophyTotal() <= 0xA) {
         state->entryCount = trophy_total + 2;
         entry_count = trophy_total + 2;
+#ifdef TARGET_PS3
+        // disp->x140 is TyDisplayData's selected_entry at a 32-bit offset.
+        idx = Toy_803062BC(
+            ((TyDisplayData*) disp)->selected_entry->prev->trophy_id);
+#else
         idx = Toy_803062BC(((ToyListEntry*) disp->x140)->prev->trophy_id);
+#endif
     } else {
         state->entryCount = 0xC;
         entry_count = 0xC;
+#ifdef TARGET_PS3
+        idx = Toy_803062BC(
+            ((TyDisplayData*) disp)->selected_entry->prev->trophy_id);
+#else
         idx = Toy_803062BC(((ToyListEntry*) disp->x140)->prev->trophy_id);
+#endif
     }
 
     for (i = 0; i < entry_count; i++) {
@@ -857,7 +868,12 @@ void _tyList_8031438C(HSD_GObj* gobj)
                 HSD_AObjSetRate(archive->jobjs[0]->u.dobj->mobj->tobj->aobj,
                                 0.0f);
             }
+#ifdef TARGET_PS3
+            // x0 holds the panel GObj; word 10 is its hsd_obj on the GameCube.
+            HSD_JObjAnimAll(((HSD_GObj*) archive->x0)->hsd_obj);
+#else
             HSD_JObjAnimAll(archive->x0[10]);
+#endif
         } else {
             TyListWaitData* wait_data = (TyListWaitData*) entry->x4;
             if (wait_data != NULL) {

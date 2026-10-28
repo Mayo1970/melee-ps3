@@ -62,14 +62,11 @@ static bool itColl_chkECBOverlap(f32 pos_x, f32 pos_y, itECB* ecb_a,
 
 const Quaternion it_803B8560 = { 0.0f, 0.0f, 1.0f, 0.0f };
 
-typedef struct ItCollDynamicsDesc {
-    s32 bone_id;
-    Vec3 offset;
-    f32 size;
-} ItCollDynamicsDesc;
-
+// The first pair is ItemDynamics's, so count and descs keep their place with
+// 64-bit pointers.
 typedef struct ItCollDynamics {
-    u8 _pad[8];
+    s32 x0;
+    void* x4;
     s32 count;
     ItCollDynamicsDesc* descs;
 } ItCollDynamics;

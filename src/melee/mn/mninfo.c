@@ -142,7 +142,13 @@ void mnInfo_80251AFC(void)
     }
 }
 
+#ifdef TARGET_PS3
+// The last joint name runs to the end; on the GameCube gap_07 (zeros) after
+// it ends the string, and MnInfoDataLayout covers 0xE0 bytes.
+static AnimLoopSettings mnInfo_803EFC08[0x13] = {
+#else
 static AnimLoopSettings mnInfo_803EFC08[0x12] = {
+#endif
     { 0.0f, 199.0f, 0.0f },
     { 1.8e-42f, 1.802e-42f, 1.803e-42f },
     { 1.805e-42f, 2.1092525e-16f, 1.379729e31f },
@@ -187,8 +193,13 @@ s32 mnInfo_80251D58(mnInfo_GObj* arg0, s32 arg1, u32 arg2, u32 arg3)
 
     data = arg0->user_data;
     layout = (MnInfoDataLayout*) mnInfo_803EFC08;
+#ifdef TARGET_PS3
+    // The GameCube's slot steps by 32-bit pointers.
+    if (*(slot = &data->left_column[arg1]) != NULL) {
+#else
     slot = (HSD_Text**) ((u8*) data + (arg1 * 4));
     if (*(slot += 2) != NULL) {
+#endif
         HSD_SisLib_803A5CC4(data->left_column[arg1]);
     }
     text = HSD_SisLib_803A6754(0, 1);
@@ -227,8 +238,12 @@ void mnInfo_80251F04(mnInfo_GObj* arg0, s32 arg1, u32 arg2)
     MnInfoData* data;
 
     data = arg0->user_data;
+#ifdef TARGET_PS3
+    if (*(slot = &data->right_column[arg1]) != NULL) {
+#else
     slot = (HSD_Text**) ((u8*) data + (arg1 * 4));
     if (*(slot += 6) != NULL) {
+#endif
         HSD_SisLib_803A5CC4(data->right_column[arg1]);
     }
     text = HSD_SisLib_803A5ACC(0, 0, -5.0f, (3.45f * (f32) arg1) + -5.9f,
