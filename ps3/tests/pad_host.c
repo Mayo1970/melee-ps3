@@ -15,14 +15,14 @@
 typedef struct Step {
     u32 at, length;
     unsigned buttons;
-    unsigned char l2, r2, lx, ly;
+    unsigned char l2, r2, lx, ly, rx, ry;
 } Step;
 
 static Step steps[MAX_STEPS];
 static int nsteps;
 static bool scripted;
 
-// The GameCube buttons, as pad.c maps them, and SL SR SU SD for the main stick.
+// The GameCube buttons, as pad.c maps them, SL SR SU SD for the main stick, CL CR CU CD for the C stick.
 static bool parse_input(const char* name, Step* s)
 {
     static const struct {
@@ -56,6 +56,14 @@ static bool parse_input(const char* name, Step* s)
         s->ly = 0;
     } else if (strcmp(name, "SD") == 0) {
         s->ly = 255;
+    } else if (strcmp(name, "CL") == 0) {
+        s->rx = 0;
+    } else if (strcmp(name, "CR") == 0) {
+        s->rx = 255;
+    } else if (strcmp(name, "CU") == 0) {
+        s->ry = 0;
+    } else if (strcmp(name, "CD") == 0) {
+        s->ry = 255;
     } else {
         return false;
     }
@@ -80,7 +88,7 @@ static void parse(const char* script)
         char* name;
 
         memset(s, 0, sizeof(*s));
-        s->lx = s->ly = 128;
+        s->lx = s->ly = s->rx = s->ry = 128;
         if ((fields[1] = strchr(item, ':')) == NULL) {
             ps3_log("pad_host: \"%s\" has no inputs\n", item);
             continue;
@@ -134,6 +142,12 @@ void ps3_pad_read(Ps3Pad* pads, int n)
             }
             if (s->ly != 128) {
                 pads[0].ly = s->ly;
+            }
+            if (s->rx != 128) {
+                pads[0].rx = s->rx;
+            }
+            if (s->ry != 128) {
+                pads[0].ry = s->ry;
             }
         }
     }

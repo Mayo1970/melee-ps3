@@ -66,7 +66,7 @@ $(BUILD)/%.o: $(ROOT)/%.c
 # Host tests for qemu-ppc64 (TOOLCHAIN=linux): dvd_test and intr_test. DVD_APP_DIR stands in for
 # PS3_APP_DIR.
 DVD_APP_DIR ?= /scratch
-TEST_DEPS := $(ROOT)/ps3/dvd/dvd.c $(ROOT)/ps3/os/intr.c $(ROOT)/$(SYNC_SRC)
+TEST_DEPS := $(ROOT)/ps3/dvd/dvd.c $(ROOT)/ps3/os/intr.c $(ROOT)/ps3/os/mem.c $(ROOT)/$(SYNC_SRC)
 TEST_HEADERS := $(ROOT)/ps3/dvd/dvd.h $(ROOT)/ps3/os/intr.h
 dvdtest: $(BUILD)/dvd_test $(BUILD)/intr_test
 $(BUILD)/%_test: $(ROOT)/ps3/tests/%_test.c $(TEST_DEPS) $(TEST_HEADERS)
@@ -75,7 +75,7 @@ $(BUILD)/%_test: $(ROOT)/ps3/tests/%_test.c $(TEST_DEPS) $(TEST_HEADERS)
 
 # The SDK's AX library over ps3/audio, with the audio program on a host thread (TOOLCHAIN=linux).
 AUDIO_TEST_SRCS := $(addprefix $(ROOT)/ps3/,tests/audio_test.c tests/audio_host.c audio/ax_spu.c \
-                   audio/sdk_audio.c os/intr.c os/sync_host.c os/globals.c) $(addprefix $(ROOT)/,$(SDK_AUDIO_SRCS)) \
+                   audio/sdk_audio.c os/intr.c os/mem.c os/sync_host.c os/globals.c) $(addprefix $(ROOT)/,$(SDK_AUDIO_SRCS)) \
                    $(addprefix $(ROOT)/libs/dolphin/src/dolphin/axfx/,axfx.c chorus.c delay.c reverb_hi.c reverb_std.c)
 audiotest: $(BUILD)/audio_test
 $(BUILD)/audio_test: $(AUDIO_TEST_SRCS) $(wildcard $(ROOT)/ps3/audio/*.h $(ROOT)/ps3/tests/*.h)

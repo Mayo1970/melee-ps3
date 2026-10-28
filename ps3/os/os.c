@@ -182,25 +182,30 @@ OSErrorHandler OSSetErrorHandler(OSError error, OSErrorHandler handler)
     return old;
 }
 
-// The PPE keeps its caches coherent with the SPUs and the RSX; a barrier orders the stores.
+// The PPE keeps its caches coherent with the SPUs and the RSX; a barrier orders the stores. The game flushes what
+// it wrote for the GP, and invalidates what a DMA wrote: either way the GP's caches of that range go.
 void DCFlushRange(void* addr, u32 nBytes)
 {
     __asm__ volatile("sync" ::: "memory");
+    ps3_mem_written(addr, nBytes);
 }
 
 void DCFlushRangeNoSync(void* addr, u32 nBytes)
 {
     __asm__ volatile("sync" ::: "memory");
+    ps3_mem_written(addr, nBytes);
 }
 
 void DCStoreRange(void* addr, u32 nBytes)
 {
     __asm__ volatile("sync" ::: "memory");
+    ps3_mem_written(addr, nBytes);
 }
 
 void DCInvalidateRange(void* addr, u32 nBytes)
 {
     __asm__ volatile("sync" ::: "memory");
+    ps3_mem_written(addr, nBytes);
 }
 
 // TRUE keeps the game's crash screen (dberror.c) out: its thread spun on beside OSPanic and wrote to a dead stack frame.

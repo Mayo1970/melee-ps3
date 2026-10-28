@@ -396,7 +396,9 @@ Waiting for the user:
 - Run 29: the call trace package, Peach and DK on Yoshi's Story until the stop, and what was on the screen at
   the stop and in the movie.
 - Run 30: the normal package with step 1 (dirty tracking), a match, and the heartbeat's fourth line.
-- Run 38: the second A/B package (6 modes, below): in which modes does the z-fighting stay?
+- Run 38: answered by run 39: the z-fighting stops with an RSX wait after each RSX draw (mode 1).
+- Run 40: the package with part 2 steps 1 and 2, a match in mode 0 (no Select), the heartbeat's fourth and fifth
+  lines.
 
 The UDP log goes to `192.168.178.99`, port 18194 (`ps3/os/udplog_cell.c`). A listener: `nc -ul 18194`, or any
 UDP listener on that port.
@@ -588,11 +590,75 @@ headroom, near 60 presents; then the game logic on the main thread is the next l
    attribute has its own index). Not per draw: a mailbox round trip each, and the ioq3 port measured per-draw
    SPU jobs as a loss.
 
+Step 1, display list vertex cache (2026-10-28):
+- Memory writes (`os/mem.c`): `ps3_mem_written` gives each write a number and keeps the last one per 4 KB page of
+  GameCube physical space (512 KB table). Callers: `DCFlushRange`, `DCFlushRangeNoSync`, `DCStoreRange`,
+  `DCInvalidateRange` (`os.c`), each DVD read (`dvd.c`), ARAM to main memory copies (`sdk_audio.c`), each `.dat`
+  pool block (`pool.c`) and each `HSD_ArchiveParse` buffer (`lookup.c`). `ps3_mem_stamp` gives the GP thread a
+  number up to which every write is complete. The game calls `GXInvalidateVtxCache` each frame (`gmscene.c`), so
+  that is no signal.
+- The cache (`backend.c`, `call_list`, a new `GpBackend` hook that `run_list` calls first): a list of draws and
+  NOPs only, one VAT and one family, at most 65,535 vertices and 1 MB, is converted once into a 16 MB ring in RSX
+  local memory (vertices, then u16 indices) and then drawn from there: one indexed RSX draw per call, with the
+  same state work as a draw that opens a batch. Key: list address and size, VCD, the VAT, the bases and strides
+  of the arrays it reads, the default matrix indices when the layout reads them. An entry goes stale when a write
+  after its stamp touches the list or the array bytes it read (index range per array). Other lists are kept as
+  "run as commands". Evictions wait for the RSX only when the entry was drawn in the current frame.
+  `DEV_LOCAL` on an attribute or index offset selects local memory (`rsxdev.h`). A/B bit 1 turns the cache off.
+- The heartbeat's fourth line adds lists drawn from the cache, converted, run as commands, and evicted.
+- Host check (`EXTRA_CFLAGS=-DGX_VCACHE_CHECK`: each cached draw converts its list again and compares the bytes):
+  0 differences in about 2.2 million cached draws (Peach and DK on Yoshi's Story, Fox and Mr. Game & Watch and
+  Captain Falcon and DK on Final Destination, Mario and Fox on Fountain of Dreams, items at 4, 60 s each) and
+  700,000 in a 150 s
+  boot (movie, demo, menus). No evictions. A drawn match frame looks as expected. `scenetest`, `gx_test`,
+  `progtest`, `audiotest`, `intr_test` PASS.
+- Host profile (qemu, so shares only): vertices from 303-503 to 41-87 per mille in four matches; GP time per GX
+  draw 40-70% lower. Each list is now one RSX draw: lists with no register write between them were one batch
+  before, so the RSX draws rise (Peach and DK: 12,700 RSX draws for 67,000 GX draws before, 15,300 for 49,000
+  now).
+- Normal package rebuilt: `.got` 0x45c0, 0 `r2off` stubs, about 19.0 MB in loaded segments (the page table and
+  the 4,096 entries).
+- Melee run 39 (2026-10-28, `build/run39_udp.txt`): Zelda and Peach on Green Greens, then Peach and DK on Yoshi's
+  Story; the quit logged "gp: stopped, the RSX is idle". Select was pressed twice in the first match (23:14:05 mode
+  1, an RSX wait per draw: 16 presents a second; 23:14:17 mode 2, VP loads at each switch and all constants), so
+  only Green Greens before 23:14:05 is mode 0:
+  - Green Greens, mode 0: 46-48 presents a second at about 112,000 GX draws (about 2,350 a frame) in 38,000 RSX
+    draws (run 36: 33-37 at 81,000). About 22,000 lists a second from the cache, 0 converted, 0 evicted. GP per
+    mille: draws 720 (textures 335, TEV 164, vertices 124, constants 60, state 25); waits for data about 90; main
+    asleep about 30%. The user saw the z-fighting there again.
+  - Yoshi's Story, mode 2: 34-38 presents a second at about 75,000 GX draws (2,150 a frame; run 30 in mode 0: 29),
+    constants 460 per mille (all rows each update). No z-fighting seen. No mode 0 numbers for this stage.
+  - Texture checks are now the largest GP share: step 2.
+  - The user: on Green Greens the z-fighting stopped at the first Select press (mode 1, an RSX wait after each RSX
+    draw, batching, VP slots and changed constants all on). So it is a race between the GP thread and the RSX: some
+    data the PPE writes or a command the RSX runs out of order, not the programs or constants as such.
+
+Step 2, texture checks (2026-10-28, `backend.c`):
+- The texture cache has chains by address (`tex_bucket`, 1,024), for the EFB copies too: no more scans of the 512
+  entries. An entry keeps the `ps3_mem_stamp` its data was hashed at, and is hashed again only after a write to
+  its pages; a new hash finds an entry with that hash at that address again. TLUT hashes are kept per TMEM
+  offset until the next TLUT load. Hashes go by words (`hash_words`).
+- A GX map keeps its lookup while its registers, the TLUT loads and the memory stamp stay; the per-frame check is
+  gone. Each free of cached textures drops all lookups and bindings (`tex_forget`); a lookup that freed textures
+  binds the earlier units again.
+- Not marked as writes, and need not be: CPU stores into heap memory that held a texture (new objects there). A
+  texture drawn again must have come through a DVD read, an ARAM copy, a `.dat` parse or a cache flush. The movie
+  planes stay freed by the in-stream "memory changed" command (`thp.c`).
+- Host check (`-DGX_TCACHE_CHECK`: textures bind at each draw, each one hashed against its entry): 0 textures drawn
+  with changed data in 4 matches of 60 s; in the 150 s boot only the movie planes (640x480 Y, 320x240 U and V),
+  which the decoder rewrites before their "memory changed" command reaches the GP, as with the per-frame hash
+  before. The vertex check still 0 differences.
+- Host profile: textures from 49-125 to 24-55 per mille in the same 4 matches, about half per GX draw; 0-4 texture
+  hashes a second in a match.
+- The heartbeat: OSReport keeps 511 characters, so the cache counters are a fifth line now (lists from the cache,
+  converted, run as commands, evicted; texture hashes). Run 39's fourth lines were cut there.
+- Normal package rebuilt: `.got` 0x45f8, 0 `r2off` stubs, 19.0 MB in loaded segments.
+
 ## Not done for the game
 
 | Part | Size or note |
 |---|---|
-| GX on RSX | Not drawn yet: indirect textures, TEV compare stages, two-compare alpha tests, logic ops, z textures, depth copies, emboss texgen, constant destination alpha, line width, a texcoord 7 matrix index in the vertex (the backend logs each once). Speed: vertices are de-indexed on the PPE for every draw (no display list cache), textures are hashed once per frame |
+| GX on RSX | Not drawn yet: indirect textures, TEV compare stages, two-compare alpha tests, logic ops, z textures, depth copies, emboss texgen, constant destination alpha, line width, a texcoord 7 matrix index in the vertex (the backend logs each once). Speed: FIFO draws, and display lists the cache does not take, are de-indexed on the PPE at each draw; textures are hashed again only after a write to them |
 | CARD | Saves on the HDD; the stubs report no card in either slot |
 | OS threads | `OSSuspendThread` only counts; thread queues (`OSSleepThread`) are the minimal ones in `ps3/os/intr.c` |
 

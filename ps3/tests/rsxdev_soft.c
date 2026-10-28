@@ -280,9 +280,9 @@ void dev_texture(int unit, const DevTexture* t)
     }
 }
 
-void dev_attrib(int slot, u32 io_offset, u32 stride, u32 count, u32 type)
+void dev_attrib(int slot, u32 offset, u32 stride, u32 count, u32 type)
 {
-    attr[slot].offset = io_offset;
+    attr[slot].offset = offset;
     attr[slot].stride = stride;
     attr[slot].count = count;
     attr[slot].type = type;
@@ -510,12 +510,17 @@ static void triangle(const Vert* a, const Vert* b, const Vert* c)
     }
 }
 
+static const u8* vertex_mem(u32 offset)
+{
+    return (offset & DEV_LOCAL) ? local + (offset & ~DEV_LOCAL) : ring + offset;
+}
+
 static void fetch(u32 index, float in[16][4])
 {
     int s, k;
 
     for (s = 0; s < 16; s++) {
-        const u8* p = ring + attr[s].offset + index * attr[s].stride;
+        const u8* p = vertex_mem(attr[s].offset) + index * attr[s].stride;
 
         in[s][0] = in[s][1] = in[s][2] = 0.0f;
         in[s][3] = 1.0f;
@@ -617,9 +622,9 @@ void dev_draw(u32 prim, u32 count)
     free(v);
 }
 
-void dev_draw_indexed(u32 prim, u32 io_offset, u32 count)
+void dev_draw_indexed(u32 prim, u32 offset, u32 count)
 {
-    const u8* p = ring + io_offset;
+    const u8* p = vertex_mem(offset);
     u32 n = 0, i;
     Vert* v;
 

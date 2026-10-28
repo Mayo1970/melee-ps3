@@ -33,10 +33,22 @@ typedef struct Builder {
 
 static void add_step(Builder* b, u8 op, u32 src, u8 n, u8 array, u8 idx16, u8 elem_off)
 {
+    // Source bytes per op, from OP_RGB565 on; the ones before read n bytes, OP_U16_F32 2n.
+    static const u8 color_bytes[6] = { 2, 3, 4, 2, 3, 4 };
     VtxStep* st;
 
     if (b->l->nsteps >= VTX_MAX_STEPS) {
         return;
+    }
+    if (op == OP_MIDX_DEF) {
+        b->l->midx_def = true;
+    }
+    if (array < VTX_ARRAYS) {
+        u32 end = elem_off + (op == OP_U16_F32 ? 2u * n : op >= OP_RGB565 ? color_bytes[op - OP_RGB565] : n);
+
+        if (end > b->l->extent[array]) {
+            b->l->extent[array] = (u8) end;
+        }
     }
     st = &b->l->step[b->l->nsteps++];
     st->op = op;
@@ -261,6 +273,26 @@ static inline u32 x5(u32 v)
 static inline u32 x6(u32 v)
 {
     return v << 2 | v >> 4;
+}
+
+void vtx_index_range(const VtxLayout* l, const u8* in, u32 count, u32 lo[VTX_ARRAYS], u32 hi[VTX_ARRAYS])
+{
+    u32 i, v;
+
+    for (i = 0; i < l->nsteps; i++) {
+        const VtxStep* st = &l->step[i];
+        const u8* p = in + st->src;
+
+        if (st->array >= VTX_ARRAYS) {
+            continue;
+        }
+        for (v = 0; v < count; v++, p += l->in_size) {
+            u32 idx = st->idx16 ? be16(p) : p[0];
+
+            lo[st->array] = idx < lo[st->array] ? idx : lo[st->array];
+            hi[st->array] = idx > hi[st->array] ? idx : hi[st->array];
+        }
+    }
 }
 
 bool vtx_convert(const VtxLayout* l, const GpState* s, const u8* in, u32 count, u8* out)

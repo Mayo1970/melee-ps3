@@ -54,6 +54,73 @@ volatile u16* ps3_mmio16(u32 paddr)
     return &mmio[(paddr - MMIO_BASE) / 2];
 }
 
+#define PAGE_SHIFT 12
+
+// The number of the last write to each physical page. A write raises its pages, then counts itself done.
+static u32 page_write[PS3_PHYS_LIMIT >> PAGE_SHIFT];
+static u32 writes_started, writes_done;
+static u32 safe_stamp;
+
+void ps3_mem_written(const void* p, u32 size)
+{
+    uintptr_t a = (uintptr_t) p;
+    int n = __atomic_load_n(&nregions, __ATOMIC_ACQUIRE);
+    u32 g, page, last;
+    int i;
+
+    for (i = 0; i < n; i++) {
+        if (a - regions[i].base < regions[i].size) {
+            break;
+        }
+    }
+    if (i == n || size == 0) {
+        return;
+    }
+    if (size > regions[i].size - (u32) (a - regions[i].base)) {
+        size = regions[i].size - (u32) (a - regions[i].base);
+    }
+    g = __atomic_add_fetch(&writes_started, 1, __ATOMIC_ACQ_REL);
+    page = (regions[i].phys + (u32) (a - regions[i].base)) >> PAGE_SHIFT;
+    last = (regions[i].phys + (u32) (a - regions[i].base) + size - 1) >> PAGE_SHIFT;
+    for (; page <= last; page++) {
+        u32 old = __atomic_load_n(&page_write[page], __ATOMIC_RELAXED);
+
+        // Two threads may write one page: the larger number stays.
+        while ((s32) (g - old) > 0 &&
+               !__atomic_compare_exchange_n(&page_write[page], &old, g, true, __ATOMIC_RELAXED, __ATOMIC_RELAXED)) {
+        }
+    }
+    __atomic_add_fetch(&writes_done, 1, __ATOMIC_RELEASE);
+}
+
+u32 ps3_mem_stamp(void)
+{
+    u32 done = __atomic_load_n(&writes_done, __ATOMIC_ACQUIRE);
+
+    // done read first: equal counts mean no write was in flight then, so every page holds its number.
+    if (__atomic_load_n(&writes_started, __ATOMIC_ACQUIRE) == done) {
+        safe_stamp = done;
+    }
+    return safe_stamp;
+}
+
+bool ps3_mem_written_since(u32 paddr, u32 size, u32 stamp)
+{
+    u32 page = paddr >> PAGE_SHIFT, last;
+
+    if (size == 0 || paddr >= PS3_PHYS_LIMIT) {
+        return false;
+    }
+    last = (paddr + size - 1) >> PAGE_SHIFT;
+    last = last >= (PS3_PHYS_LIMIT >> PAGE_SHIFT) ? (PS3_PHYS_LIMIT >> PAGE_SHIFT) - 1 : last;
+    for (; page <= last; page++) {
+        if ((s32) (__atomic_load_n(&page_write[page], __ATOMIC_RELAXED) - stamp) > 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
 u32 OSCachedToPhysical(void* caddr)
 {
     uintptr_t p = (uintptr_t) caddr;

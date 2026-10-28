@@ -15,6 +15,7 @@
 
 #include "../os/diag.h"
 #include "../os/intr.h"
+#include "../os/mem.h"
 #include "../os/sync.h"
 
 #ifndef PS3_APP_DIR
@@ -580,6 +581,8 @@ static bool read_file(DVDFileInfo* file, void* addr, s32 length, s32 offset)
     }
     if (!ok) {
         OSReport("dvd: reading %d bytes at %d failed\n", length, offset);
+    } else {
+        ps3_mem_written(addr, (u32) length);
     }
     return ok;
 }

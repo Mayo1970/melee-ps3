@@ -33,6 +33,10 @@ typedef struct Ps3Prof {
     volatile uint32_t batched;
     // Draws that kept the last draw's TEV config, vertex program and raster state (backend.c memo).
     volatile uint32_t state_reuses;
+    // Display lists drawn from the vertex cache, converted into it, and run as commands; entries evicted.
+    volatile uint32_t list_hits, list_builds, list_runs, list_evictions;
+    // Texture lookups that hashed the data: new, or written since the last hash.
+    volatile uint32_t tex_hashes;
     volatile uint64_t upload_bytes;
 } Ps3Prof;
 

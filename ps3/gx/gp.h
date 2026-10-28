@@ -87,11 +87,24 @@ typedef struct GpBackend {
     void (*present)(GpState* s, u32 xfb);
     // The CPU rewrote [paddr, paddr + size) (gp_post_mem_changed).
     void (*mem_changed)(GpState* s, u32 paddr, u32 size);
+    // A display list of size bytes at physical paddr (list in memory). True when the backend drew it from its
+    // cache, with its GX draws and vertices added to *draws and *vertices; false runs its commands. May be NULL.
+    bool (*call_list)(GpState* s, u32 paddr, const u8* list, u32 size, u32* draws, u32* vertices);
 } GpBackend;
+
+// One draw of a display list (gp_list_draws).
+typedef struct GpListDraw {
+    u8 prim, vat;
+    u16 count;
+    const u8* data;
+} GpListDraw;
 
 // Starts the GP thread over a ring of ring_size bytes (a power of two). backend lives until exit.
 void gp_init(const GpBackend* backend, u32 ring_size);
 u32 gp_vertex_size(GpState* s, int vat);
+// The draws of a display list made only of draws and NOPs, at most max: their count. 0 for any other list, one
+// with more draws, or one cut short. Draws with no vertex data are left out.
+u32 gp_list_draws(GpState* s, const u8* list, u32 size, GpListDraw* out, u32 max);
 // Any thread: the GP thread presents xfb between two commands, or while it waits. A later post replaces one
 // not yet run.
 void gp_post_present(u32 xfb);

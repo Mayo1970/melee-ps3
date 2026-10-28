@@ -38,6 +38,8 @@
 #define DEV_FILTER_LINEAR_MIP_LINEAR 6
 // Vertex program slots for the backend; the present pass loads its program into the 8 after them (512 in all).
 #define DEV_VP_SLOTS 504
+// A vertex or index offset with this bit is in local memory; without it, an IO offset (the vertex ring).
+#define DEV_LOCAL 0x80000000u
 
 typedef struct DevTarget {
     uint32_t color_offset, color_pitch;
@@ -88,11 +90,11 @@ void dev_vp_constants(uint32_t first, uint32_t count, const float* v);
 void dev_fragment_program(uint32_t offset, uint32_t regs, uint16_t texcoords, uint16_t texcoords4);
 // NULL disables the unit.
 void dev_texture(int unit, const DevTexture* t);
-// A ring attribute (IO offset); count 0 disables it.
-void dev_attrib(int slot, uint32_t io_offset, uint32_t stride, uint32_t count, uint32_t type);
+// An attribute at offset (IO, or local with DEV_LOCAL); count 0 disables it.
+void dev_attrib(int slot, uint32_t offset, uint32_t stride, uint32_t count, uint32_t type);
 void dev_draw(uint32_t prim, uint32_t count);
-// count u16 indices at ring IO offset io_offset, into the vertices of the bound attributes.
-void dev_draw_indexed(uint32_t prim, uint32_t io_offset, uint32_t count);
+// count u16 indices at offset (IO, or local with DEV_LOCAL), into the vertices of the bound attributes.
+void dev_draw_indexed(uint32_t prim, uint32_t offset, uint32_t count);
 // Clears the scissor rectangle of the target.
 void dev_clear(bool color, bool alpha, bool depth, uint32_t argb, uint32_t z24);
 // Later draws wait until the RSX has finished all earlier work (render to texture, then sample it).

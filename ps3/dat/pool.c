@@ -41,6 +41,9 @@ void* ps3_dat_malloc(size_t size)
     ps_mutex_unlock(&lock);
     if (p == NULL) {
         OSReport("ps3_dat_malloc: no room for %u bytes\n", (u32) size);
+    } else {
+        // The reader fills the block next; the GP's caches of what was there before go.
+        ps3_mem_written(p, (u32) size);
     }
     return p;
 }

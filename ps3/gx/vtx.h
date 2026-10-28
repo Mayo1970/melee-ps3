@@ -13,6 +13,7 @@
 #define VTX_U8 7
 
 #define VTX_MAX_STEPS 40
+#define VTX_ARRAYS 12
 
 typedef struct VtxStep {
     u8 op;
@@ -36,11 +37,17 @@ typedef struct VtxLayout {
     VtxStep step[VTX_MAX_STEPS];
     // Dequantization: position, normal, texcoord 0-7.
     float dq[10];
+    // Bytes read from an element of each attribute array (0 position ... 11 texcoord 7); 0 when not indexed.
+    u8 extent[VTX_ARRAYS];
+    // Steps that read the default matrix indices (XF 0x18, 0x19).
+    bool midx_def;
 } VtxLayout;
 
 // The layout for VAT vat under the current VCD.
 void vtx_layout(const GpState* s, int vat, VtxLayout* l);
 // count GX vertices into RSX vertices of l->out_size bytes. False when an array address maps to nothing.
 bool vtx_convert(const VtxLayout* l, const GpState* s, const u8* in, u32 count, u8* out);
+// Widens lo[i] and hi[i] to the indices that count GX vertices at in read from array i.
+void vtx_index_range(const VtxLayout* l, const u8* in, u32 count, u32 lo[VTX_ARRAYS], u32 hi[VTX_ARRAYS]);
 
 #endif

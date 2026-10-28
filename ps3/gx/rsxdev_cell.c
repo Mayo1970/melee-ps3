@@ -395,9 +395,10 @@ void dev_texture(int unit, const DevTexture* t)
     rsxTextureWrapMode(ctx, (u8) unit, t->wrap_s, t->wrap_t, GCM_TEXTURE_CLAMP_TO_EDGE, 0, GCM_TEXTURE_ZFUNC_LESS, 0);
 }
 
-void dev_attrib(int slot, u32 io_offset, u32 stride, u32 count, u32 type)
+void dev_attrib(int slot, u32 offset, u32 stride, u32 count, u32 type)
 {
-    rsxBindVertexArrayAttrib(ctx, (u8) slot, 0, io_offset, (u8) stride, (u8) count, (u8) type, GCM_LOCATION_CELL);
+    rsxBindVertexArrayAttrib(ctx, (u8) slot, 0, offset & ~DEV_LOCAL, (u8) stride, (u8) count, (u8) type,
+                             (offset & DEV_LOCAL) ? GCM_LOCATION_RSX : GCM_LOCATION_CELL);
 }
 
 void dev_draw(u32 prim, u32 count)
@@ -407,11 +408,12 @@ void dev_draw(u32 prim, u32 count)
     rsxDrawVertexArray(ctx, prim, 0, count);
 }
 
-void dev_draw_indexed(u32 prim, u32 io_offset, u32 count)
+void dev_draw_indexed(u32 prim, u32 offset, u32 count)
 {
     // rsxDrawIndexArray writes 0x1714 once; the full invalidate (0x1710, then 0x1714 three times) as dev_draw.
     rsxInvalidateVertexCache(ctx);
-    rsxDrawIndexArray(ctx, (u8) prim, io_offset, count, GCM_INDEX_TYPE_16B, GCM_LOCATION_CELL);
+    rsxDrawIndexArray(ctx, (u8) prim, offset & ~DEV_LOCAL, count, GCM_INDEX_TYPE_16B,
+                      (offset & DEV_LOCAL) ? GCM_LOCATION_RSX : GCM_LOCATION_CELL);
 }
 
 void dev_clear(bool color, bool alpha, bool depth, u32 argb, u32 z24)

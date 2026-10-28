@@ -8,6 +8,7 @@
 #include <dolphin/os.h>
 #include <sysdolphin/baselib/archive.h>
 
+#include "../os/mem.h"
 #include "../os/sync.h"
 #include "pool.h"
 
@@ -228,6 +229,7 @@ s32 __wrap_HSD_ArchiveParse(HSD_Archive* archive, u8* src, size_t size)
     // Step 3 diagnostics, as the line below.
     OSReport("dat: parse %p, %u bytes\n", src, (u32) size);
     r = __real_HSD_ArchiveParse(archive, src, size);
+    ps3_mem_written(src, (u32) size);
     {
         size_t now, most;
 

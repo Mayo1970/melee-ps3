@@ -12,6 +12,7 @@
 
 #include "../os/diag.h"
 #include "../os/intr.h"
+#include "../os/mem.h"
 #include "audio_backend.h"
 #include "ax_shared.h"
 
@@ -413,6 +414,7 @@ static void aram_copy(u32 type, u32 mram, u32 aram_addr, u32 length)
             memcpy(aram + at, m, n);
         } else {
             memcpy(m, aram + at, n);
+            ps3_mem_written(m, n);
         }
         m += n;
         aram_addr += n;

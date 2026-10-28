@@ -147,6 +147,42 @@ u32 gp_vertex_size(GpState* s, int vat)
     return size;
 }
 
+u32 gp_list_draws(GpState* s, const u8* p, u32 size, GpListDraw* out, u32 max)
+{
+    const u8* end = p + size;
+    u32 n = 0;
+
+    while (p < end) {
+        u8 op = *p++;
+        u32 count, bytes;
+
+        if (op == OP_NOP) {
+            continue;
+        }
+        if (!(op & OP_DRAW) || end - p < 2) {
+            return 0;
+        }
+        count = be16(p);
+        p += 2;
+        bytes = count * gp_vertex_size(s, op & 7);
+        if ((u32) (end - p) < bytes) {
+            return 0;
+        }
+        if (bytes != 0) {
+            if (n == max) {
+                return 0;
+            }
+            out[n].prim = (op >> 3) & 7;
+            out[n].vat = op & 7;
+            out[n].count = (u16) count;
+            out[n].data = p;
+            n++;
+        }
+        p += bytes;
+    }
+    return n;
+}
+
 static void cp_write(u8 addr, u32 v)
 {
     u32 n = addr & 0xF;
@@ -430,6 +466,12 @@ static void run_list(u32 paddr, u32 size)
     }
     s.end = s.p + size;
     stats.display_lists++;
+    if (backend->call_list != NULL) {
+        ps3_diag.gp_site = "display list";
+        if (backend->call_list(&state, paddr, s.p, size, &stats.draws, &stats.vertices)) {
+            return;
+        }
+    }
     while (run_command(&s, true)) {
     }
 }
