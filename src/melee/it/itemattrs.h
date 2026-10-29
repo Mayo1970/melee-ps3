@@ -300,7 +300,8 @@ union ItemSpecialAttributes {
     itWstarAttributes wstar DAT_IF(Article::kind == It_Kind_WStar);
     itRabbitCAttributes rabbit_c DAT_IF(Article::kind == It_Kind_RabbitC);
     itMetalBAttributes metal_b DAT_IF(Article::kind == It_Kind_MetalB);
-    itMBallAttributes m_ball DAT_IF(Article::kind == It_Kind_M_Ball);
+    /// The Poke Ball's full record; #itMBallAttributes is its first two words.
+    itPokemonSpawn_DatAttrs pokemon_spawn DAT_IF(Article::kind == It_Kind_M_Ball);
     ItLGunRayAttr l_gun_ray DAT_IF(Article::kind == It_Kind_L_Gun_Ray);
     StarRodStarAttrs star_rod_star DAT_IF(Article::kind ==
                                           It_Kind_StarRod_Star);
@@ -541,7 +542,7 @@ union ItemSpecialAttributes {
         Article::kind == It_Kind_Pokemon_Unk || Article::kind == It_Kind_None);
     // Other layouts and shared views used by item callers.
     struct itChainSegment chain_segment;
-    itPokemonSpawn_DatAttrs pokemon_spawn;
+    itMBallAttributes m_ball;
     struct TetherAttributes tether;
     itUnkAttributes unk1;
     it_2728_DatAttrs unk_2728;

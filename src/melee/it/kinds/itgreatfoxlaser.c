@@ -50,9 +50,19 @@ Item_GObj* it_802EAF34(HSD_GObj* owner, Vec3* offset, int type)
         ip->xDD4_itemVar.greatfoxlaser.x28 = *offset;
         ip->xDD4_itemVar.greatfoxlaser.x38 = type;
         if (ip->xDD4_itemVar.greatfoxlaser.x38 == 0) {
+#ifdef TARGET_PS3
+            it_80272460(&ip->x5D4_hitboxes[0].hit, ps3_mwcc_f2u(attr->x0),
+                        item_gobj);
+#else
             it_80272460(&ip->x5D4_hitboxes[0].hit, attr->x0, item_gobj);
+#endif
         } else {
+#ifdef TARGET_PS3
+            it_80272460(&ip->x5D4_hitboxes[0].hit, ps3_mwcc_f2u(attr->x8),
+                        item_gobj);
+#else
             it_80272460(&ip->x5D4_hitboxes[0].hit, attr->x8, item_gobj);
+#endif
         }
         it_802EB268(item_gobj);
     }
@@ -94,10 +104,20 @@ bool itGreatfoxlaser_UnkMotion1_Anim(Item_GObj* gobj)
     if (!it_80272C6C(gobj)) {
         if (ip->xDD4_itemVar.greatfoxlaser.x38 == 0) {
             ip->x40_vel.x = attr->x4 * ip->facing_dir;
+#ifdef TARGET_PS3
+            it_80272460(&ip->x5D4_hitboxes[0].hit, ps3_mwcc_f2u(attr->x0),
+                        gobj);
+#else
             it_80272460(&ip->x5D4_hitboxes[0].hit, attr->x0, gobj);
+#endif
         } else {
             ip->x40_vel.x = attr->xC * ip->facing_dir;
+#ifdef TARGET_PS3
+            it_80272460(&ip->x5D4_hitboxes[0].hit, ps3_mwcc_f2u(attr->x8),
+                        gobj);
+#else
             it_80272460(&ip->x5D4_hitboxes[0].hit, attr->x8, gobj);
+#endif
         }
     } else {
         jobj = ip->xDD4_itemVar.greatfoxlaser.x20->hsd_obj;

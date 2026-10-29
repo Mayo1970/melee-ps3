@@ -124,8 +124,13 @@ void it_802B56E4(Item_GObj* gobj, Vec3* vec, f32 farg0, f32 farg1, f32 farg2)
         it_8026B3A8(gobj);
         ip->xDD4_itemVar.samuschargeshot.xDDC =
             (farg1 * ((attr->xC - attr->x8) / farg2)) + attr->x8;
+#ifdef TARGET_PS3
+        ip->xDD4_itemVar.samuschargeshot.xDF8 = ps3_mwcc_f2u(
+            (farg1 * ((attr->x14 - attr->x10) / farg2)) + attr->x10);
+#else
         ip->xDD4_itemVar.samuschargeshot.xDF8 =
             (u32) ((farg1 * ((attr->x14 - attr->x10) / farg2)) + attr->x10);
+#endif
         ip->xDD4_itemVar.samuschargeshot.xDE0 = 0.0f;
         ip->xDD4_itemVar.samuschargeshot.xDE4 =
             (ip->xDD4_itemVar.samuschargeshot.xDEC *

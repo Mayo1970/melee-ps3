@@ -281,7 +281,12 @@ static bool setupNormalCamera(HSD_CObj* cobj)
     bottom = cobj->scissor.bottom * y_scale;
     width = right - left;
     height = bottom - top;
+#ifdef TARGET_PS3
+    GXSetScissor(ps3_mwcc_f2u(left), ps3_mwcc_f2u(top), ps3_mwcc_f2u(width),
+                 ps3_mwcc_f2u(height));
+#else
     GXSetScissor(left, top, width, height);
+#endif
 
     projection_type = makeProjectionMtx(cobj, p);
     GXSetProjection(p, projection_type);
@@ -323,7 +328,12 @@ static bool setupTopHalfCamera(HSD_CObj* cobj)
     bottom = bottom < rmode->efbHeight ? bottom : rmode->efbHeight;
     width = right - left;
     height = bottom - top;
+#ifdef TARGET_PS3
+    GXSetScissor(ps3_mwcc_f2u(left), ps3_mwcc_f2u(top), ps3_mwcc_f2u(width),
+                 ps3_mwcc_f2u(height));
+#else
     GXSetScissor(left, top, width, height);
+#endif
     top = cobj->viewport.ymin;
     bottom = cobj->viewport.ymax;
     left = cobj->viewport.xmin;
@@ -401,7 +411,12 @@ static bool setupBottomHalfCamera(HSD_CObj* cobj)
     bottom = cobj->scissor.bottom - screen_top;
     width = right - left;
     height = bottom - top;
+#ifdef TARGET_PS3
+    GXSetScissor(ps3_mwcc_f2u(left), ps3_mwcc_f2u(top), ps3_mwcc_f2u(width),
+                 ps3_mwcc_f2u(height));
+#else
     GXSetScissor(left, top, width, height);
+#endif
 
     top = cobj->viewport.ymin;                   // lfs f4,0x14(r30)
     left = cobj->viewport.xmin;                  // lfs f1,0xc(r30)

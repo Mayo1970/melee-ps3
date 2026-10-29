@@ -1416,8 +1416,14 @@ void it_80272460(HitCapsule* hitbox, u32 damage, Item_GObj* arg_item_gobj)
     if (ftLib_IsFighter(owner_gobj)) {
         owner = GET_FIGHTER(owner_gobj);
         if (owner->x34_scale.y != 1.0f) {
+#ifdef TARGET_PS3
+            dmg = ps3_mwcc_f2u(
+                0.999f + ftCo_CalcYScaledKnockback(dmg, owner->x34_scale.y,
+                                                   Fighter_804D6524->x4));
+#else
             dmg = 0.999f + ftCo_CalcYScaledKnockback(dmg, owner->x34_scale.y,
                                                      Fighter_804D6524->x4);
+#endif
         }
         hitbox->unk_count = dmg;
         hitbox->damage =

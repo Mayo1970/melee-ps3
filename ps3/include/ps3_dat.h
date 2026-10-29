@@ -12,4 +12,8 @@ void* ps3_dat_element(HSD_Archive* archive, const void* native, const char* type
 // offset into the data of the archive that holds `at`, the script.
 void* ps3_dat_script(const void* at, u32 offset);
 
+// The big-endian word at byte `offset` of the serialized object the reader made `native` from, for code that reads
+// a field as another type than its declared one. False when `native` is no object of a live archive.
+bool ps3_dat_word(const void* native, u32 offset, u32* out);
+
 #endif

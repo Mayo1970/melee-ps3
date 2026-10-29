@@ -199,7 +199,12 @@ s32 fn_8017B410(s32 arg0)
 
     me = fn_80174274();
     if (lbLang_IsSavedLanguageUS() != 0) {
+#ifdef TARGET_PS3
+        var_r3 =
+            ps3_mwcc_f2u((f32) (me->player_standings[arg0].x5C / 30.4788f));
+#else
         var_r3 = (u32) (f32) (me->player_standings[arg0].x5C / 30.4788f);
+#endif
     } else {
         var_r3 = me->player_standings[arg0].x5C / 100;
     }
@@ -324,9 +329,16 @@ s32 fn_8017B91C(s32 arg0)
 
     me = fn_80174274();
     if (lbLang_IsSavedLanguageUS() != 0) {
+#ifdef TARGET_PS3
+        var_r3 = ps3_mwcc_f2u(
+            (f32) ((f32) me->player_standings[arg0].x94 / 30.4788));
+    } else {
+        var_r3 = ps3_mwcc_f2u((f32) me->player_standings[arg0].x94 / 100.0f);
+#else
         var_r3 = (u32) (f32) ((f32) me->player_standings[arg0].x94 / 30.4788);
     } else {
         var_r3 = (u32) ((f32) me->player_standings[arg0].x94 / 100.0f);
+#endif
     }
     return gmClampResultStat(var_r3);
 }
@@ -339,9 +351,16 @@ s32 fn_8017B9F4(s32 arg0)
 
     me = fn_80174274();
     if (lbLang_IsSavedLanguageUS() != 0) {
+#ifdef TARGET_PS3
+        var_r3 = ps3_mwcc_f2u(
+            (f32) ((f32) me->player_standings[arg0].x98 / 30.4788));
+    } else {
+        var_r3 = ps3_mwcc_f2u((f32) me->player_standings[arg0].x98 / 100.0f);
+#else
         var_r3 = (u32) (f32) ((f32) me->player_standings[arg0].x98 / 30.4788);
     } else {
         var_r3 = (u32) ((f32) me->player_standings[arg0].x98 / 100.0f);
+#endif
     }
     return gmClampResultStat((s32) var_r3);
 }

@@ -85,7 +85,11 @@ static void ftNs_AttackHi4_YoyoApplyDamage(float charge_frames, HSD_GObj* gobj)
             final_damage =
                 fp->x914->damage * (damage_mul * charge_duration2 + 1.0f);
 
+#ifdef TARGET_PS3
+            ftColl_8007ABD0(&fp->x914[0], ps3_mwcc_f2u(final_damage), gobj);
+#else
             ftColl_8007ABD0(&fp->x914[0], final_damage, gobj);
+#endif
         }
     }
 }

@@ -3161,10 +3161,17 @@ void gm_80166378(MatchEnd* arg0_raw)
             arg0->player_standings[i].x44 = pl_80040B64(i);
             arg0->player_standings[i].x48 = pl_80040BD8(i);
             arg0->player_standings[i].x4C = pl_80040BFC(i);
+#ifdef TARGET_PS3
+            arg0->player_standings[i].x50 = ps3_mwcc_f2u(pl_80040C24(i)) * 0xA;
+            arg0->player_standings[i].x54 = ps3_mwcc_f2u(pl_80040C48(i)) * 0xA;
+            arg0->player_standings[i].x58 = ps3_mwcc_f2u(pl_80040C6C(i)) * 0xA;
+            arg0->player_standings[i].x5C = ps3_mwcc_f2u(pl_80040C90(i)) * 0xA;
+#else
             arg0->player_standings[i].x50 = (u32) pl_80040C24(i) * 0xA;
             arg0->player_standings[i].x54 = (u32) pl_80040C48(i) * 0xA;
             arg0->player_standings[i].x58 = (u32) pl_80040C6C(i) * 0xA;
             arg0->player_standings[i].x5C = (u32) pl_80040C90(i) * 0xA;
+#endif
             arg0->player_standings[i].x60 = Player_GetTotalCoins(i);
             arg0->player_standings[i].x64 = Player_GetUnk98(i);
             arg0->player_standings[i].x68 = Player_GetUnk9C(i);
@@ -3178,10 +3185,17 @@ void gm_80166378(MatchEnd* arg0_raw)
             arg0->player_standings[i].x88 = pl_80040A9C(i);
             arg0->player_standings[i].x8C = pl_80040AF0(i);
             arg0->player_standings[i].x90 = pl_8003E39C(i);
+#ifdef TARGET_PS3
+            arg0->player_standings[i].x94 = ps3_mwcc_f2u(
+                ((void) (c = 60.0f), (c * ((d = 10.0f) * pl_80040D44(i)))));
+            arg0->player_standings[i].x98 =
+                ps3_mwcc_f2u(c * (d * pl_80040D68(i)));
+#else
             arg0->player_standings[i].x94 =
                 (u32) ((void) (c = 60.0f),
                        (c * ((d = 10.0f) * pl_80040D44(i))));
             arg0->player_standings[i].x98 = (u32) (c * (d * pl_80040D68(i)));
+#endif
             arg0->player_standings[i].x9C = (u32) pl_80040CFC(i) / 60U;
             arg0->player_standings[i].xA0 = (u32) pl_80040D20(i) / 60U;
             arg0->player_standings[i].xA4 = pl_80040DB8(i);

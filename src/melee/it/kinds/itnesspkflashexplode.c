@@ -108,11 +108,19 @@ bool itNessPKFlashExplode_UnkMotion0_Anim(Item_GObj* gobj)
     if (ip->xDB4_itcmd_var2 == 0 &&
         ip->x5D4_hitboxes[0].hit.state != HitCapsule_Disabled)
     {
+#ifdef TARGET_PS3
+        it_80272460(&ip->x5D4_hitboxes[0].hit,
+                    ps3_mwcc_f2u((ip->xDD4_itemVar.pkflushexplode.xDD4 *
+                                  attr->x10_FLASH_EXPL_DAMAGE_MUL) +
+                                 attr->xC_FLASH_EXPL_BASE_DAMAGE),
+                    gobj);
+#else
         it_80272460(&ip->x5D4_hitboxes[0].hit,
                     (ip->xDD4_itemVar.pkflushexplode.xDD4 *
                      attr->x10_FLASH_EXPL_DAMAGE_MUL) +
                         attr->xC_FLASH_EXPL_BASE_DAMAGE,
                     gobj);
+#endif
         ip->xDB4_itcmd_var2 = 1;
     }
 

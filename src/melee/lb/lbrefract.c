@@ -39,10 +39,17 @@ static struct refract_data_t* refract_data;
 static inline void lbRefract_WriteTexCoord(lbRefract_CallbackData* cb, s32 row,
                                            u32 col, f32 y, f32 x, f32 param0)
 {
+#ifdef TARGET_PS3
+    u32 y_tex = ps3_mwcc_f2u(127.0f * (y * param0) + 128.0f);
+    ((void (*)(lbRefract_CallbackData*, s32, s32, s32, s32, u32, u32))
+         cb->callback0)(cb, row, col, 0, 0, y_tex,
+                        ps3_mwcc_f2u(127.0f * (x * param0) + 128.0f));
+#else
     u32 y_tex = 127.0f * (y * param0) + 128.0f;
     ((void (*)(lbRefract_CallbackData*, s32, s32, s32, s32, u32,
                u32)) cb->callback0)(cb, row, col, 0, 0, y_tex,
                                     127.0f * (x * param0) + 128.0f);
+#endif
 }
 
 /// @todo reconcile with MSL fmodf

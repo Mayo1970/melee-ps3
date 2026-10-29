@@ -452,10 +452,18 @@ EF_Effect* efLib_Create(int gfx_id, HSD_GObj* parent_gobj)
             u8 kind = HSD_GObj_JObjKind;
             HSD_GObjObject_80390A70(effect->gobj, kind, jobj);
         }
+#ifdef TARGET_PS3
+        if (ps3_mwcc_f2u(10.0F * desc->lifetime) % 10 != 0) {
+#else
         if ((u32) (10.0F * desc->lifetime) % 10 != 0) {
+#endif
             lb_80011C18(jobj, 0x08000000);
         }
+#ifdef TARGET_PS3
+        effect->lifetime = ps3_mwcc_f2u(desc->lifetime);
+#else
         effect->lifetime = (u32) desc->lifetime;
+#endif
         if (effect->lifetime != 0) {
             ++effect->lifetime;
         }

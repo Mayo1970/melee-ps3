@@ -397,8 +397,26 @@ Waiting for the user:
   the stop and in the movie.
 - Run 30: the normal package with step 1 (dirty tracking), a match, and the heartbeat's fourth line.
 - Run 38: answered by run 39: the z-fighting stops with an RSX wait after each RSX draw (mode 1).
-- Run 40: the package with part 2 steps 1 and 2, a match in mode 0 (no Select), the heartbeat's fourth and fifth
-  lines.
+- Melee run 41 (2026-10-29, `build/run41_udp.txt`): the console created the save. Mute City: mode 0 50-55 presents
+  a second, the RSX barrier after each draw 25, the PPE wait 15. The user: only the stage model flickers black, not
+  the platforms; the RSX barrier mode flickers less. That mode also holds the PPE back (ring waits 55%).
+- Race package 2: Select cycles 0 none; an RSX barrier before 1 constant uploads, 2 VP loads, 3 texture binds; 4 a
+  PPE wait at each present (the lead only); 5 an RSX barrier after each draw. Host: all modes, 0 dropped draws.
+  Package: `.got` 0x46f8, 0 `r2off` stubs.
+- Melee run 41, second boot (`build/run41b_udp.txt`): Mr. Game & Watch and Kirby on Flat Zone; the main thread
+  stopped (no message) right after Kirby's copied Chef (`GwSpecialN`). Host (G&W against CPU Kirbies): "stack
+  smashing detected" in `it_8027CE64` from `it_802C74D8`. Two LP64 faults, fixed under `TARGET_PS3`:
+  - `ftKb_Init_800EEB00` copies the word at +4 of G&W's copy data (`x0.ftDynamicBones`, the item colour) into a
+    4-byte `GXColor`; natively that field is an 8-byte pointer, so it overran the stack, and the reader had dropped
+    the colour. It now reads the serialized word with `ps3_dat_word` (`ps3/dat/lookup.c`, a native object's
+    serialized bytes): 0x000000FF.
+  - `it_8027CE64` stores the 8-byte `gamewatch.attr` at +0 of the item vars, over `gamewatchchef.x4` (the sausage
+    kind) at +4: `gamewatchchef.x0` is pointer-sized now, so `x4` moves behind it. G&W's own Chef had the same fault.
+  Host: four 240 s matches with 18-38 Kirby Chef uses each, and 112 scripted Chefs by a human G&W, with no fault.
+  Package: `.got` 0x46f8, 0 `r2off` stubs, 19.1 MB in loaded segments.
+- Run 42: Mute City through the six modes: which stop the stage's black flicker?
+- Run 41: saving (the first boot creates the save; a setting changed, then a second boot keeps it), Poke Balls,
+  the C stick (which mode failed), and the race modes (Select) on Green Greens, Mute City and with the XMB open.
 
 The UDP log goes to `192.168.178.99`, port 18194 (`ps3/os/udplog_cell.c`). A listener: `nc -ul 18194`, or any
 UDP listener on that port.
@@ -653,6 +671,39 @@ Step 2, texture checks (2026-10-28, `backend.c`):
 - The heartbeat: OSReport keeps 511 characters, so the cache counters are a fifth line now (lists from the cache,
   converted, run as commands, evicted; texture hashes). Run 39's fourth lines were cut there.
 - Normal package rebuilt: `.got` 0x45f8, 0 `r2off` stubs, 19.0 MB in loaded segments.
+- Melee run 40 (2026-10-29, `build/run40_udp.txt`, mode 0, Peach and DK, 2-minute matches): Green Greens 60.0
+  presents a second (59-60) at about 142,000 GX draws in 42,000 RSX draws, GP draws 460 per mille (TEV 174,
+  vertices 137, constants 63, textures 45), waits for data 271; Fountain of Dreams 42 (34-47) at 171,000 GX
+  draws, vertices 372 per mille (draws the cache does not take), GP never waits; Mute City 57 (43-60) at 140,000 GX
+  draws in 54,000 RSX draws. 0-7 texture hashes a second. The user: no flicker on most stages; flicker and corrupt
+  textures while the XMB is open; a black flicker on Mute City.
+
+Other findings of 2026-10-29:
+- C stick: the right stick is the C stick (`pad.c`). Host check (`MELEE_HOST_PAD` now takes `CL CR CU CD`): C stick
+  right in a VS match gives Mario's forward smash and back air. The user's failing mode is not known yet.
+- Poke Ball Pokemon: each ball released kinds 161, 162, 163 in turn. The ball's attributes are read as
+  `pokemon_spawn` (`it_279C.c`), but the union member annotated for `It_Kind_M_Ball` was `m_ball`, 8 bytes, so the
+  native reader converted 8 bytes: all spawn weights 0 (the first two kinds not picked last win) and the spawn
+  scale time 0 (`it_8027AAA0` divides by it). Fix: `pokemon_spawn` is the annotated member, `m_ball` a shared view
+  (`itemattrs.h`, annotations only), schema regenerated. Host (`tests/item_trace.c`, an item trace build;
+  `MELEE_HOST_MATCH` takes an item mask, `0x400000000` is Poke Balls only): the weights read 30 30 30 25 ...,
+  the balls release kinds 170, 182, 186. The other Pokemon read their own annotated members.
+- Float to unsigned: MWCC converts a float to a 32-bit unsigned with `__cvt_fp2unsigned` (0 below 0, 0xFFFFFFFF
+  from 2^32); GCC goes through 64 bits, so -1.0 gives 0xFFFFFFFF. Wobbuffet's `(u32) sonans.x68` then gave a
+  fighter 4294967296 damage ("attack power over 500", `ftcoll.c` 1057). `ps3_mwcc_f2u` (`ps3_msl_math.h`) has
+  MWCC's result. Of the 85 lines with an `fctidz` in the game and SDK objects, 72 conversions in 37 files use it
+  under `TARGET_PS3` (the GameCube code unchanged in `#else`); the others convert to 64-bit or signed types.
+  Host: two 200 s matches with Poke Balls only (Mario, Fox, Peach, DK on Final Destination; Zelda, Yoshi,
+  Jigglypuff, Pikachu on Fountain of Dreams) run their time with no assertion, dozens of Pokemon released.
+- Memory card (`sdk/card.c`): a Memory Card 251 in slot A, its files as GCI files (Dolphin's export format: the
+  64-byte directory entry, then the data) in `/dev_hdd0/game/MELE00001/USRDIR/card` (host: `build/card`). Mount
+  loads them; create, write, rename, set status and delete write through to the files; callbacks come as a new
+  EXI interrupt. Slot B is empty. Host: the first boot creates `01-GALE-SuperSmashBros0110290334.gci` (11 blocks,
+  banner, icon and comment set); the next boot loads it and leaves it unchanged.
+- Package with all of the above: `.got` 0x46f8, 0 `r2off` stubs, 19.1 MB in loaded segments.
+- Race test package: Select cycles what follows each RSX draw: 0 nothing, 1 an RSX barrier (the RSX waits for its
+  own backend), 2 a flush, 3 the PPE waits for the RSX (run 39's mode 1). XMB events are logged
+  (`sys: XMB event`).
 
 ## Not done for the game
 

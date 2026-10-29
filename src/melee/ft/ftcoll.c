@@ -971,7 +971,11 @@ bool ftColl_80077C60(Item* item, HitCapsule* hit, Fighter* fp,
                                 entry->x10.hit1 = hit2;
                                 entry->pos = hit->hurt_coll_pos;
                                 entry->x20 = f4;
+#ifdef TARGET_PS3
+                                entry->size_of_xC = ps3_mwcc_f2u(half_raw_f);
+#else
                                 entry->size_of_xC = (size_t) half_raw_f;
+#endif
                                 dmg_log1_idx++;
                             } else {
                                 HSD_ASSERTREPORT(0x110, 0,
@@ -1080,7 +1084,11 @@ bool ftColl_80077C60(Item* item, HitCapsule* hit, Fighter* fp,
                         entry->x10.hit1 = hit2;
                         entry->pos = hit->hurt_coll_pos;
                         entry->x20 = hit->damage;
+#ifdef TARGET_PS3
+                        entry->size_of_xC = ps3_mwcc_f2u(raw_dmg);
+#else
                         entry->size_of_xC = (size_t) raw_dmg;
+#endif
                         dmg_log0_idx++;
                     } else {
                         HSD_ASSERTREPORT(0xE3, 0, "damage log over %d!!\n",
@@ -2253,7 +2261,11 @@ void ftColl_8007A06C(Fighter_GObj* gobj, void* dmg_ptr, void* log, size_t idx,
             kb = ftColl_80079C70(fp, attacker_fp, hit, unk_count);
 
             if (arg4 != 0) {
+#ifdef TARGET_PS3
+                u32 dmg = ps3_mwcc_f2u(entry->x20);
+#else
                 u32 dmg = entry->x20;
+#endif
                 int effect = hit_effect_ids[entry->xC.hit0->element];
                 spawnHitEffect(gobj, effect, &entry->pos,
                                entry->xC.hit0->sfx_severity, dmg, kb);
@@ -2277,7 +2289,11 @@ void ftColl_8007A06C(Fighter_GObj* gobj, void* dmg_ptr, void* log, size_t idx,
                 Player_GetDefenseRatio(fp->player_idx), co->weight);
 
             if (arg4 != 0) {
+#ifdef TARGET_PS3
+                u32 dmg = ps3_mwcc_f2u(entry->x20);
+#else
                 u32 dmg = entry->x20;
+#endif
                 int effect = hit_effect_ids[entry->xC.hit0->element];
                 spawnHitEffect(gobj, effect, &entry->pos,
                                entry->xC.hit0->sfx_severity, dmg, kb);
@@ -3108,7 +3124,13 @@ void ftColl_8007BE3C(Fighter_GObj* gobj)
             ftColl_80078998(fp->dmg.x1894, fp->gobj, fp->dmg.x1898);
             break;
         }
+#ifdef TARGET_PS3
+        spawnHitEffect(gobj, getHitEffectId(fp->dmg.x188c), &fp->dmg.x1880,
+                       fp->dmg.x1890, ps3_mwcc_f2u(fp->dmg.x1898),
+                       fp->dmg.x187c);
+#else
         spawnHitEffect(gobj, getHitEffectId(fp->dmg.x188c), &fp->dmg.x1880,
                        fp->dmg.x1890, fp->dmg.x1898, fp->dmg.x187c);
+#endif
     }
 }

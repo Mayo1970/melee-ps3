@@ -122,7 +122,11 @@ void* fn_801A9FCC(void)
     lines[1].next = &lines[2];
     lines[2].unk_04 = 0;
 
+#ifdef TARGET_PS3
+    ms = ps3_mwcc_f2u(lbMthp_8001F5D4() / (f32) OSMillisecondsToTicks(1));
+#else
     ms = lbMthp_8001F5D4() / (f32) OSMillisecondsToTicks(1);
+#endif
     idx = 2;
     sprintf(lines[idx].text, "\\cffff00%3d", ms);
 
@@ -247,7 +251,11 @@ void gm_Scene_Opening_OnFrame(void)
     if (!gm_804D67D0 && (gm_804D67EC >= 0x140A)) {
         gmTitle_801A165C();
         gm_804D67D0 = true;
+#ifdef TARGET_PS3
+        gm_804D67E4 = ps3_mwcc_f2u(600.0f + (400.0f + gm_804D67EC));
+#else
         gm_804D67E4 = (600.0f + (400.0f + gm_804D67EC));
+#endif
     }
     if (lbMthp_8001F604() != 0 && !gm_804D67DC && gm_804D67D0) {
         gm_PreloadTitleDemo();

@@ -259,11 +259,20 @@ static inline void inlineA0(Fighter_GObj* gobj, HSD_GObjEvent cb)
         i = 0;
         while (i < (signed) ARRAY_SIZE(fp->x914)) {
             if (fp->x914[i].state == HitCapsule_Enabled) {
+#ifdef TARGET_PS3
+                ftColl_8007ABD0(
+                    &fp->x914[i],
+                    ps3_mwcc_f2u(
+                        (float) (da->x4 +
+                                 fp->mv.ms.specialn.cur_frame / 30 * da->x8)),
+                    gobj);
+#else
                 ftColl_8007ABD0(
                     &fp->x914[i],
                     (float) (da->x4 +
                              fp->mv.ms.specialn.cur_frame / 30 * da->x8),
                     gobj);
+#endif
             }
             i++;
         }

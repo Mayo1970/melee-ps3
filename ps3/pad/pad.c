@@ -82,19 +82,18 @@ u32 PADRead(PADStatus* status)
         connected |= PAD_CHAN0_BIT >> chan;
     }
     {
-        // All on, all on with an RSX wait per draw, then each change alone, then none.
-        static const unsigned modes[] = { 0, 8, 6, 5, 3, 7 };
+        // Where the backend waits: nowhere, then one place each (diag.h).
+        static const unsigned modes[] = { 0, 64, 128, 256, 512, 16 };
+        static const char* const names[] = { "none", "an RSX barrier before constants",
+                                             "an RSX barrier before VP loads", "an RSX barrier before texture binds",
+                                             "a PPE wait at each present", "an RSX barrier after each draw" };
         static unsigned held, mode;
 
         // Select is no GameCube button: each press moves the backend to the next A/B mode.
         if ((pads[0].buttons & PS3_PAD_SELECT) && !held) {
-            unsigned m;
-
             mode = (mode + 1) % 6;
-            m = modes[mode];
-            ps3_diag.gx_ab = m;
-            OSReport("gx A/B: mode %u: batching %s, VP slots %s, constants %s, RSX wait per draw %s\n", mode,
-                     m & 1 ? "off" : "on", m & 2 ? "off" : "on", m & 4 ? "all" : "changed", m & 8 ? "on" : "off");
+            ps3_diag.gx_ab = modes[mode];
+            OSReport("gx A/B: mode %u: %s\n", mode, names[mode]);
         }
         held = pads[0].buttons & PS3_PAD_SELECT;
     }

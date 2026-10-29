@@ -678,14 +678,23 @@ void ftGw_SpecialLwShoot_ReleaseOil(HSD_GObj* gobj)
         {
             ftGameWatchAttributes* sa = getFtSpecialAttrs(fp);
 
+#ifdef TARGET_PS3
+            fp->cmd_vars[1] = ps3_mwcc_f2u(fp->u.gw.x223C_panicDamage *
+                                           sa->x78_GAMEWATCH_PANIC_DAMAGE_MUL);
+#else
             fp->cmd_vars[1] = fp->u.gw.x223C_panicDamage *
                               sa->x78_GAMEWATCH_PANIC_DAMAGE_MUL;
+#endif
 
             {
                 float panicDamage =
                     fp->cmd_vars[1] + sa->x74_GAMEWATCH_PANIC_DAMAGE_ADD;
 
+#ifdef TARGET_PS3
+                fp->cmd_vars[1] = ps3_mwcc_f2u(panicDamage);
+#else
                 fp->cmd_vars[1] = panicDamage;
+#endif
                 fp->u.gw.x2238_panicCharge = ftGw_Panic_Empty;
                 fp->u.gw.x223C_panicDamage = 0;
             }
@@ -712,13 +721,22 @@ void ftGw_SpecialAirLwShoot_ReleaseOil(HSD_GObj* gobj)
         {
             ftGameWatchAttributes* sa = getFtSpecialAttrs(fp);
 
+#ifdef TARGET_PS3
+            fp->cmd_vars[1] = ps3_mwcc_f2u(fp->u.gw.x223C_panicDamage *
+                                           sa->x78_GAMEWATCH_PANIC_DAMAGE_MUL);
+#else
             fp->cmd_vars[1] = fp->u.gw.x223C_panicDamage *
                               sa->x78_GAMEWATCH_PANIC_DAMAGE_MUL;
+#endif
 
             {
                 float panicDamage =
                     fp->cmd_vars[1] + sa->x74_GAMEWATCH_PANIC_DAMAGE_ADD;
+#ifdef TARGET_PS3
+                fp->cmd_vars[1] = ps3_mwcc_f2u(panicDamage);
+#else
                 fp->cmd_vars[1] = panicDamage;
+#endif
             }
 
             fp->u.gw.x2238_panicCharge = 0;

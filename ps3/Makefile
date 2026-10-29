@@ -207,6 +207,8 @@ $(call GAME_OBJ,$(GAME_CELL_SRCS)): GAME_FLAGS := $(PORT_INCS)
 $(call GAME_OBJ,$(DAT_SRCS)): GAME_FLAGS := -mminimal-toc $(DAT_FLAGS)
 ifeq ($(TOOLCHAIN),linux)
 $(call GAME_OBJ,ps3/dvd/dvd.c): GAME_FLAGS := -DPS3_APP_DIR=\"$(DVD_APP_DIR)\"
+# The disc folder is read-only there: the memory card lives in the build tree.
+$(call GAME_OBJ,ps3/sdk/card.c): GAME_FLAGS := -DPS3_CARD_DIR=\"build/card\"
 $(call GAME_OBJ,ps3/tests/audio_host.c): GAME_FLAGS := -DHOST_AUDIO_REALTIME
 endif
 

@@ -21,6 +21,8 @@ static void on_sysutil(u64 status, u64 param, void* user)
     if (status == SYSUTIL_EXIT_GAME) {
         quit = true;
     }
+    // XMB opened (0x131) and closed (0x132), its drawing begins (0x121) and ends (0x122): the flicker comes with them.
+    ps3_log("sys: XMB event %#llx\n", (unsigned long long) status);
 }
 
 void ps3_sys_init(void)

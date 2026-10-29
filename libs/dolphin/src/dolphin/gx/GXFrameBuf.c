@@ -4,6 +4,10 @@
 #include <dolphin/gx.h>
 #include <dolphin/os.h>
 
+#ifdef TARGET_PS3
+#include "ps3_msl_math.h"
+#endif
+
 GXRenderModeObj GXNtsc240Ds = { 1,
                                 640,
                                 240,
@@ -501,7 +505,11 @@ u32 GXSetDispCopyYScale(f32 vscale)
     ASSERTMSGLINE(0x49D, vscale >= 1.0f,
                   "GXSetDispCopyYScale: Vertical scale must be >= 1.0");
 
+#ifdef TARGET_PS3
+    iScale = ps3_mwcc_f2u(256.0f / vscale) & 0x1FF;
+#else
     iScale = (u32) (256.0f / vscale) & 0x1FF;
+#endif
     fScale = 256.0f / (f32) iScale;
     enable = (iScale != 256);
 
@@ -512,7 +520,11 @@ u32 GXSetDispCopyYScale(f32 vscale)
     gx->bpSent = 0;
     SET_REG_FIELD(0x4AB, gx->cpDisp, 1, 10, enable);
     ht = GET_REG_FIELD(gx->cpDispSize, 10, 10) + 1;
+#ifdef TARGET_PS3
+    return ps3_mwcc_f2u(ht * fScale);
+#else
     return ht * fScale;
+#endif
 }
 
 void GXSetCopyClear(GXColor clear_clr, u32 clear_z)

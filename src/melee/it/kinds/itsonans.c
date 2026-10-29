@@ -100,8 +100,13 @@ void it_802CD4FC(Item_GObj* gobj)
         HSD_JObjSetRotationZ(ip->xBBC_dynamicBoneTable->bones[4],
                              0.017453292f * ip->xDD4_itemVar.sonans.x64);
     }
+#ifdef TARGET_PS3
+    it_80272460(&ip->x5D4_hitboxes[0].hit,
+                ps3_mwcc_f2u(ip->xDD4_itemVar.sonans.x68), gobj);
+#else
     it_80272460(&ip->x5D4_hitboxes[0].hit, (u32) ip->xDD4_itemVar.sonans.x68,
                 gobj);
+#endif
     ip->xDD4_itemVar.sonans.x68 -= attrs->x20;
 }
 

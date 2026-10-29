@@ -35,7 +35,11 @@ static void ftCa_SpecialLw_800E49FC(HSD_GObj* gobj)
     fp->x1968_jumpsUsed = fp->co_attrs.max_jumps;
     fp->mv.ca.specialhi.x0 = da->specialhi_air_var;
     fp->cmd_vars[0] = 0;
+#ifdef TARGET_PS3
+    fp->cmd_vars[1] = ps3_mwcc_f2u(da->specialhi_unk2);
+#else
     fp->cmd_vars[1] = da->specialhi_unk2;
+#endif
     fp->mv.ca.specialhi.vel.x = 0;
     fp->mv.ca.specialhi.vel.y = 0;
     fp->mv.ca.specialhi.x2_b0 = false;

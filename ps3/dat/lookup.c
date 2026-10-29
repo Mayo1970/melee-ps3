@@ -289,3 +289,35 @@ void* ps3_dat_script(const void* at, u32 offset)
     }
     return target;
 }
+
+bool ps3_dat_word(const void* native, u32 offset, u32* out)
+{
+    bool found = false;
+    unsigned i;
+    size_t k;
+
+    if (native == NULL) {
+        return false;
+    }
+    ps_mutex_lock(&spans_lock);
+    for (i = nspans; i-- > 0 && !found;) {
+        const DatMap* natives = &spans[i].native->natives;
+
+        // The natives map goes from (offset, type id) to the object; the reverse takes a scan.
+        for (k = 0; k < natives->cap; k++) {
+            if (natives->keys[k] != UINT64_MAX && natives->values[k] == (uintptr_t) native) {
+                u32 at = (u32) (natives->keys[k] >> 32) + offset;
+
+                if (at + 4 <= spans[i].data_size) {
+                    const u8* p = spans[i].data + at;
+
+                    *out = (u32) p[0] << 24 | (u32) p[1] << 16 | (u32) p[2] << 8 | p[3];
+                    found = true;
+                }
+                break;
+            }
+        }
+    }
+    ps_mutex_unlock(&spans_lock);
+    return found;
+}

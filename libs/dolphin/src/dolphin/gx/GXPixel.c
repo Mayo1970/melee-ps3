@@ -5,6 +5,10 @@
 #include <dolphin/gx.h>
 #include <dolphin/os.h>
 
+#ifdef TARGET_PS3
+#include "ps3_msl_math.h"
+#endif
+
 void GXSetFog(GXFogType type, f32 startz, f32 endz, f32 nearz, f32 farz,
               GXColor color)
 {
@@ -54,7 +58,11 @@ void GXSetFog(GXFogType type, f32 startz, f32 endz, f32 nearz, f32 farz,
     }
 
     a = A / (f32) (1 << (B_expn + 1));
+#ifdef TARGET_PS3
+    b_m = ps3_mwcc_f2u(8.388638e6f * B_mant);
+#else
     b_m = 8.388638e6f * B_mant;
+#endif
     b_s = B_expn + 1;
     c = C;
 
@@ -126,7 +134,11 @@ void GXInitFogAdjTable(GXFogAdjTable* table, u16 width, f32 projmtx[4][4])
         xi *= iw;
         xi *= sideX;
         rangeVal = sqrtf(1.0f + ((xi * xi) / (nearZ * nearZ)));
+#ifdef TARGET_PS3
+        table->r[i] = ps3_mwcc_f2u(256.0f * rangeVal) & 0xFFF;
+#else
         table->r[i] = (u32) (256.0f * rangeVal) & 0xFFF;
+#endif
     }
 }
 

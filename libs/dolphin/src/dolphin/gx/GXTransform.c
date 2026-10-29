@@ -5,6 +5,10 @@
 #include <dolphin/mtx.h>
 #include <dolphin/os.h>
 
+#ifdef TARGET_PS3
+#include "ps3_msl_math.h"
+#endif
+
 void GXProject(f32 x, f32 y, f32 z, f32 mtx[3][4], f32* pm, f32* vp, f32* sx,
                f32* sy, f32* sz)
 {
@@ -77,7 +81,11 @@ void GXSetProjectionv(f32* ptr)
 
     CHECK_GXBEGIN(0x109, "GXSetProjectionv");
 
+#ifdef TARGET_PS3
+    gx->projType = ps3_mwcc_f2u(ptr[0]);
+#else
     gx->projType = ptr[0];
+#endif
     gx->projMtx[0] = ptr[1];
     gx->projMtx[1] = ptr[2];
     gx->projMtx[2] = ptr[3];

@@ -1646,7 +1646,11 @@ static bool Item_80269F14(HSD_GObj* gobj)
                 temp_f30 =
                     temp_item->x5D4_hitboxes[i].hit.damage * temp_item->xC6C +
                     0.99f;
+#ifdef TARGET_PS3
+                var_r27 = ps3_mwcc_f2u(temp_f30);
+#else
                 var_r27 = temp_f30;
+#endif
                 if (var_r27 > it_804D6D28->xD8) {
                     var_r27 = it_804D6D28->xD8;
                 }

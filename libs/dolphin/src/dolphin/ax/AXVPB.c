@@ -3,6 +3,10 @@
 #include "__ax.h"
 #include <dolphin/ax.h>
 
+#ifdef TARGET_PS3
+#include "ps3_msl_math.h"
+#endif
+
 static unsigned long __AXSrcCycles[5] = { 0x00000DF8, 0x00000F78, 0x000014B8,
                                           0x000019F8, 0x000019F8 };
 
@@ -1237,7 +1241,11 @@ void AXSetVoiceSrcRatio(AXVPB* p, float ratio)
     int old;
 
     old = OSDisableInterrupts();
+#ifdef TARGET_PS3
+    r = ps3_mwcc_f2u(65536.0f * ratio);
+#else
     r = 65536.0f * ratio;
+#endif
     if (r > 0x40000) {
         r = 0x40000;
     }

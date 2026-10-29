@@ -110,7 +110,11 @@ bool itZeldadinfireexplode_UnkMotion0_Anim(Item_GObj* gobj)
     if (ip->x5D4_hitboxes[0].hit.state != HitCapsule_Disabled) {
         temp_f1 = (ip->xDD4_itemVar.zeldadinfireexplode.xDD4 * attrs->x10 +
                    attrs->xC);
+#ifdef TARGET_PS3
+        it_80272460(&ip->x5D4_hitboxes[0].hit, ps3_mwcc_f2u(temp_f1), gobj);
+#else
         it_80272460(&ip->x5D4_hitboxes[0].hit, temp_f1, gobj);
+#endif
 
         if (ip->xDD4_itemVar.zeldadinfireexplode.xDD8 == 0.0f) {
             ip->xDD4_itemVar.zeldadinfireexplode.xDD8 =

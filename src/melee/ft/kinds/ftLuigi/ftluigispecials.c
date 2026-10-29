@@ -344,11 +344,20 @@ void ftLg_SpecialS_Anim(HSD_GObj* gobj)
     if (!fp->mv.lg.SpecialS.isMisfire &&
         fp->x914[0].state == HitCapsule_Enabled)
     {
+#ifdef TARGET_PS3
+        ftColl_8007ABD0(
+            &fp->x914[0],
+            ps3_mwcc_f2u(fp->mv.lg.SpecialS.chargeFrames *
+                             sa->x14_LUIGI_GREENMISSILE_DAMAGE_SLOPE +
+                         sa->x10_LUIGI_GREENMISSILE_DAMAGE_TILT),
+            gobj);
+#else
         ftColl_8007ABD0(&fp->x914[0],
                         fp->mv.lg.SpecialS.chargeFrames *
                                 sa->x14_LUIGI_GREENMISSILE_DAMAGE_SLOPE +
                             sa->x10_LUIGI_GREENMISSILE_DAMAGE_TILT,
                         gobj);
+#endif
     }
 
     if (fp->cmd_vars[0] != 0) {
@@ -368,11 +377,20 @@ void ftLg_SpecialAirS_Anim(HSD_GObj* gobj)
     if (!fp->mv.lg.SpecialS.isMisfire &&
         fp->x914[0].state == HitCapsule_Enabled)
     {
+#ifdef TARGET_PS3
+        ftColl_8007ABD0(
+            &fp->x914[0],
+            ps3_mwcc_f2u(fp->mv.lg.SpecialS.chargeFrames *
+                             sa->x14_LUIGI_GREENMISSILE_DAMAGE_SLOPE +
+                         sa->x10_LUIGI_GREENMISSILE_DAMAGE_TILT),
+            gobj);
+#else
         ftColl_8007ABD0(&fp->x914[0],
                         fp->mv.lg.SpecialS.chargeFrames *
                                 sa->x14_LUIGI_GREENMISSILE_DAMAGE_SLOPE +
                             sa->x10_LUIGI_GREENMISSILE_DAMAGE_TILT,
                         gobj);
+#endif
     }
 
     if (fp->cmd_vars[0] != 0) {
@@ -505,11 +523,20 @@ void ftLg_SpecialSMisfire_Anim(HSD_GObj* gobj)
     if (!fp->mv.lg.SpecialS.isMisfire &&
         fp->x914[0].state == HitCapsule_Enabled)
     {
+#ifdef TARGET_PS3
+        ftColl_8007ABD0(
+            &fp->x914[0],
+            ps3_mwcc_f2u(fp->mv.lg.SpecialS.chargeFrames *
+                             sa->x14_LUIGI_GREENMISSILE_DAMAGE_SLOPE +
+                         sa->x10_LUIGI_GREENMISSILE_DAMAGE_TILT),
+            gobj);
+#else
         ftColl_8007ABD0(&fp->x914[0],
                         fp->mv.lg.SpecialS.chargeFrames *
                                 sa->x14_LUIGI_GREENMISSILE_DAMAGE_SLOPE +
                             sa->x10_LUIGI_GREENMISSILE_DAMAGE_TILT,
                         gobj);
+#endif
     }
 
     if (fp->cmd_vars[0] != 0) {
@@ -529,11 +556,20 @@ void ftLg_SpecialAirSMisfire_Anim(HSD_GObj* gobj)
     if (!fp->mv.lg.SpecialS.isMisfire &&
         fp->x914[0].state == HitCapsule_Enabled)
     {
+#ifdef TARGET_PS3
+        ftColl_8007ABD0(
+            &fp->x914[0],
+            ps3_mwcc_f2u(fp->mv.lg.SpecialS.chargeFrames *
+                             sa->x14_LUIGI_GREENMISSILE_DAMAGE_SLOPE +
+                         sa->x10_LUIGI_GREENMISSILE_DAMAGE_TILT),
+            gobj);
+#else
         ftColl_8007ABD0(&fp->x914[0],
                         fp->mv.lg.SpecialS.chargeFrames *
                                 sa->x14_LUIGI_GREENMISSILE_DAMAGE_SLOPE +
                             sa->x10_LUIGI_GREENMISSILE_DAMAGE_TILT,
                         gobj);
+#endif
     }
 
     if (fp->cmd_vars[0] != 0) {

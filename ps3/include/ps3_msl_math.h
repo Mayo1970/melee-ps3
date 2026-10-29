@@ -11,4 +11,11 @@ static inline float ps3_msl_sqrtf(float x)
 }
 #define sqrtf ps3_msl_sqrtf
 
+// MWCC converts a float to a 32-bit unsigned with __cvt_fp2unsigned (runtime.c): 0 below 0 and for NaN, 0xFFFFFFFF
+// from 2^32 up. GCC goes through a 64-bit integer, so -1.0 becomes 0xFFFFFFFF.
+static inline unsigned int ps3_mwcc_f2u(double x)
+{
+    return !(x >= 0.0) ? 0u : x >= 4294967296.0 ? 0xFFFFFFFFu : (unsigned int) x;
+}
+
 #endif

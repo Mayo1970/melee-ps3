@@ -26,8 +26,8 @@ typedef struct Ps3Diag {
     volatile unsigned vblanks;
     // Connected pads, and the first one's PS3_PAD_* buttons (ps3/pad/pad_cell.h).
     volatile unsigned pads, pad0_buttons;
-    // Backend A/B test (Select cycles it, pad.c): 1 no batching and no display list cache, 2 VP load at each
-    // switch, 4 all constants, 8 wait for the RSX after each RSX draw.
+    // Backend A/B (Select, pad.c): 1 no batching or list cache, 2 VP load per switch, 4 all constants; per draw 8 PPE
+    // wait, 16 RSX barrier, 32 flush; RSX barrier before 64 constants, 128 VP loads, 256 textures; 512 PPE wait/present.
     volatile unsigned gx_ab;
     // Set by the RPCS3 build's automatic press: log each interrupt taken.
     volatile unsigned trace;

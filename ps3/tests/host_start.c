@@ -1,5 +1,5 @@
-// The host game build's start into a match, with -Wl,--wrap on the two calls below. MELEE_HOST_MATCH=
-// "ckind[:color],.../stkind[/item_freq]": after the boot, the debug VS mode with these fighters, player 0 human.
+// The host build's start into a match (--wrap on the two calls below). MELEE_HOST_MATCH="ckind[:color],.../
+// stkind[/item_freq[/item_mask]]": after the boot, the debug VS mode with these fighters, player 0 human.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -41,6 +41,7 @@ void __wrap_gm_LoadAnnouncer(void)
     char* fighters;
     char* stage;
     char* items;
+    char* mask;
     char* c;
     int i;
 
@@ -52,6 +53,7 @@ void __wrap_gm_LoadAnnouncer(void)
     fighters = strtok_r(buf, "/", &save);
     stage = strtok_r(NULL, "/", &save);
     items = strtok_r(NULL, "/", &save);
+    mask = strtok_r(NULL, "/", &save);
     for (i = 0; i < 4; i++) {
         start->players[i].slot_type = Gm_PKind_NA;
     }
@@ -72,6 +74,10 @@ void __wrap_gm_LoadAnnouncer(void)
     }
     if (items != NULL) {
         start->rules.item_freq = (s8) atoi(items);
+    }
+    // A bit per item kind, e.g. 0x400000000 for Poke Balls only (kind 0x22).
+    if (mask != NULL) {
+        start->rules.x20 = strtoull(mask, NULL, 0);
     }
     OSReport("host_start: %d fighters (%d %d %d %d), stage %d, items %d\n", i, start->players[0].ckind,
              start->players[1].ckind, start->players[2].ckind, start->players[3].ckind, start->rules.stkind,

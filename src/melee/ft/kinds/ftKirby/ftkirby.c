@@ -37,6 +37,9 @@
 #include <sysdolphin/baselib/id.h>
 #include <sysdolphin/baselib/jobj.h>
 #include <sysdolphin/baselib/random.h>
+#ifdef TARGET_PS3
+#include <ps3_dat.h>
+#endif
 
 typedef struct ftKirby_CostumeArchive {
     /* +0 */ HSD_Joint* joint;
@@ -2694,9 +2697,19 @@ void ftKb_Init_LoadSpecialAttrs(HSD_GObj* gobj)
 
 void ftKb_Init_800EEB00(Fighter_GObj* gobj, BoneDynamicsTemplate** arg1)
 {
+#ifdef TARGET_PS3
+    // The DOL copies one word, the item colour, into a 4-byte GXColor; the
+    // native field is an 8-byte pointer, so the word comes from the data.
+    u32 color = 0;
+
+    ps3_dat_word(ft_80459B88.copies[Ft_Kind_GameWatch]->hat_dynamics[4], 4,
+                 &color);
+    *(u32*) arg1 = color;
+#else
     *arg1 = ft_80459B88.copies[Ft_Kind_GameWatch]
                 ->hat_dynamics[4]
                 ->x0.ftDynamicBones;
+#endif
 }
 
 void ftKb_Init_800EEB1C(Fighter_GObj* gobj, s32* arg1)

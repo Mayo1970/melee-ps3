@@ -347,6 +347,9 @@ static void use_vp(VpEntry* v)
         vp_slots[at] = v;
     }
     vp_slot_next = at + v->n;
+    if (ps3_diag.gx_ab & 128) {
+        dev_barrier();
+    }
     dev_vertex_program((const u32(*)[4]) v->ucode, v->n, at, v->inputs, v->outputs, v->regs);
     stats.vp_loads++;
 }
@@ -698,6 +701,7 @@ static void set_row(int r, u32 x, u32 y, u32 z, u32 w)
 static void upload_changed(void)
 {
     int r = 0, e;
+    bool barrier = (ps3_diag.gx_ab & 64) != 0;
 
     while (r < C_COUNT) {
         u32 rest = vc_changed[r >> 5] >> (r & 31);
@@ -711,6 +715,10 @@ static void upload_changed(void)
             continue;
         }
         for (e = r + 1; e < C_COUNT && ((vc_changed[e >> 5] >> (e & 31)) & 1); e++) {
+        }
+        if (barrier) {
+            dev_barrier();
+            barrier = false;
         }
         dev_vp_constants((u32) r, (u32) (e - r), vc[r]);
         r = e;
@@ -1191,6 +1199,9 @@ static void bind_textures(const GpState* s, const TevConfig* cfg)
 #endif
         }
         if (!same || !textures_bound || bound[i] != tex_memo[i].e) {
+            if (ps3_diag.gx_ab & 256) {
+                dev_barrier();
+            }
             dev_texture(i, tex_memo[i].e != NULL ? &tex_memo[i].d : NULL);
             bound[i] = tex_memo[i].e;
         }
@@ -1295,6 +1306,19 @@ static void bind_attribs(const VtxLayout* l, u32 io)
     }
 }
 
+// A/B tests of the race behind the z-fighting (diag.h): the PPE waits for each draw (8), the RSX waits for its own
+// backend before the next command (16), or the commands go to the RSX at once (32).
+static void after_rsx_draw(void)
+{
+    if (ps3_diag.gx_ab & 8) {
+        dev_finish();
+    } else if (ps3_diag.gx_ab & 16) {
+        dev_barrier();
+    } else if (ps3_diag.gx_ab & 32) {
+        dev_flush();
+    }
+}
+
 // Sends the open batch. Each backend call that sends other RSX commands, or waits for the RSX, calls it first.
 static void batch_flush(void)
 {
@@ -1314,9 +1338,7 @@ static void batch_flush(void)
     bind_attribs(batch.l, batch.io);
     dev_draw_indexed(batch.family, batch.io + at, batch.nidx);
     stats.rsx_draws++;
-    if (ps3_diag.gx_ab & 8) {
-        dev_finish();
-    }
+    after_rsx_draw();
 }
 
 static bool batch_open(const GpState* s, const VtxLayout* l, int vat, u32 count, u32 family, u32 nidx)
@@ -1367,9 +1389,7 @@ static void draw_direct(const GpState* s, const VtxLayout* l, int prim, u32 coun
     bind_attribs(l, io);
     dev_draw(prim_type(prim), count);
     stats.rsx_draws++;
-    if (ps3_diag.gx_ab & 8) {
-        dev_finish();
-    }
+    after_rsx_draw();
 }
 
 
@@ -1932,9 +1952,7 @@ static bool call_list(GpState* s, u32 paddr, const u8* list, u32 size, u32* draw
     dev_draw_indexed(e->family, (vc_mem_off + e->off + e->idx_at) | DEV_LOCAL, e->nidx);
     stats.rsx_draws++;
     e->frame = frame;
-    if (ps3_diag.gx_ab & 8) {
-        dev_finish();
-    }
+    after_rsx_draw();
     ps3_prof_lap(PROF_DRAW_VTX, &t);
     ps3_prof.ticks[PROF_DRAW] += t - t0;
     return true;
@@ -2385,6 +2403,9 @@ void gx_rsx_present(u32 xfb)
             }
 #endif
             dev_present(xfbs[i].offset, EFB_PITCH, xfbs[i].width, xfbs[i].height);
+            if (ps3_diag.gx_ab & 512) {
+                dev_finish();
+            }
             stats.presents++;
             // The present pass leaves its own state on the RSX.
             efb_bound = false;

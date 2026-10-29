@@ -96,10 +96,18 @@ void it_802790C0(Item_GObj* item_gobj, CommandInfo* cmd)
     } else {
         hit->jobj = item_gobj->hsd_obj;
     }
+#ifdef TARGET_PS3
+    it_80272460(
+        hit,
+        ps3_mwcc_f2u(item->xC3C * ((f32) cmd->x8.u->it_create_hitbox_0.damage *
+                                   item->xC40)),
+        item_gobj);
+#else
     it_80272460(hit,
                 item->xC3C *
                     ((f32) cmd->x8.u->it_create_hitbox_0.damage * item->xC40),
                 item_gobj);
+#endif
     ++cmd->x8.u;
 
     hit->scale = 0.003906f * cmd->x8.u->create_hitbox_1.size;
@@ -160,7 +168,12 @@ void it_80279544(Item_GObj* item_gobj, CommandInfo* cmd)
         &item->x5D4_hitboxes[cmd->x8.u->set_hitbox_damage.idx].hit;
     u32 val = ((u16*) cmd->x8.u)[1] & 0x1FFF;
     PAD_STACK(8);
+#ifdef TARGET_PS3
+    it_80272460(hit, ps3_mwcc_f2u(item->xC3C * ((f32) val * item->xC40)),
+                item_gobj);
+#else
     it_80272460(hit, (u32) (item->xC3C * ((f32) val * item->xC40)), item_gobj);
+#endif
     ++cmd->x8.u;
 }
 

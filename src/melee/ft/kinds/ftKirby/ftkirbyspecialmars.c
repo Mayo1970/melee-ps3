@@ -445,11 +445,18 @@ void ftKb_MsSpecialNEnd_Anim(Fighter_GObj* gobj)
         i = 0;
         do {
             if ((s32) hit_fp->x914[0].state == HitCapsule_Enabled) {
+#ifdef TARGET_PS3
+                dmg = ps3_mwcc_f2u(
+                    (f32) (s32) (ms_da->base_damage +
+                                 (fp->mv.ms.specialn.cur_frame / 30) *
+                                     ms_da->additional_damage_per_iteration));
+#else
                 dmg =
                     (u32) (f32) (s32) (ms_da->base_damage +
                                        (fp->mv.ms.specialn.cur_frame / 30) *
                                            ms_da
                                                ->additional_damage_per_iteration);
+#endif
                 ftColl_8007ABD0(hit_fp->x914, dmg, gobj);
             }
             i += 1;
@@ -480,11 +487,18 @@ void ftKb_MsSpecialAirNEnd_Anim(Fighter_GObj* gobj)
         i = 0;
         do {
             if ((s32) hit_fp->x914[0].state == HitCapsule_Enabled) {
+#ifdef TARGET_PS3
+                dmg = ps3_mwcc_f2u(
+                    (f32) (s32) (ms_da->base_damage +
+                                 (fp->mv.ms.specialn.cur_frame / 30) *
+                                     ms_da->additional_damage_per_iteration));
+#else
                 dmg =
                     (u32) (f32) (s32) (ms_da->base_damage +
                                        (fp->mv.ms.specialn.cur_frame / 30) *
                                            ms_da
                                                ->additional_damage_per_iteration);
+#endif
                 ftColl_8007ABD0(hit_fp->x914, dmg, gobj);
             }
             i += 1;

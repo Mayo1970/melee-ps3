@@ -23,7 +23,8 @@ static PsMutex wake_lock = PS_MUTEX_INIT;
 static PsCond wake_cond = PS_COND_INIT;
 static unsigned raised;
 static Ps3IntrHandler handlers[PS3_INTR_COUNT];
-static const char* const source_names[PS3_INTR_COUNT] = { "DVD", "ARAM", "DSP", "AI", "PE token", "PE finish", "VI" };
+static const char* const source_names[PS3_INTR_COUNT] = { "DVD", "ARAM", "DSP", "AI", "EXI", "PE token",
+                                                                  "PE finish", "VI" };
 
 static unsigned take_raised(void)
 {

@@ -275,8 +275,13 @@ bool itLinkArrow_802A850C(Item_GObj* gobj, Vec3* arg1, Vec3* arg2, f32 arg3,
         it_8026B3A8(gobj);
         ip->xDD4_itemVar.linkarrow.xA8 =
             (arg4 * ((attr->x8 - attr->x4) / arg5)) + attr->x4;
+#ifdef TARGET_PS3
+        ip->xDD4_itemVar.linkarrow.xA4 =
+            ps3_mwcc_f2u((arg4 * ((attr->x10 - attr->xC) / arg5)) + attr->xC);
+#else
         ip->xDD4_itemVar.linkarrow.xA4 =
             (arg4 * ((attr->x10 - attr->xC) / arg5)) + attr->xC;
+#endif
         ip->facing_dir = ftLib_GetFacingDir(ip->xDD4_itemVar.linkarrow.xE0);
         HSD_JObjSetRotationY(jobj, M_PI_2 * ip->facing_dir);
         ip->pos = *arg1;

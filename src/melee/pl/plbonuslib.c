@@ -1578,14 +1578,24 @@ int pl_80040B18(int arg0)
 
 unsigned int pl_80040B3C(int arg0)
 {
+#ifdef TARGET_PS3
+    return ps3_mwcc_f2u(
+        Player_GetStaleMoveTableIndexPtr2(arg0)->x0_staleMoveTable.xC6C);
+#else
     return (unsigned int) Player_GetStaleMoveTableIndexPtr2(arg0)
         ->x0_staleMoveTable.xC6C;
+#endif
 }
 
 unsigned int pl_80040B64(int arg0)
 {
+#ifdef TARGET_PS3
+    return ps3_mwcc_f2u(
+        Player_GetStaleMoveTableIndexPtr2(arg0)->x0_staleMoveTable.xC60);
+#else
     return (unsigned int) Player_GetStaleMoveTableIndexPtr2(arg0)
         ->x0_staleMoveTable.xC60;
+#endif
 }
 
 void pl_80040B8C(int slot, int arg1, int arg2)
@@ -1602,8 +1612,13 @@ int pl_80040BD8(int arg0)
 
 unsigned int pl_80040BFC(int arg0)
 {
+#ifdef TARGET_PS3
+    return ps3_mwcc_f2u(
+        Player_GetStaleMoveTableIndexPtr2(arg0)->x0_staleMoveTable.xC64);
+#else
     return (unsigned int) Player_GetStaleMoveTableIndexPtr2(arg0)
         ->x0_staleMoveTable.xC64;
+#endif
 }
 
 float pl_80040C24(int arg0)

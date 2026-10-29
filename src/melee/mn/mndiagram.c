@@ -168,7 +168,11 @@ u32 mnDiagram_ConvertDistanceForDisplay(u32 distance)
         if (distance >= 0x274A6) {
             return distance / 160934;
         }
+#ifdef TARGET_PS3
+        return ps3_mwcc_f2u((f64) distance / 30.4788);
+#else
         return (u32) ((f64) distance / 30.4788);
+#endif
     }
     if (distance >= 0x186A0) {
         return distance / 100000;

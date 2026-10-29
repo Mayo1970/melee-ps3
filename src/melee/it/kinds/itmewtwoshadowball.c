@@ -235,11 +235,19 @@ Item_GObj* it_802C519C(Item_GObj* parent, Vec3* pos, s32 kind, s32 max_charge,
         }
         {
             f32 base = attr->x10;
+#ifdef TARGET_PS3
+            ip->xDD4_itemVar.mewtwoshadowball.x24 =
+                ps3_mwcc_f2u((ip->xDD4_itemVar.mewtwoshadowball.x18 *
+                              ((attr->x14 - base) /
+                               ip->xDD4_itemVar.mewtwoshadowball.x1C)) +
+                             base);
+#else
             ip->xDD4_itemVar.mewtwoshadowball.x24 =
                 ((ip->xDD4_itemVar.mewtwoshadowball.x18 *
                   ((attr->x14 - base) /
                    ip->xDD4_itemVar.mewtwoshadowball.x1C)) +
                  base);
+#endif
         }
         ip->x40_vel.x = ip->xDD4_itemVar.mewtwoshadowball.x4.y *
                         cosf(ip->xDD4_itemVar.mewtwoshadowball.x4.x);
@@ -293,8 +301,13 @@ void it_802C53F0(Item_GObj* gobj, Vec3* pos, float angle, float charge,
         }
         {
             f32 base = attr->x10;
+#ifdef TARGET_PS3
+            ip->xDD4_itemVar.mewtwoshadowball.x24 = ps3_mwcc_f2u(
+                (charge * ((attr->x14 - base) / max_charge)) + base);
+#else
             ip->xDD4_itemVar.mewtwoshadowball.x24 =
                 (u32) ((charge * ((attr->x14 - base) / max_charge)) + base);
+#endif
         }
         ip->xDD4_itemVar.mewtwoshadowball.x4.z = 0.0f;
         {

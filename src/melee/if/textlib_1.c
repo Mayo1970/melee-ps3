@@ -226,7 +226,11 @@ bool un_80303444(struct un_80304138_objalloc_t* arg0)
     case 4:
     case 7: {
         u32* q = arg0->x8[arg0->x0].x10.w;
+#ifdef TARGET_PS3
+        unsigned int idk = ps3_mwcc_f2u(arg0->x8[arg0->x0].x1C);
+#else
         unsigned int idk = arg0->x8[arg0->x0].x1C;
+#endif
         if (*q + (idk & 0xFFFFFFFF) <= 0xFFFFFFFF) {
             *q += idk;
         } else {
@@ -304,7 +308,11 @@ bool un_80303720(struct un_80304138_objalloc_t* arg0)
     case 4:
     case 7: {
         u32* q = arg0->x8[arg0->x0].x10.w;
+#ifdef TARGET_PS3
+        unsigned int idk = ps3_mwcc_f2u(arg0->x8[arg0->x0].x1C);
+#else
         unsigned int idk = arg0->x8[arg0->x0].x1C;
+#endif
         if (*q - (idk & 0xFFFFFFFF) >= 0) {
             *q -= idk;
         } else {

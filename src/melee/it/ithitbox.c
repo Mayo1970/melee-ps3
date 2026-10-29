@@ -141,7 +141,12 @@ void it_80275640(Item_GObj* item_gobj, f32 arg1)
     for (i = 0; i < 4; i++) {
         HitCapsule* hitcapsule = &item->x5D4_hitboxes[i].hit;
         if (hitcapsule->state != HitCapsule_Disabled) {
+#ifdef TARGET_PS3
+            it_80272460(hitcapsule, ps3_mwcc_f2u(hitcapsule->damage * arg1),
+                        item_gobj);
+#else
             it_80272460(hitcapsule, hitcapsule->damage * arg1, item_gobj);
+#endif
         }
     }
 }

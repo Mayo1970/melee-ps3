@@ -826,9 +826,15 @@ int HSD_Synth_80389334(int sfx_id, u8 vol, u8 vol2, u8 pan, int priority,
             while (voice_idx < sfx_entry->unk8) {
                 AXSetVoicePriority(voices[voice_idx], priority);
                 AXSetVoiceVe(voices[voice_idx], &ve);
+#ifdef TARGET_PS3
+                *(u32*) &HSD_Synth_80407FD8.ratioHi = ps3_mwcc_f2u(
+                    65536.0F *
+                    (sfx_node->x18[1] * (sfx_node->x14 * sfx_node->x18[0])));
+#else
                 *(u32*) &HSD_Synth_80407FD8.ratioHi =
                     (65536.0F *
                      (sfx_node->x18[1] * (sfx_node->x14 * sfx_node->x18[0])));
+#endif
                 AXSetVoiceSrc(voices[voice_idx], &HSD_Synth_80407FD8);
                 AXSetVoiceAddr(voices[voice_idx], &SFX_VOICE(voice_idx)->x10);
                 AXSetVoiceAdpcm(voices[voice_idx], &SFX_VOICE(voice_idx)->x20);
@@ -1527,9 +1533,14 @@ void HSD_SynthPStreamFirstHakoDataCallback(void)
             if (node->flags & 4) {
                 *(u32*) &HSD_Synth_80407FD8.ratioHi = 0;
             } else {
+#ifdef TARGET_PS3
+                *(u32*) &HSD_Synth_80407FD8.ratioHi = ps3_mwcc_f2u(
+                    65536.0F * (node->x14 * node->x18[0] * node->x18[1]));
+#else
                 *(u32*) &HSD_Synth_80407FD8.ratioHi =
                     (u32) (65536.0F *
                            (node->x14 * node->x18[0] * node->x18[1]));
+#endif
             }
             AXSetVoiceSrc(node->voice[i], &HSD_Synth_80407FD8);
             AXSetVoiceCurrentAddr(
@@ -1588,7 +1599,12 @@ void HSD_SynthPStreamHeaderCallback(int arg0, uintptr_t arg1, void* arg2,
         }
         node->x14 = 0.00003125f * (f32) entry[2];
         for (i = 0; i < node->voice_count; i++) {
+#ifdef TARGET_PS3
+            *(u32*) &HSD_Synth_80407FD8.ratioHi =
+                ps3_mwcc_f2u(65536.0f * node->x14);
+#else
             *(u32*) &HSD_Synth_80407FD8.ratioHi = (u32) (65536.0f * node->x14);
+#endif
             AXSetVoiceAddr(node->voice[i], (AXPBADDR*) &entry[i * 14 + 4]);
             AXSetVoiceAdpcm(node->voice[i], (AXPBADPCM*) &entry[i * 14 + 8]);
         }

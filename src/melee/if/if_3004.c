@@ -918,7 +918,11 @@ bool fn_80300DE0(enum soundtest_callback_arg0 arg0)
         break;
     case 6:
         sfxForward();
+#ifdef TARGET_PS3
+        *ptr = ps3_mwcc_f2u(100.0f * un_804D6DD0);
+#else
         *ptr = (u32) (100.0f * un_804D6DD0);
+#endif
         gm_ChangeGameModeAfterCurrentScene(GM_MENU);
         gm_801A4B60();
         break;

@@ -264,7 +264,11 @@ static inline void itClimbersice_Phys_inline(Item_GObj* gobj)
     Item* ip = GET_ITEM(gobj);
     itClimbersIceAttributes* sa =
         &ip->xC4_article_data->x4_specialAttributes->climbers_ice;
+#ifdef TARGET_PS3
+    u32 dmg = ps3_mwcc_f2u(ABS(ip->x40_vel.x * sa->x30));
+#else
     u32 dmg = ABS(ip->x40_vel.x * sa->x30);
+#endif
     dmg += sa->x2C;
     it_80272460(&ip->x5D4_hitboxes[0].hit, dmg, gobj);
 }

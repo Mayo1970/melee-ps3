@@ -8,6 +8,7 @@ enum {
     PS3_INTR_ARAM,
     PS3_INTR_DSP,
     PS3_INTR_AI,
+    PS3_INTR_EXI,
     PS3_INTR_PE_TOKEN,
     PS3_INTR_PE_FINISH,
     PS3_INTR_VI,
