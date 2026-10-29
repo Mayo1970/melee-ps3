@@ -79,6 +79,18 @@ static VpSrc vtx_color(const XfKey* key, int j)
     return one();
 }
 
+// T_S.w = 1 / T_S.w, a divisor of 0 raised to C_MIDX + 2's y: GX's attenuation gives 0 for 0 / 0 (Dolphin's
+// SafeDivide), where RCP(0) times 0 is NaN, a black vertex colour. T_V is scratch.
+static void safe_rcp(VpProg* p)
+{
+    VpSrc z = vp_t(0, NULL);
+
+    // -|d| >= 0 only for d == 0.
+    vp_op(p, VOP_SGE, T_V, 1, false, vp_neg(vp_abs(vp_t(T_S, "wwww"))), zero(), z);
+    vp_op(p, VOP_MAD, T_S, 8, false, vp_t(T_V, "xxxx"), vp_c(C_MIDX + 2, "yyyy"), vp_t(T_S, NULL));
+    vp_op(p, VOP_RCP, T_S, 8, false, vp_t(T_S, "w"), z, z);
+}
+
 // Normalizes reg.xyz with T_S.w as scratch.
 static void normalize(VpProg* p, int reg)
 {
@@ -112,7 +124,7 @@ static void light_term(VpProg* p, int i, const Chan* c)
         vp_op(p, VOP_MOV, T_V, 2, false, vp_t(T_S, "zzzz"), z, z);
         vp_op(p, VOP_MOV, T_V, 4, false, vp_t(T_LDIR, "wwww"), z, z);
         vp_op(p, VOP_DP3, T_S, 8, false, vp_c(l + 2, NULL), vp_t(T_V, NULL), z);
-        vp_op(p, VOP_RCP, T_S, 8, false, vp_t(T_S, "w"), z, z);
+        safe_rcp(p);
         vp_op(p, VOP_MUL, T_S, 1, false, vp_t(T_S, NULL), vp_t(T_S, "wwww"), z);
     } else {
         normalize(p, T_LDIR);
@@ -135,7 +147,7 @@ static void light_term(VpProg* p, int i, const Chan* c)
             vp_op(p, VOP_DP3, T_S, 1, false, vp_c(l + 1, NULL), vp_t(T_V, NULL), z);
             vp_op(p, VOP_MAX, T_S, 1, false, vp_t(T_S, NULL), zero(), z);
             vp_op(p, VOP_DP3, T_S, 8, false, k, vp_t(T_V, NULL), z);
-            vp_op(p, VOP_RCP, T_S, 8, false, vp_t(T_S, "w"), z, z);
+            safe_rcp(p);
             vp_op(p, VOP_MUL, T_S, 1, false, vp_t(T_S, NULL), vp_t(T_S, "wwww"), z);
         } else {
             vp_op(p, VOP_MOV, T_S, 1, false, one(), z, z);
@@ -414,6 +426,8 @@ static u32 small_bits(u32 k)
 
 #define F_ONE 0x3F800000u
 #define F_MINUS_ONE 0xBF800000u
+// 1e-30, safe_rcp's divisor for 0.
+#define F_TINY 0x0DA24260u
 
 // Memory words 4g to 4g + 3: the rows they feed.
 static void mem_group(const GpState* s, u32 g, float c[C_COUNT][4], u32* changed, u32* lights)
@@ -494,7 +508,7 @@ void xf_constants(const GpState* s, const u32* mem_dirty, const u32* reg_dirty, 
                   small_bits((a >> 18) & 0x3F));
         row_words(c, changed, C_MIDX + 1, small_bits((a >> 24) & 0x3F), small_bits(b & 0x3F),
                   small_bits((b >> 6) & 0x3F), small_bits((b >> 12) & 0x3F));
-        row_words(c, changed, C_MIDX + 2, small_bits((b >> 18) & 0x3F), 0, 0, 0);
+        row_words(c, changed, C_MIDX + 2, small_bits((b >> 18) & 0x3F), F_TINY, 0, 0);
     }
     if (mem_dirty == NULL) {
         // (0, 1, 0.5, 2)
@@ -546,6 +560,12 @@ static const float* ref_vtx_color(const XfKey* key, const XfIn* in, int j)
     return white;
 }
 
+// As safe_rcp's divisor.
+static float ref_divisor(float d)
+{
+    return d == 0.0f ? 1e-30f : d;
+}
+
 static float ref_light(const float c[C_COUNT][4], int i, const Chan* ch, const float* eye, const float* nrm)
 {
     const float* l = c[C_LIGHT + LIGHT_STRIDE * i];
@@ -562,7 +582,7 @@ static float ref_light(const float c[C_COUNT][4], int i, const Chan* ch, const f
         num = l[4] + l[5] * a + l[6] * a * a;
         num = num > 0.0f ? num : 0.0f;
         den = l[8] + l[9] * dist + l[10] * d2;
-        attn = num / den;
+        attn = num * (1.0f / ref_divisor(den));
     } else {
         norm3(ld);
         if (ch->attn == ATTN_SPEC) {
@@ -576,7 +596,7 @@ static float ref_light(const float c[C_COUNT][4], int i, const Chan* ch, const f
             num = l[4] + l[5] * a + l[6] * a * a;
             num = num > 0.0f ? num : 0.0f;
             den = k[0] + k[1] * a + k[2] * a * a;
-            attn = num / den;
+            attn = num * (1.0f / ref_divisor(den));
         }
     }
     if (ch->diff != DIFF_NONE) {

@@ -414,9 +414,39 @@ Waiting for the user:
     kind) at +4: `gamewatchchef.x0` is pointer-sized now, so `x4` moves behind it. G&W's own Chef had the same fault.
   Host: four 240 s matches with 18-38 Kirby Chef uses each, and 112 scripted Chefs by a human G&W, with no fault.
   Package: `.got` 0x46f8, 0 `r2off` stubs, 19.1 MB in loaded segments.
-- Run 42: Mute City through the six modes: which stop the stage's black flicker?
+- Melee run 42 (2026-10-29, `build/run42_udp.txt`): all six modes flicker; the RSX barrier after each draw least.
+  The user: the black flicker is rare, on Mute City only, the stage model only. Leads checked: not texture cache
+  pressure (Mute City uploads as many textures as Green Greens in run 40); `lbRefract`'s indirect stages (Zelda's
+  Farore's Wind) logged once on Mute City, but run 40's flicker had Peach and DK. What is Mute City's own: the
+  display list cache evicts there all the time (run 40: 14.8 lists a second; Fountain of Dreams 17.7; Green Greens
+  0), and the stage's lists are drawn from it.
+- Texture eviction (`backend.c`): a texture the RSX no longer samples (not bound, not bound in this frame) is freed
+  with no RSX wait; EFB copies are evicted last; at most 4 versions of the data at one address (`TEX_VERSIONS`).
+- Run 43 package: Select cycles 0 as built, 1 no display list cache (new A/B bit 1024), 2 no list cache and no
+  batching, 3 an RSX barrier after each draw. L1 writes "pad: mark" to the log. The fifth heartbeat line adds texture
+  evictions, RSX waits for them, lookups that found no texture, and TEV setups with indirect stages. Host: 0 dropped
+  draws. Package: `.got` 0x4728, 0 `r2off` stubs.
+- Melee run 43 (2026-10-29, `build/run43_udp.txt`): Mute City at 59-60 presents a second in mode 0. The user marked
+  flickers (L1) in mode 1 (no list cache), mode 3 (RSX barrier per draw) and mode 0: not the list cache, not batching,
+  not RSX timing. At the marks: 0 texture evictions, 0 lookups without a texture, 0 indirect TEVs. Also checked: the
+  position transform is the same instruction sequence in every vertex program (no depth variance between layers),
+  and the current matrix registers (XF 0x18, 0x19) do feed the constants. Host frames 600-616 on Mute City draw the
+  stage as expected. Open: what the flicker looks like (whole stage or parts, black or the background).
+- Specular lights (the user's lead): Mute City is the only stage seen with specular lights 2 and 3 besides the
+  fighters' light 1 (host log of generated programs). GX's attenuation divides by dist.(1, a, a^2); the program's
+  RCP(0) times 0 is NaN where GX (Dolphin's SafeDivide) gives 0. `safe_rcp` (`xfgen.c`) raises a divisor of 0 to
+  1e-30 (`C_MIDX + 2`'s y), with the same in `xf_ref`; `progtest` 3000 of 3000, `scenetest` PASS. But Mute City's
+  specular lights have k = (s/2, 0, 1 - s/2), s 10 to 100 (host log of XF 0x600-0x67F): the divisor stays >= 1, so
+  this is not the flicker. Package rebuilt: `.got` 0x4728, 0 `r2off` stubs.
 - Run 41: saving (the first boot creates the save; a setting changed, then a second boot keeps it), Poke Balls,
   the C stick (which mode failed), and the race modes (Select) on Green Greens, Mute City and with the XMB open.
+- Wii U GameCube adapter (057e:0337, 2026-10-29): `ps3/pad/gcadapter_cell.c` over PSL1GHT's usbd (`-lusb`), an
+  extra LDD for that VID/PID with its own static 32-bit ops (PSL1GHT's `usbRegisterExtraLdd` passes a stack copy).
+  Attach sets the configuration, opens the interrupt pipes, sends 0x13, then reads 37-byte reports. Adapter port N
+  is channel N, with the origin taken when the pad appears; DS3 pads keep their channels, or take the first free
+  one. Rumble needs the adapter's power plug. Package: `.got` 0x4858, 0 `r2off` stubs.
+- Melee run 44 (2026-10-29, `build/run44_udp.txt`) SUCCESS: the GC pad on the adapter plays. The PS3's HID driver
+  does not take the adapter: driver registered 0, attach, pipes in 1 out 2, init command result 0.
 
 The UDP log goes to `192.168.178.99`, port 18194 (`ps3/os/udplog_cell.c`). A listener: `nc -ul 18194`, or any
 UDP listener on that port.
@@ -680,7 +710,8 @@ Step 2, texture checks (2026-10-28, `backend.c`):
 
 Other findings of 2026-10-29:
 - C stick: the right stick is the C stick (`pad.c`). Host check (`MELEE_HOST_PAD` now takes `CL CR CU CD`): C stick
-  right in a VS match gives Mario's forward smash and back air. The user's failing mode is not known yet.
+  right in a VS match gives Mario's forward smash and back air. Not a fault: the user tried it in Training and
+  single player, where `fighter.c` (Matching) gives fighters no C stick input (`gm_IsCurrently1PMode_inline`).
 - Poke Ball Pokemon: each ball released kinds 161, 162, 163 in turn. The ball's attributes are read as
   `pokemon_spawn` (`it_279C.c`), but the union member annotated for `It_Kind_M_Ball` was `m_ball`, 8 bytes, so the
   native reader converted 8 bytes: all spawn weights 0 (the first two kinds not picked last win) and the spawn
@@ -704,6 +735,33 @@ Other findings of 2026-10-29:
 - Race test package: Select cycles what follows each RSX draw: 0 nothing, 1 an RSX barrier (the RSX waits for its
   own backend), 2 a flush, 3 the PPE waits for the RSX (run 39's mode 1). XMB events are logged
   (`sys: XMB event`).
+
+## Open issues (2026-10-29)
+
+The user's list of what is left to address. Details of each are in the run entries above.
+
+1. **Mute City: the stage model flickers black, now and then.** Only on Mute City, only the stage (not the
+   platforms). It happens in every A/B mode, so it is not the display list cache, batching, RSX timing, the
+   constants, vertex program loads or texture binds (runs 41-43). Also ruled out: texture cache pressure, failed
+   texture lookups, indirect stages (`lbRefract`), depth variance between layers (one position sequence in every
+   program), the current matrix registers, and a divide by 0 in the specular attenuation (Mute City's lights keep
+   the divisor >= 1). Mute City's own traits: specular lights 2 and 3 on the stage, and the display list cache
+   evicts there all the time. Needed next: a photo or video of the flicker (whole stage or parts, pure black or the
+   background showing through, and when: camera moves, cars, a new track section). The current package has the L1
+   mark and the Select modes (0 as built, 1 no list cache, 2 no list cache and no batching, 3 RSX barrier per draw).
+2. **32-bit and 64-bit faults left in the game code.** The LP64 class: GameCube views of structs that hold
+   pointers (a pointer field over a 32-bit field in a union or item/fighter vars, as the G&W Chef's
+   `gamewatch.attr` over `gamewatchchef.x4`), `.dat` fields read as another type than the native reader converted
+   (as Kirby's G&W colour, now read with `ps3_dat_word`), and pointer-sized stores into 4-byte buffers. The host
+   build's `-fstack-protector` caught one ("stack smashing detected"); host matches with the fighter, item and stage
+   in question find most of them. Not done from the audits: item findings 5-7, the `ft/` tether views.
+3. **GameCube calls and compiler behaviour that may still differ.** Fixed so far: MWCC's float to 32-bit unsigned
+   conversion (`ps3_mwcc_f2u`, 72 sites), MSL's `sqrtf`, GCC's hoisted loads in busy-waits, MWCC stack slots,
+   argument order, registers the DOL relies on. To look for: other MSL or runtime calls with other results than
+   newlib's, more such conversions in code not compiled into the scanned objects, and DOL-offset reads.
+4. **Smaller open items.** Fountain of Dreams runs at about 42 presents a second (its draws do not go through the list
+   cache; vertices 37% of the GP). Part 2 steps 3 (TEV lookup) and 4 (SPUs) are not done. The title ID is still the
+   placeholder `MELE00001`.
 
 ## Not done for the game
 

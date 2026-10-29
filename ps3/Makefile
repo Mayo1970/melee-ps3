@@ -175,7 +175,7 @@ GAME_PORT_SRCS := $(addprefix ps3/,dvd/dvd.c os/intr.c os/globals.c os/os.c os/o
                   $(EXTRA_SRCS)
 # The PSL1GHT side, which no SDK header meets.
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_cell.c os/sys_cell.c os/udplog_cell.c audio/audio_cell.c \
-                  gx/rsxdev_cell.c pad/pad_cell.c)
+                  gx/rsxdev_cell.c pad/pad_cell.c pad/gcadapter_cell.c)
 DAT_SRCS := $(addprefix tools/dat-cli/native/src/,archive.c reader.c hsd.c) ps3/dat/lookup.c \
             $(sort $(shell cd $(ROOT) && find $(DAT_SCHEMA) -name '*.c' 2> /dev/null))
 # Their allocations come from the .dat pool; GeoTypes.h stands in for Aurora's.
@@ -197,7 +197,7 @@ endif
 # the trace logs typed lookups (step 3).
 GAME_WRAP := -Wl,--wrap=HSD_ArchiveParse,--wrap=HSD_ArchiveGetPublicAddress,--wrap=HSD_ArchiveGetPublicTyped \
              -Wl,--wrap=HSD_ArchiveReleaseNative
-GAME_LIBS := -L$(PS3DEV)/ppu/lib -lrsx -lgcm_sys -lio -laudio -lsysutil -lsysmodule -lnet -llv2 -lrt -lm
+GAME_LIBS := -L$(PS3DEV)/ppu/lib -lrsx -lgcm_sys -lio -lusb -laudio -lsysutil -lsysmodule -lnet -llv2 -lrt -lm
 FONT_INCS := $(addprefix $(GAME_DIR)/include/sysdolphin/baselib/,debug_font.inc sislib_font.inc)
 
 # MSL's math where it differs from libm; string literals in Shift-JIS, as sjiswrap gives the MWCC build (CP932

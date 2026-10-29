@@ -28,7 +28,7 @@ enum {
     C_PROJ = 200,  // 4 rows: projection
     C_CHAN = 204,  // ambient 0, ambient 1, material 0, material 1
     C_DQ = 208,    // dequantization: (position, normal, tex0, tex1), (tex2-5), (tex6, tex7, 0, 0)
-    C_MIDX = 211,  // matrix indices when the vertex has none: (pn, t0, t1, t2), (t3, t4, t5, t6), (t7, 0, 0, 0)
+    C_MIDX = 211,  // matrix indices when the vertex has none: (pn, t0, t1, t2), (t3, t4, t5, t6), (t7, 1e-30, 0, 0)
     C_MISC = 214,  // (0, 1, 0.5, 2)
     C_TEV = 215,   // XF_TEV_CONSTS values for the fragment program
     C_COUNT = 225,

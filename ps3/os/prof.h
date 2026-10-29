@@ -37,6 +37,10 @@ typedef struct Ps3Prof {
     volatile uint32_t list_hits, list_builds, list_runs, list_evictions;
     // Texture lookups that hashed the data: new, or written since the last hash.
     volatile uint32_t tex_hashes;
+    // Cached textures freed to make room, those that waited for the RSX, and lookups that found no texture.
+    volatile uint32_t tex_evictions, tex_waits, tex_failures;
+    // TEV setups with indirect stages, which the backend does not draw.
+    volatile uint32_t indirect_tevs;
     volatile uint64_t upload_bytes;
 } Ps3Prof;
 

@@ -25,6 +25,7 @@
 #define LAYOUTS 64
 #define TEX_CACHE 512
 #define TEX_BUCKETS 1024
+#define TEX_VERSIONS 4
 #define XFBS 4
 #define XFB_MAX_HEIGHT 576
 #define MAX_TEX_SIZE 1024
@@ -437,6 +438,7 @@ static void build_tev(const GpState* s, int numtexgens, TevConfig* cfg, float va
     }
     if ((s->bp[0x00] >> 16) & 7) {
         unsupported(U_INDIRECT, "indirect texturing");
+        ps3_prof.indirect_tevs++;
     }
     for (i = 0; i < cfg->nstages; i++) {
         TevStage* st = &cfg->st[i];
@@ -844,14 +846,58 @@ static void tex_free(TexEntry* e)
     e->used = false;
 }
 
-// The bindings and lookups that may name a freed entry go.
+// The bindings and lookups that may name a freed entry go; the textures they bound count as used in this frame.
 static void tex_forget(void)
 {
+    int i;
+
+    for (i = 0; i < 8; i++) {
+        if (bound[i] != NULL) {
+            ((TexEntry*) bound[i])->frame = frame;
+        }
+    }
     memset(bound, 0, sizeof(bound));
     memset(tex_memo, 0, sizeof(tex_memo));
     textures_bound = false;
     memo.tex_ok = false;
     tex_frees++;
+}
+
+// The RSX may still sample e: bound now, or bound in this frame (finish() waits for the RSX, then counts on).
+static bool tex_in_use(const TexEntry* e)
+{
+    int i;
+
+    if (e->frame == frame) {
+        return true;
+    }
+    for (i = 0; i < 8; i++) {
+        if (bound[i] == e) {
+            return true;
+        }
+    }
+    return false;
+}
+
+// A unit's binding changes: its old texture counts as used in this frame.
+static void tex_bind(int unit, const TexEntry* e)
+{
+    if (bound[unit] != NULL && bound[unit] != e) {
+        ((TexEntry*) bound[unit])->frame = frame;
+    }
+    bound[unit] = e;
+}
+
+// Frees e, waiting for the RSX only when it may still sample e.
+static void tex_evict(TexEntry* e)
+{
+    if (tex_in_use(e)) {
+        dev_finish();
+        ps3_prof.tex_waits++;
+    }
+    tex_free(e);
+    tex_forget();
+    ps3_prof.tex_evictions++;
 }
 
 static void free_textures(bool keep_efb)
@@ -881,20 +927,22 @@ static void* tex_alloc(u32 size, u32* offset)
 // A free entry, not linked; the least recently bound one goes when none is free.
 static TexEntry* tex_slot(void)
 {
-    int i, oldest = 0;
+    TexEntry* pick = NULL;
+    int i;
 
     for (i = 0; i < TEX_CACHE; i++) {
-        if (!tex_cache[i].used) {
-            return &tex_cache[i];
+        TexEntry* e = &tex_cache[i];
+
+        if (!e->used) {
+            return e;
         }
-        if (tex_cache[i].frame < tex_cache[oldest].frame) {
-            oldest = i;
+        // An EFB copy cannot be decoded again from memory: it goes last.
+        if (pick == NULL || (pick->efb && !e->efb) || (pick->efb == e->efb && e->frame < pick->frame)) {
+            pick = e;
         }
     }
-    dev_finish();
-    tex_free(&tex_cache[oldest]);
-    tex_forget();
-    return &tex_cache[oldest];
+    tex_evict(pick);
+    return pick;
 }
 
 // False when the texture's data was written since it was hashed.
@@ -1022,6 +1070,28 @@ static TexEntry* find_texture(u32 addr, u32 fmt, u32 w, u32 h, u32 levels, u32 t
     return NULL;
 }
 
+// Data rewritten in place (animated textures) leaves a version per content: past TEX_VERSIONS the oldest goes.
+static void tex_limit_versions(u32 addr, u32 fmt, u32 w, u32 h, u32 levels, u32 tlut_fmt)
+{
+    TexEntry* oldest = NULL;
+    int n = 0;
+    s16 i;
+
+    for (i = tex_bucket[tex_bucket_of(addr)]; i >= 0; i = tex_cache[i].next) {
+        TexEntry* t = &tex_cache[i];
+
+        if (!t->efb && t->addr == addr && t->fmt == fmt && t->width == w && t->height == h && t->levels == levels &&
+            t->tlut_fmt == tlut_fmt)
+        {
+            n++;
+            oldest = oldest == NULL || t->frame < oldest->frame ? t : oldest;
+        }
+    }
+    if (n >= TEX_VERSIONS) {
+        tex_evict(oldest);
+    }
+}
+
 // The texture on GX map unit, from its BP registers; NULL when it cannot be read.
 static TexEntry* tex_get(const GpState* s, int unit, DevTexture* d)
 {
@@ -1085,6 +1155,7 @@ static TexEntry* tex_get(const GpState* s, int unit, DevTexture* d)
             ps3_prof.tex_hashes++;
         }
         if (e == NULL) {
+            tex_limit_versions(addr, fmt, w, h, levels, tlut_fmt);
             e = tex_slot();
             memset(e, 0, sizeof(*e));
             e->addr = addr;
@@ -1183,6 +1254,10 @@ static void bind_textures(const GpState* s, const TevConfig* cfg)
                memcmp(tex_memo[i].regs, regs, sizeof(regs)) == 0 && tex_current(tex_memo[i].e);
         if (!same) {
             tex_memo[i].e = tex_get(s, i, &tex_memo[i].d);
+            if (tex_memo[i].e == NULL) {
+                // The unit is off: it samples black.
+                ps3_prof.tex_failures++;
+            }
             memcpy(tex_memo[i].regs, regs, sizeof(regs));
             tex_memo[i].tlut_loads = tlut_loads;
             if (tex_frees != frees && restarts++ == 0) {
@@ -1203,7 +1278,7 @@ static void bind_textures(const GpState* s, const TevConfig* cfg)
                 dev_barrier();
             }
             dev_texture(i, tex_memo[i].e != NULL ? &tex_memo[i].d : NULL);
-            bound[i] = tex_memo[i].e;
+            tex_bind(i, tex_memo[i].e);
         }
     }
     textures_bound = true;
@@ -1911,7 +1986,7 @@ static bool call_list(GpState* s, u32 paddr, const u8* list, u32 size, u32* draw
     VcEntry* e;
     uint64_t t0, t;
 
-    if (vc_mem == NULL || (ps3_diag.gx_ab & 1)) {
+    if (vc_mem == NULL || (ps3_diag.gx_ab & (1 | 1024))) {
         return false;
     }
     t0 = t = ps3_prof_now();
@@ -2110,7 +2185,7 @@ static void copy_pass(const DevTarget* dst, u32 sx, u32 sy, u32 sw, u32 sh, cons
     t.wrap_s = t.wrap_t = DEV_WRAP_CLAMP;
     t.min_filter = t.mag_filter = linear ? DEV_FILTER_LINEAR : DEV_FILTER_NEAREST;
     dev_texture(0, &t);
-    bound[0] = NULL;
+    tex_bind(0, NULL);
     use_vp(&copy_vp);
     use_fp(fp);
     for (i = 0; i < 16; i++) {

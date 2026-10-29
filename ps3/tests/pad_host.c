@@ -1,4 +1,5 @@
 // The pads for the host game build (see pad_cell.h): none, or pad 0 playing the MELEE_HOST_PAD script.
+#include "../pad/gcadapter.h"
 #include "../pad/pad_cell.h"
 
 #include <stdio.h>
@@ -158,3 +159,13 @@ void ps3_pad_read(Ps3Pad* pads, int n)
 }
 
 void ps3_pad_rumble(int index, bool on) {}
+
+// No GameCube adapter on the host.
+void ps3_gcadapter_init(void) {}
+
+void ps3_gcadapter_read(Ps3GcPad pads[PS3_GCADAPTER_PORTS])
+{
+    memset(pads, 0, sizeof(*pads) * PS3_GCADAPTER_PORTS);
+}
+
+void ps3_gcadapter_rumble(int port, bool on) {}
