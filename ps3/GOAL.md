@@ -440,6 +440,8 @@ Waiting for the user:
   this is not the flicker. Package rebuilt: `.got` 0x4728, 0 `r2off` stubs.
 - Run 41: saving (the first boot creates the save; a setting changed, then a second boot keeps it), Poke Balls,
   the C stick (which mode failed), and the race modes (Select) on Green Greens, Mute City and with the XMB open.
+- Run 56: the Part 2 step 3 package (TEV keys), mode 0, matches on Fountain of Dreams and Mute City; the presents a
+  second and the heartbeat's fourth and fifth lines.
 - Wii U GameCube adapter (057e:0337, 2026-10-29): `ps3/pad/gcadapter_cell.c` over PSL1GHT's usbd (`-lusb`), an
   extra LDD for that VID/PID with its own static 32-bit ops (PSL1GHT's `usbRegisterExtraLdd` passes a stack copy).
   Attach sets the configuration, opens the interrupt pipes, sends 0x13, then reads 37-byte reports. Adapter port N
@@ -886,6 +888,53 @@ Step 2, texture checks (2026-10-28, `backend.c`):
   draws in 54,000 RSX draws. 0-7 texture hashes a second. The user: no flicker on most stages; flicker and corrupt
   textures while the XMB is open; a black flicker on Mute City.
 
+Step 3, TEV setup (2026-10-31, `backend.c`, `gp.c`):
+- A TEV key (`tev_key`) holds the register words `build_tev` reads, less the TEV values: genmode's stage and
+  indirect counts, the texgen count, the fog type, the projection bit of each stage's texcoord, the swap tables, each
+  stage's colour and alpha words, the order and konst selection halves of the used stages. A table of 1,024 keys
+  (`tev_keys`, linear probes, cleared with the program cache) gives the fragment program and the value mask by a word
+  compare; `build_tev`, the 688-byte config hash and `fp_get` run only for a new key.
+- A config with values in its code (no free interpolant: 5-8 stages, 1-3 texgens, konst colours, registers and fog,
+  seen on Final Destination with items) keeps a marker entry, and its key adds the words of those values.
+- The TEV values (K0-K3, the PREV and REG0-REG2 start values, fog) are converted again only when their register
+  words change; the constants go up again only then. The textures are checked again when the program changes.
+- `GpState.tev_gen` changes only with the BP and XF registers the TEV reads (`tev_bp`: 0x00, 0x10-0x1F, 0x28-0x2F,
+  0xC0-0xE7, 0xEE-0xF2, 0xF6-0xFD; XF 0x3F-0x47), so a blend, depth, scissor or texture write no longer starts a TEV
+  setup.
+- The heartbeat's fifth line adds TEV setups and builds a second.
+- Host check (`EXTRA_CFLAGS=-DGX_TEV_CHECK`: each draw setup builds the config as before and compares the program,
+  the mask and the value rows): 0 differences in about 13.7 million draw setups (Fountain of Dreams, Mute City,
+  Yoshi's Story, Final Destination twice, Big Blue, Pokemon Stadium, items at 4, 90 s each; the 150 s boot). Builds:
+  about 90-340 a match, the number of fragment programs. No key table clear.
+- Host profile (qemu, so shares only; Peach against Ganondorf on Fountain of Dreams, 100 s alone, the old backend
+  built in `build/linux_old`): TEV from 195 to 55 per mille, GP draws from 514 to 371 per mille; GP draw time per GX
+  draw 37% lower, TEV time per GX draw 75% lower; TEV setups from 33,000 to 24,000 a second.
+- `scenetest` PASS with frames identical to the committed ones, `progtest` 3000 of 3000, `gxtest` 3 of 3 PASS.
+- Run 56 package: `.got` 0x49b0, 0 `r2off` stubs, 23.8 MB in loaded segments (the key table, 312 KB).
+- Melee run 56 (2026-10-31, `build/run56_udp.txt`, from heartbeat 176: the listener started after the boot), mode 0,
+  Peach and Marth on Fountain of Dreams: 92 s of match at 59-60 presents a second (mean 59.9; run 45: 49-52), about
+  247,000 GX draws in 68,600 RSX draws a second, 0 dropped. GP per mille: draws 589 (TEV 66, vertices 226, constants
+  117, textures 95), waits for data 74; main asleep 183. About 32,000 TEV setups a second, 0 builds. At heartbeat 268
+  the match ended into the character select with no stop.
+- Run 56, Mute City (from heartbeat 275, the same boot), Peach and Marth: 68 s of match at 58-60 presents a second
+  (mean 59.7, 3 s at 58; run 45: 50-52), about 150,000 GX draws in 64,700 RSX draws a second, 0 dropped. GP per
+  mille: draws 554 (TEV 55, vertices 228, constants 102, textures 89), waits for data 104. The main thread is asleep
+  only 65 per mille (0 in 9 of 76 s): the game logic is now the closer limit there. About 21,800 TEV setups a
+  second, 25 builds in all.
+- Run 56, four players on Fountain of Dreams (Falco, Marth, Ness, Jigglypuff; heartbeats 425-484): 44-57 presents a
+  second, mean 48.2; about 227,600 GX draws (about 4,700 a frame; two players: 4,100) in 67,000 RSX draws a second,
+  0 dropped, no stop. GP per mille: draws 600 (TEV 64, XF 20, state 55, vertices 244, constants 121, textures 93),
+  EFB copies 2, waits for data 81, for RSX labels 35; the other 280 are in no measured phase (command decode, display
+  list calls, register writes, or time the thread did not run). Main asleep 95. Lists: 34,000 a second from the
+  cache, 0 run as commands.
+  Both threads are busy and share the PPE core: with two players the GP drew 247,000 GX draws a second.
+- Run 56, four players on Mute City (the same fighters; heartbeats 577-635): 41-56 presents a second, mean 51.8;
+  about 150,000 GX draws (2,900 a frame) in 59,600 RSX draws a second, 0 dropped, no stop. GP per mille: draws 531
+  (TEV 51, XF 24, state 45, vertices 222, constants 103, textures 83), waits for data 136, for RSX labels 35. Main
+  asleep 25 (often 1-20): here the game logic on the main thread is the limit, not the GP. After each match, probably
+  the results screen with the four fighters (`GmRst*` loads): about 220,000 GX draws a second at 42-55 presents.
+  The quit from the XMB logged "gp: stopped, the RSX is idle" and `melee: exit`.
+
 Other findings of 2026-10-29:
 - C stick: the right stick is the C stick (`pad.c`). Host check (`MELEE_HOST_PAD` now takes `CL CR CU CD`): C stick
   right in a VS match gives Mario's forward smash and back air. Not a fault: the user tried it in Training and
@@ -940,7 +989,7 @@ The user's list of what is left to address. Details of each are in the run entri
    newlib's, more such conversions in code not compiled into the scanned objects, and DOL-offset reads.
 4. **Smaller open items.** Fountain of Dreams runs at 49-52 presents a second (run 45; 42 before the cache took its
    star field list). The GP is the limit there, and the TEV setup its largest part (292 per mille): Part 2 step 3
-   (TEV lookup). Step 4 (SPUs) is not done either. The title ID is still the placeholder `MELE00001`.
+   (TEV lookup) is in the run 56 package. Step 4 (SPUs) is not done. The title ID is still the placeholder `MELE00001`.
 
 ## Not done for the game
 

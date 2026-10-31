@@ -246,6 +246,10 @@ static void xf_write(u32 addr, u32 v)
         // The matrix indices (0x18, 0x19) and the projection (0x20-0x26) feed only the vertices and constants.
         if (state.xf_regs[i] != v && (i < 0x18 || i > 0x26 || (i >= 0x1A && i <= 0x1F))) {
             state.xf_gen++;
+            // The texgen count and the texgens' projection bits feed the TEV config.
+            if (i >= 0x3F && i <= 0x47) {
+                state.tev_gen++;
+            }
         }
         state.xf_regs[i] = v;
         state.xf_reg_dirty[i >> 5] |= 1u << (i & 31);
@@ -277,6 +281,14 @@ static void finish_work(void)
     }
 }
 
+// The BP registers the backend's TEV config and values read: genmode, indirect stages, orders, stages, the TEV
+// colour and konst registers, fog, swap tables and konst selections.
+static bool tev_bp(u32 reg)
+{
+    return reg == 0x00 || (reg >= 0x10 && reg <= 0x1F) || (reg >= 0x28 && reg <= 0x2F) ||
+           (reg >= 0xC0 && reg <= 0xE7) || (reg >= 0xEE && reg <= 0xF2) || (reg >= 0xF6 && reg <= 0xFD);
+}
+
 static void bp_write(u32 v)
 {
     u32 reg = v >> 24;
@@ -293,6 +305,9 @@ static void bp_write(u32 v)
     // A TEV register write that leaves bp[reg] as it was also leaves its register set as it was.
     if (state.bp[reg] != value) {
         state.bp_gen++;
+        if (tev_bp(reg)) {
+            state.tev_gen++;
+        }
     }
     state.bp[reg] = value;
     state.bp_dirty[reg >> 5] |= 1u << (reg & 31);

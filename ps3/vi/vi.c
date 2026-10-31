@@ -103,7 +103,7 @@ static void log_profile(u32 n, const GpStats* gs, const GxRsxStats* rs)
     static uint64_t last_now, last[PROF_COUNT], last_bytes;
     static u32 last_draws, last_batchable, last_reuses, last_reloads, last_vp, last_uploads, last_presents;
     static u32 last_batched, last_rsx, last_hits, last_builds, last_runs, last_evictions, last_tex_hashes;
-    static u32 last_tex_evictions, last_tex_waits, last_tex_failures, last_indirect;
+    static u32 last_tex_evictions, last_tex_waits, last_tex_failures, last_indirect, last_tev_setups, last_tev_builds;
     uint64_t now = ps3_prof_now(), d[PROF_COUNT], span = now - last_now, other;
     u32 pm[PROF_COUNT], i;
 
@@ -134,12 +134,16 @@ static void log_profile(u32 n, const GpStats* gs, const GxRsxStats* rs)
                  rs->texture_uploads - last_uploads, (u32) ((ps3_prof.upload_bytes - last_bytes) >> 10));
         // OSReport keeps 511 characters: the caches get their own line.
         OSReport("heartbeat %u: per second: display lists: %u drawn from the vertex cache, %u converted, %u run as "
-                 "commands, %u evicted; textures: %u hashes, %u evicted, %u waits, %u not found; %u indirect TEVs\n",
+                 "commands, %u evicted; textures: %u hashes, %u evicted, %u waits, %u not found; %u indirect TEVs; "
+                 "TEV setups %u, %u built\n",
                  n, ps3_prof.list_hits - last_hits, ps3_prof.list_builds - last_builds, ps3_prof.list_runs - last_runs,
                  ps3_prof.list_evictions - last_evictions, ps3_prof.tex_hashes - last_tex_hashes,
                  ps3_prof.tex_evictions - last_tex_evictions, ps3_prof.tex_waits - last_tex_waits,
-                 ps3_prof.tex_failures - last_tex_failures, ps3_prof.indirect_tevs - last_indirect);
+                 ps3_prof.tex_failures - last_tex_failures, ps3_prof.indirect_tevs - last_indirect,
+                 ps3_prof.tev_setups - last_tev_setups, ps3_prof.tev_builds - last_tev_builds);
     }
+    last_tev_setups = ps3_prof.tev_setups;
+    last_tev_builds = ps3_prof.tev_builds;
     last_tex_hashes = ps3_prof.tex_hashes;
     last_tex_evictions = ps3_prof.tex_evictions;
     last_tex_waits = ps3_prof.tex_waits;

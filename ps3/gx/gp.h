@@ -71,6 +71,8 @@ typedef struct GpState {
     // Bumped when a value changes: BP (with the TEV register sets), XF registers but the matrix indices and the
     // projection, VCD and VAT. The backend keeps what it derived while the generations it read stay.
     u32 bp_gen, xf_gen, cp_gen;
+    // Bumped when a BP or XF register the TEV config or its values read changes (gp.c's tev_bp).
+    u32 tev_gen;
 } GpState;
 
 typedef struct GpBackend {

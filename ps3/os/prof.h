@@ -41,6 +41,8 @@ typedef struct Ps3Prof {
     volatile uint32_t tex_evictions, tex_waits, tex_failures;
     // TEV setups with indirect stages, which the backend does not draw.
     volatile uint32_t indirect_tevs;
+    // TEV setups (a BP or XF change since the last), and those that built the config (a new TEV key).
+    volatile uint32_t tev_setups, tev_builds;
     volatile uint64_t upload_bytes;
 } Ps3Prof;
 

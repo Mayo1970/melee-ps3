@@ -112,6 +112,25 @@ static FpProg fp_scratch;
 static u32 fp_words[FP_MAXI * 8];
 static const FpEntry* fp_current;
 
+// The fragment program of each TEV key (tev_key): the register words a TEV config is made from, less the values,
+// then the words of the values in the program's code, if any (tev_key_code).
+#define TEV_KEY_WORDS (50 + 21)
+#define TEV_KEY_BITS 10
+#define TEV_KEYS (1 << TEV_KEY_BITS)
+
+typedef struct TevKeyEntry {
+    bool used;
+    u8 n;
+    u16 mask;
+    // The value rows in the code (build_tev): this entry only says so, the key with their words names the program.
+    u16 code;
+    u32 hash;
+    const FpEntry* f;
+    u32 key[TEV_KEY_WORDS];
+} TevKeyEntry;
+
+static TevKeyEntry tev_keys[TEV_KEYS];
+
 static VpEntry vp_cache[VP_CACHE];
 static VpProg vp_scratch;
 static const VpEntry* vp_current;
@@ -163,10 +182,13 @@ static struct {
     u32 layout_cp;
     int layout_vat;
     VtxLayout* layout;
-    u32 tev_bp, tev_xf;
+    u32 tev_gen;
     const FpEntry* f;
     float tev[XF_TEV_CONSTS][4];
     u16 tev_mask;
+    // The register words the TEV value rows were converted from (tev_values): K0-K3, PREV and REG0-REG2, fog.
+    u32 tev_raw[8][2], fog_raw[5];
+    u16 tev_raw_ok;
     u32 vp_xf;
     u16 vp_attrs, vp_tev;
     bool vp_pos3, vp_nospec, vp_olddepth;
@@ -237,8 +259,10 @@ static void clear_fp_cache(void)
             fp_cache[i].used = false;
         }
     }
+    memset(tev_keys, 0, sizeof(tev_keys));
     fp_current = NULL;
     memo.tev_ok = false;
+    memo.f = NULL;
 }
 
 static FpEntry* fp_build(FpEntry* e, int slots)
@@ -425,14 +449,16 @@ static void fog_values(const GpState* s, float param[4], float color[4], bool* o
     color[3] = 0.0f;
 }
 
-// The TEV config for the current BP registers, with the per-draw values on free texcoord interpolants.
-static void build_tev(const GpState* s, int numtexgens, TevConfig* cfg, float vals[XF_TEV_CONSTS][4], u16* mask)
+// The TEV config for the current BP registers, with the per-draw values on free texcoord interpolants. Returns the
+// value rows with no free interpolant, which went into the config (the rows of mask).
+static u16 build_tev(const GpState* s, int numtexgens, TevConfig* cfg, float vals[XF_TEV_CONSTS][4], u16* mask)
 {
     u8 tables[4][4];
     float kval[4][4], reg[4][4], fog_param[4], fog_color[4];
     u32 regs_read, konst_read;
     int i, slot = numtexgens;
     bool ortho;
+    u16 code = 0;
 
     memset(cfg, 0, sizeof(*cfg));
     *mask = 0;
@@ -442,7 +468,6 @@ static void build_tev(const GpState* s, int numtexgens, TevConfig* cfg, float va
     }
     if ((s->bp[0x00] >> 16) & 7) {
         unsupported(U_INDIRECT, "indirect texturing");
-        ps3_prof.indirect_tevs++;
     }
     for (i = 0; i < cfg->nstages; i++) {
         TevStage* st = &cfg->st[i];
@@ -513,6 +538,7 @@ static void build_tev(const GpState* s, int numtexgens, TevConfig* cfg, float va
             *mask |= (u16) (1u << i);
         } else {
             memcpy(cfg->kval[i], kval[i], 16);
+            code |= (u16) (1u << i);
         }
     }
     for (i = 0; i < 4; i++) {
@@ -525,6 +551,7 @@ static void build_tev(const GpState* s, int numtexgens, TevConfig* cfg, float va
             *mask |= (u16) (1u << (4 + i));
         } else {
             memcpy(cfg->reg[i], reg[i], 16);
+            code |= (u16) (1u << (4 + i));
         }
     }
     cfg->fog = (u8) ((s->bp[0xF1] >> 21) & 7);
@@ -540,6 +567,7 @@ static void build_tev(const GpState* s, int numtexgens, TevConfig* cfg, float va
             *mask |= 1u << 8;
         } else {
             memcpy(cfg->fog_param, fog_param, 16);
+            code |= 1u << 8;
         }
         if (slot < 8) {
             cfg->fog_cin = (s8) (FIN_TC0 + slot++);
@@ -547,8 +575,233 @@ static void build_tev(const GpState* s, int numtexgens, TevConfig* cfg, float va
             *mask |= 1u << 9;
         } else {
             memcpy(cfg->fog_color, fog_color, 16);
+            code |= 1u << 9;
         }
     }
+    return code;
+}
+
+// The words of the registers build_tev makes a config from, less the TEV values: n words into key, returned. Equal
+// keys give equal configs while the values are on interpolants (tev_key_code otherwise).
+static u32 tev_key(const GpState* s, u32 numtexgens, u32 key[TEV_KEY_WORDS])
+{
+    u32 gen = s->bp[0x00], nstages = ((gen >> 10) & 0xF) + 1, n = 2, swaps = 0, proj = 0, ind = 0, i;
+
+    for (i = 0; i < 8; i++) {
+        swaps |= (s->bp[0xF6 + i] & 0xF) << (4 * i);
+    }
+    for (i = 0; i < nstages; i++) {
+        u32 tref = s->bp[0x28 + i / 2] >> ((i & 1) ? 12 : 0);
+
+        key[n++] = s->bp[0xC0 + 2 * i];
+        key[n++] = s->bp[0xC1 + 2 * i];
+        ind |= s->bp[0x10 + i];
+        if ((tref >> 6) & 1) {
+            proj |= ((s->xf_regs[0x40 + ((tref >> 3) & 7)] >> 1) & 1) << i;
+        }
+    }
+    // The order and konst selections of each stage pair: one half only for an odd last stage.
+    for (i = 0; i < (nstages + 1) / 2; i++) {
+        bool both = 2 * i + 1 < nstages;
+
+        key[n++] = s->bp[0x28 + i] & (both ? 0x3FF3FFu : 0x3FFu);
+        key[n++] = s->bp[0xF6 + i] & (both ? 0xFFFFF0u : 0x3FF0u);
+    }
+    key[0] = (gen >> 10 & 0xF) | (gen >> 16 & 7) << 4 | numtexgens << 7 | (s->bp[0xF1] >> 20 & 0xF) << 11 |
+             (u32) (ind != 0) << 15 | proj << 16;
+    key[1] = swaps;
+    return n;
+}
+
+// After the n words of tev_key, the register words of the value rows in code (build_tev's result): the new count.
+static u32 tev_key_code(const GpState* s, u16 code, u32 key[TEV_KEY_WORDS], u32 n)
+{
+    u32 i;
+
+    for (i = 0; i < 8; i++) {
+        if ((code >> i) & 1) {
+            const u32* half = i < 4 ? s->tev_konst[i] : s->tev_color[i - 4];
+
+            key[n++] = half[0];
+            key[n++] = half[1];
+        }
+    }
+    if (code & 0x300) {
+        for (i = 0; i < 5; i++) {
+            key[n++] = s->bp[0xEE + i];
+        }
+    }
+    return n;
+}
+
+static u32 tev_key_hash(const u32* key, u32 n)
+{
+    u32 h = 0, i;
+
+    for (i = 0; i < n; i++) {
+        h = ((h << 7) | (h >> 25)) ^ key[i];
+    }
+    return h * 2654435761u;
+}
+
+// The entry of key, or a free one to fill; a full table starts again.
+static TevKeyEntry* tev_lookup(const u32* key, u32 n, u32 h)
+{
+    u32 i, k;
+
+    for (i = 0; i < TEV_KEYS / 2; i++) {
+        TevKeyEntry* e = &tev_keys[((h >> (32 - TEV_KEY_BITS)) + i) & (TEV_KEYS - 1)];
+
+        if (!e->used) {
+            return e;
+        }
+        if (e->hash != h || e->n != n) {
+            continue;
+        }
+        for (k = 0; k < n && e->key[k] == key[k]; k++) {
+        }
+        if (k == n) {
+            return e;
+        }
+    }
+    OSReport("GX RSX: TEV key table full, cleared\n");
+    memset(tev_keys, 0, sizeof(tev_keys));
+    return &tev_keys[h >> (32 - TEV_KEY_BITS)];
+}
+
+// The TEV value rows of mask from their registers, converted again only when a register word changed; the other
+// rows are 0. A changed row sends the constants again.
+static void tev_values(const GpState* s, u16 mask)
+{
+    u32 i;
+
+    if (mask != memo.tev_mask) {
+        memset(memo.tev, 0, sizeof(memo.tev));
+        memo.tev_mask = mask;
+        memo.tev_raw_ok = 0;
+        memo.consts_ok = false;
+    }
+    for (i = 0; i < 8; i++) {
+        const u32* half = i < 4 ? s->tev_konst[i] : s->tev_color[i - 4];
+        u32* raw = memo.tev_raw[i];
+
+        if (!((mask >> i) & 1) || (((memo.tev_raw_ok >> i) & 1) && raw[0] == half[0] && raw[1] == half[1])) {
+            continue;
+        }
+        raw[0] = half[0];
+        raw[1] = half[1];
+        tev_reg(half, i < 4, memo.tev[i]);
+        memo.tev_raw_ok |= (u16) (1u << i);
+        memo.consts_ok = false;
+    }
+    if (mask & 0x300) {
+        u32* raw = memo.fog_raw;
+
+        if (!(memo.tev_raw_ok & 0x100) || memcmp(raw, &s->bp[0xEE], sizeof(memo.fog_raw)) != 0) {
+            float param[4], color[4];
+            bool ortho;
+
+            memcpy(raw, &s->bp[0xEE], sizeof(memo.fog_raw));
+            fog_values(s, param, color, &ortho);
+            if (mask & 0x100) {
+                memcpy(memo.tev[8], param, 16);
+            }
+            if (mask & 0x200) {
+                memcpy(memo.tev[9], color, 16);
+            }
+            memo.tev_raw_ok |= 0x100;
+            memo.consts_ok = false;
+        }
+    }
+}
+
+#ifdef GX_TEV_CHECK
+// Host check: each draw setup builds the config as before and compares the program, mask and values.
+static void tev_check(const GpState* s, u32 numtexgens)
+{
+    static TevConfig cfg;
+    static float vals[XF_TEV_CONSTS][4];
+    static u32 checks, errors;
+    u16 mask;
+
+    memset(vals, 0, sizeof(vals));
+    build_tev(s, (int) numtexgens, &cfg, vals, &mask);
+    checks++;
+    if (fp_get(&cfg) != memo.f || mask != memo.tev_mask || memcmp(vals, memo.tev, sizeof(vals)) != 0) {
+        if (errors++ < 20) {
+            ps3_log("tev check: setup %u differs: mask %#x against %#x, program %s\n", checks, mask, memo.tev_mask,
+                    fp_get(&cfg) == memo.f ? "same" : "differs");
+        }
+    }
+    if (checks % 100000 == 0) {
+        ps3_log("tev check: %u setups, %u differ, %u fragment programs\n", checks, errors, stats.fragment_programs);
+    }
+}
+#endif
+
+// The fragment program and TEV values of the current registers. The program is found by a word compare of tev_key,
+// with the words of the values in code if the config has some; build_tev and the config hash run for a new key only.
+static void tev_setup(const GpState* s, u32 numtexgens)
+{
+    static TevConfig cfg;
+    static float vals[XF_TEV_CONSTS][4];
+    u32 key[TEV_KEY_WORDS], n = tev_key(s, numtexgens, key), h = tev_key_hash(key, n);
+    TevKeyEntry* e = tev_lookup(key, n, h);
+    const FpEntry* f;
+    bool with_code = false;
+    u16 mask;
+
+    ps3_prof.tev_setups++;
+    if ((s->bp[0x00] >> 16) & 7) {
+        ps3_prof.indirect_tevs++;
+    }
+    if (e->used && e->code != 0) {
+        n = tev_key_code(s, e->code, key, n);
+        h = tev_key_hash(key, n);
+        e = tev_lookup(key, n, h);
+        with_code = true;
+    }
+    if (e->used) {
+        f = e->f;
+        mask = e->mask;
+    } else {
+        u16 code;
+
+        ps3_prof.tev_builds++;
+        code = build_tev(s, (int) numtexgens, &cfg, vals, &mask);
+        f = fp_get(&cfg);
+        if (f == NULL) {
+            memo.tev_ok = false;
+            memo.f = NULL;
+            return;
+        }
+        // fp_get may have cleared the key table: e is then a free entry like any other.
+        if (code != 0 && !with_code) {
+            e->used = true;
+            e->code = code;
+            e->n = (u8) n;
+            e->hash = h;
+            memcpy(e->key, key, n * 4);
+            n = tev_key_code(s, code, key, n);
+            h = tev_key_hash(key, n);
+            e = tev_lookup(key, n, h);
+        }
+        e->used = true;
+        e->code = 0;
+        e->n = (u8) n;
+        e->mask = mask;
+        e->hash = h;
+        e->f = f;
+        memcpy(e->key, key, n * 4);
+    }
+    // The textures follow the program's config (bind_textures).
+    if (f != memo.f) {
+        memo.f = f;
+        memo.tex_ok = false;
+    }
+    tev_values(s, mask);
+    memo.tev_gen = s->tev_gen;
+    memo.tev_ok = true;
 }
 
 // Raster state
@@ -1589,7 +1842,6 @@ static VtxLayout* current_layout(const GpState* s, int vat)
 // layout, or NULL when the draw is not drawn (the caller counts it as dropped).
 static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uint64_t* t)
 {
-    static TevConfig cfg;
     VtxLayout* l;
     const FpEntry* f;
     VpEntry* v;
@@ -1603,21 +1855,16 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
     }
     numtexgens = numtexgens > 8 ? 8 : numtexgens;
     ps3_diag.gp_site = "draw: TEV";
-    tev_hit = memo.tev_ok && memo.tev_bp == s->bp_gen && memo.tev_xf == s->xf_gen;
+    tev_hit = memo.tev_ok && memo.tev_gen == s->tev_gen;
     if (!tev_hit) {
         reused = false;
-        memo.tev_ok = false;
-        memo.consts_ok = false;
-        memo.tex_ok = false;
-        memset(memo.tev, 0, sizeof(memo.tev));
-        build_tev(s, (int) numtexgens, &cfg, memo.tev, &memo.tev_mask);
-        memo.f = fp_get(&cfg);
-        if (memo.f != NULL) {
-            memo.tev_bp = s->bp_gen;
-            memo.tev_xf = s->xf_gen;
-            memo.tev_ok = true;
-        }
+        tev_setup(s, numtexgens);
     }
+#ifdef GX_TEV_CHECK
+    if (memo.tev_ok) {
+        tev_check(s, numtexgens);
+    }
+#endif
     f = memo.f;
     ps3_prof_lap(PROF_DRAW_TEV, t);
     ps3_diag.gp_site = "draw: XF";
@@ -1683,7 +1930,7 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
 #endif
     if (!memo.tex_ok || !textures_bound || memo.tex_bp != s->bp_gen || memo.tex_stamp != stamp ||
         memo.tex_tluts != tlut_loads) {
-        bind_textures(s, &cfg);
+        bind_textures(s, &f->cfg);
         memo.tex_bp = s->bp_gen;
         memo.tex_stamp = stamp;
         memo.tex_tluts = tlut_loads;
