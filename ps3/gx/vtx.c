@@ -7,20 +7,6 @@
 
 #include "xfgen.h"
 
-enum {
-    OP_COPY,     // n bytes
-    OP_S8_S16,   // n components
-    OP_U8_S16,   // n components
-    OP_U16_F32,  // n components
-    OP_RGB565,
-    OP_RGB8,
-    OP_RGBX8,
-    OP_RGBA4,
-    OP_RGBA6,
-    OP_RGBA8,
-    OP_MIDX_DEF, // the default matrix index src (0 position, 1 + n texcoord n)
-};
-
 enum { FMT_U8, FMT_S8, FMT_U16, FMT_S16, FMT_F32 };
 
 static const u8 comp_size[8] = { 1, 1, 2, 2, 4, 0, 0, 0 };
@@ -33,22 +19,13 @@ typedef struct Builder {
 
 static void add_step(Builder* b, u8 op, u32 src, u8 n, u8 array, u8 idx16, u8 elem_off)
 {
-    // Source bytes per op, from OP_RGB565 on; the ones before read n bytes, OP_U16_F32 2n.
-    static const u8 color_bytes[6] = { 2, 3, 4, 2, 3, 4 };
     VtxStep* st;
 
     if (b->l->nsteps >= VTX_MAX_STEPS) {
         return;
     }
-    if (op == OP_MIDX_DEF) {
+    if (op == VTX_OP_MIDX_DEF) {
         b->l->midx_def = true;
-    }
-    if (array < VTX_ARRAYS) {
-        u32 end = elem_off + (op == OP_U16_F32 ? 2u * n : op >= OP_RGB565 ? color_bytes[op - OP_RGB565] : n);
-
-        if (end > b->l->extent[array]) {
-            b->l->extent[array] = (u8) end;
-        }
     }
     st = &b->l->step[b->l->nsteps++];
     st->op = op;
@@ -58,6 +35,9 @@ static void add_step(Builder* b, u8 op, u32 src, u8 n, u8 array, u8 idx16, u8 el
     st->array = array;
     st->idx16 = idx16;
     st->elem_off = elem_off;
+    if (array < VTX_ARRAYS && elem_off + vtx_step_bytes(st) > b->l->extent[array]) {
+        b->l->extent[array] = (u8) (elem_off + vtx_step_bytes(st));
+    }
 }
 
 // A new RSX attribute at the next 4-byte aligned offset.
@@ -77,27 +57,27 @@ static void add_vector(Builder* b, int slot, int fmt, u8 count, u32 src, u8 arra
     switch (fmt) {
     case FMT_F32:
         open_attr(b, slot, VTX_F32, count, 4u * count);
-        add_step(b, OP_COPY, src, (u8) (4 * count), array, idx16, elem_off);
+        add_step(b, VTX_OP_COPY, src, (u8) (4 * count), array, idx16, elem_off);
         b->dst += 4u * count;
         break;
     case FMT_S16:
         open_attr(b, slot, VTX_S16, count, 2u * count);
-        add_step(b, OP_COPY, src, (u8) (2 * count), array, idx16, elem_off);
+        add_step(b, VTX_OP_COPY, src, (u8) (2 * count), array, idx16, elem_off);
         b->dst += 2u * count;
         break;
     case FMT_U8:
         open_attr(b, slot, VTX_S16, count, 2u * count);
-        add_step(b, OP_U8_S16, src, count, array, idx16, elem_off);
+        add_step(b, VTX_OP_U8_S16, src, count, array, idx16, elem_off);
         b->dst += 2u * count;
         break;
     case FMT_S8:
         open_attr(b, slot, VTX_S16, count, 2u * count);
-        add_step(b, OP_S8_S16, src, count, array, idx16, elem_off);
+        add_step(b, VTX_OP_S8_S16, src, count, array, idx16, elem_off);
         b->dst += 2u * count;
         break;
     default:
         open_attr(b, slot, VTX_F32, count, 4u * count);
-        add_step(b, OP_U16_F32, src, count, array, idx16, elem_off);
+        add_step(b, VTX_OP_U16_F32, src, count, array, idx16, elem_off);
         b->dst += 4u * count;
         break;
     }
@@ -156,9 +136,9 @@ void vtx_layout(const GpState* s, int vat, VtxLayout* l)
         open_attr(&b, VA_MIDX_A, VTX_U8, 4, 4);
         for (i = 0; i < 4; i++) {
             if (midx_src[i] != 0xFFFF) {
-                add_step(&b, OP_COPY, midx_src[i], 1, 0xFF, 0, 0);
+                add_step(&b, VTX_OP_COPY, midx_src[i], 1, 0xFF, 0, 0);
             } else {
-                add_step(&b, OP_MIDX_DEF, i, 1, 0xFF, 0, 0);
+                add_step(&b, VTX_OP_MIDX_DEF, i, 1, 0xFF, 0, 0);
             }
             b.dst++;
         }
@@ -167,9 +147,9 @@ void vtx_layout(const GpState* s, int vat, VtxLayout* l)
         open_attr(&b, VA_MIDX_B, VTX_U8, 4, 4);
         for (i = 4; i < 8; i++) {
             if (midx_src[i] != 0xFFFF) {
-                add_step(&b, OP_COPY, midx_src[i], 1, 0xFF, 0, 0);
+                add_step(&b, VTX_OP_COPY, midx_src[i], 1, 0xFF, 0, 0);
             } else {
-                add_step(&b, OP_MIDX_DEF, i, 1, 0xFF, 0, 0);
+                add_step(&b, VTX_OP_MIDX_DEF, i, 1, 0xFF, 0, 0);
             }
             b.dst++;
         }
@@ -211,7 +191,8 @@ void vtx_layout(const GpState* s, int vat, VtxLayout* l)
     }
     // Colours: four normalized bytes on the RSX.
     for (i = 0; i < 2; i++) {
-        static const u8 ops[8] = { OP_RGB565, OP_RGB8, OP_RGBX8, OP_RGBA4, OP_RGBA6, OP_RGBA8, OP_RGBA8, OP_RGBA8 };
+        static const u8 ops[8] = { VTX_OP_RGB565, VTX_OP_RGB8,  VTX_OP_RGBX8, VTX_OP_RGBA4,
+                                   VTX_OP_RGBA6,  VTX_OP_RGBA8, VTX_OP_RGBA8, VTX_OP_RGBA8 };
         u32 fmt = (a >> (14 + 4 * i)) & 7;
 
         t = (lo >> (13 + 2 * i)) & 3;
@@ -252,29 +233,6 @@ void vtx_layout(const GpState* s, int vat, VtxLayout* l)
     l->out_size = (u16) ((b.dst + 3) & ~3u);
 }
 
-static inline u16 be16(const u8* p)
-{
-    return (u16) (p[0] << 8 | p[1]);
-}
-
-static inline void put_rgba(u8* d, u32 r, u32 g, u32 b, u32 a)
-{
-    d[0] = (u8) r;
-    d[1] = (u8) g;
-    d[2] = (u8) b;
-    d[3] = (u8) a;
-}
-
-static inline u32 x5(u32 v)
-{
-    return v << 3 | v >> 2;
-}
-
-static inline u32 x6(u32 v)
-{
-    return v << 2 | v >> 4;
-}
-
 void vtx_index_range(const VtxLayout* l, const u8* in, u32 count, u32 lo[VTX_ARRAYS], u32 hi[VTX_ARRAYS])
 {
     u32 i, v;
@@ -287,11 +245,22 @@ void vtx_index_range(const VtxLayout* l, const u8* in, u32 count, u32 lo[VTX_ARR
             continue;
         }
         for (v = 0; v < count; v++, p += l->in_size) {
-            u32 idx = st->idx16 ? be16(p) : p[0];
+            u32 idx = st->idx16 ? vtx_be16(p) : p[0];
 
             lo[st->array] = idx < lo[st->array] ? idx : lo[st->array];
             hi[st->array] = idx > hi[st->array] ? idx : hi[st->array];
         }
+    }
+}
+
+void vtx_default_midx(const GpState* s, u8 def[9])
+{
+    u32 i;
+
+    def[0] = (u8) (s->xf_regs[0x18] & 0x3F);
+    for (i = 0; i < 4; i++) {
+        def[1 + i] = (u8) ((s->xf_regs[0x18] >> (6 + 6 * i)) & 0x3F);
+        def[5 + i] = (u8) ((s->xf_regs[0x19] >> (6 * i)) & 0x3F);
     }
 }
 
@@ -315,68 +284,18 @@ bool vtx_convert(const VtxLayout* l, const GpState* s, const u8* in, u32 count, 
             }
         }
     }
-    def[0] = (u8) (s->xf_regs[0x18] & 0x3F);
-    for (i = 0; i < 4; i++) {
-        def[1 + i] = (u8) ((s->xf_regs[0x18] >> (6 + 6 * i)) & 0x3F);
-        def[5 + i] = (u8) ((s->xf_regs[0x19] >> (6 * i)) & 0x3F);
-    }
+    vtx_default_midx(s, def);
     for (v = 0; v < count; v++, in += l->in_size, out += l->out_size) {
         for (i = 0; i < l->nsteps; i++) {
             const VtxStep* st = &l->step[i];
             const u8* p = in + st->src;
-            u8* d = out + st->dst;
-            u32 k, c;
 
             if (st->array != 0xFF) {
-                u32 idx = st->idx16 ? be16(p) : p[0];
+                u32 idx = st->idx16 ? vtx_be16(p) : p[0];
 
                 p = arrays[st->array] + idx * s->array_stride[st->array] + st->elem_off;
             }
-            switch (st->op) {
-            case OP_COPY:
-                memcpy(d, p, st->n);
-                break;
-            case OP_S8_S16:
-                for (k = 0; k < st->n; k++) {
-                    d[2 * k] = (p[k] & 0x80) ? 0xFF : 0;
-                    d[2 * k + 1] = p[k];
-                }
-                break;
-            case OP_U8_S16:
-                for (k = 0; k < st->n; k++) {
-                    d[2 * k] = 0;
-                    d[2 * k + 1] = p[k];
-                }
-                break;
-            case OP_U16_F32:
-                for (k = 0; k < st->n; k++) {
-                    float f = (float) be16(p + 2 * k);
-                    memcpy(d + 4 * k, &f, 4);
-                }
-                break;
-            case OP_RGB565:
-                c = be16(p);
-                put_rgba(d, x5(c >> 11), x6((c >> 5) & 0x3F), x5(c & 0x1F), 0xFF);
-                break;
-            case OP_RGB8:
-            case OP_RGBX8:
-                put_rgba(d, p[0], p[1], p[2], 0xFF);
-                break;
-            case OP_RGBA4:
-                c = be16(p);
-                put_rgba(d, (c >> 12) * 17, ((c >> 8) & 0xF) * 17, ((c >> 4) & 0xF) * 17, (c & 0xF) * 17);
-                break;
-            case OP_RGBA6:
-                c = (u32) p[0] << 16 | (u32) p[1] << 8 | p[2];
-                put_rgba(d, x6(c >> 18), x6((c >> 12) & 0x3F), x6((c >> 6) & 0x3F), x6(c & 0x3F));
-                break;
-            case OP_RGBA8:
-                memcpy(d, p, 4);
-                break;
-            default:
-                d[0] = def[st->src];
-                break;
-            }
+            vtx_step_run(st, p, out, def);
         }
     }
     return true;

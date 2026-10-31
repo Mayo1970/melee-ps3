@@ -43,6 +43,9 @@ typedef struct Ps3Prof {
     volatile uint32_t indirect_tevs;
     // TEV setups (a BP or XF change since the last), and those that built the config (a new TEV key).
     volatile uint32_t tev_setups, tev_builds;
+    // Draws converted on the SPU (vxjob.c), those left to the PPE while it runs, and the GP's waits for it.
+    volatile uint32_t spu_jobs, spu_ppe, spu_waits;
+    volatile uint64_t spu_wait_ticks;
     volatile uint64_t upload_bytes;
 } Ps3Prof;
 

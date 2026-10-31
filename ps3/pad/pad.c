@@ -1,6 +1,5 @@
-// The SDK's PAD calls over DS3 pads (pad_cell.c) and the Wii U GameCube adapter (gcadapter_cell.c). Cross,
-// Square, Circle and Triangle are A, B, X and Y as they lie on the GameCube pad; R1 is Z, L2 and R2 the analog
-// L and R, the right stick the C stick. Adapter port N is channel N; DS3 pads take the free channels in order.
+// The SDK's PAD calls over DS3 pads and the Wii U GameCube adapter: Cross, Square, Circle, Triangle are A, B, X, Y;
+// R1 Z, L2/R2 analog L/R, right stick C. Adapter port N is channel N; DS3 pads take the free channels in order.
 #include <string.h>
 
 #include <dolphin/os.h>
@@ -174,11 +173,12 @@ u32 PADRead(PADStatus* status)
         connected |= PAD_CHAN0_BIT >> chan;
     }
     {
-        // As built; the old bindings after a present (the black flicker); the old depth output; the flicker
-        // detector; then the black flicker's earlier tests (runs 46-52, none cleared it) and specular lights off.
-        static const unsigned modes[] = { 0,      16777216, 4194304, 2097152, 1048576, 524288, 262144, 131072,
-                                          65536,  16,       4096,    8192,    16384,   32768,  2048 };
+        // As built; vertex conversion on the PPE; the old bindings after a present (the black flicker); the old depth
+        // output; the flicker detector; then the black flicker's earlier tests (runs 46-52) and specular lights off.
+        static const unsigned modes[] = { 0,       33554432, 16777216, 4194304, 2097152, 1048576, 524288, 262144,
+                                          131072,  65536,    16,       4096,    8192,    16384,   32768,  2048 };
         static const char* const names[] = { "as built",
+                                             "vertex conversion on the PPE (no SPU jobs)",
                                              "the old texture bindings after a present (the black flicker)",
                                              "the old depth output (z + w)",
                                              "flicker detector: one-frame setup changes go to the log",

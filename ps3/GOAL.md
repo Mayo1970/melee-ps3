@@ -440,8 +440,9 @@ Waiting for the user:
   this is not the flicker. Package rebuilt: `.got` 0x4728, 0 `r2off` stubs.
 - Run 41: saving (the first boot creates the save; a setting changed, then a second boot keeps it), Poke Balls,
   the C stick (which mode failed), and the race modes (Select) on Green Greens, Mute City and with the XMB open.
-- Run 56: the Part 2 step 3 package (TEV keys), mode 0, matches on Fountain of Dreams and Mute City; the presents a
-  second and the heartbeat's fourth and fifth lines.
+- Run 60: the intro movie without a skip for 40 s or more (the sixth heartbeat line at the music stop), then 4 players
+  on Fountain of Dreams to the end of the match and 20 s of the results screen, then Mute City, with a few seconds in
+  mode 1 (conversion on the PPE). The listener writes `build/run58_udp.txt` (run 60 starts at its "melee: boot").
 - Wii U GameCube adapter (057e:0337, 2026-10-29): `ps3/pad/gcadapter_cell.c` over PSL1GHT's usbd (`-lusb`), an
   extra LDD for that VID/PID with its own static 32-bit ops (PSL1GHT's `usbRegisterExtraLdd` passes a stack copy).
   Attach sets the configuration, opens the interrupt pipes, sends 0x13, then reads 37-byte reports. Adapter port N
@@ -934,6 +935,121 @@ Step 3, TEV setup (2026-10-31, `backend.c`, `gp.c`):
   asleep 25 (often 1-20): here the game logic on the main thread is the limit, not the GP. After each match, probably
   the results screen with the four fighters (`GmRst*` loads): about 220,000 GX draws a second at 42-55 presents.
   The quit from the XMB logged "gp: stopped, the RSX is idle" and `melee: exit`.
+- Run 56: the user reports SUCCESS (2026-10-31), and asks for Part 2 step 4: the vertex conversion on the SPUs.
+- Host profile before step 4 (2026-10-31, a qemu plugin that counts instructions per translation block and thread;
+  Falco, Marth, Ness and Jigglypuff on Fountain of Dreams, 100 s of match). GP thread, share of its instructions:
+  `run_command` 35.2% (78 M commands, 118 M XF words in LOAD_XF loops) and `xf_write` 7.3%, so command decode about
+  45%; `draw_setup` 15.5%; `vtx_convert` 8.8% (with `put_indices` and `batch_add` 9.6%); `xf_constants` and
+  `row_words` 7.3%; cached list draws (`call_list`, `bind_attribs`, `dev_attrib`, memory stamps) about 10%. The host
+  build has the stack protector, the PS3 build does not. The console's "vertices" phase holds both the conversion
+  and the cached list draws; its 280 per mille in no phase fit the command decode.
+- The user chose: the command decode first, measured on the console, then the SPU vertex conversion.
+
+Command decode (2026-10-31, `gp.c`):
+- Each command loaded `state.writes`, `bp_mask`, the generations and `stats.commands` right after the command before
+  stored them (a load-hit-store on the PPE: `ppu-objdump` of `run_command`), and each XF word went through its own
+  `take` and an `xf_write` call.
+- `run_regs` runs the BP, XF, CP and NOP commands that are whole in the bytes at hand (ring or display list) in one
+  pass, up to another command, a BP write with an effect (`bp_has_effect`: PE done, tokens, EFB copy, TLUT load,
+  texture invalidate) or 4 KB (the release step). The counters (`Gens`) stay in registers over the pass: no
+  per-command stack load or store in the `ppu-gcc` 7.2 code. The other commands take the old path.
+- `xf_load` writes the words of one LOAD_XF or LOAD_INDX in one loop, with the XF memory dirty bits gathered per
+  word; `writes` counts commands, not words (it is only compared for equality). `bp_dirty` had no reader: removed.
+- Host profile (the same 4-player match): GP instructions per GX draw from 2,611 to 1,903 (-27%); the decode
+  (`run_regs`, `run_command`) from about 1,200 to 480 a draw. The load-hit-stores it removes do not show under qemu.
+- `gxtest` 3 of 3 PASS (GP registers against the SDK's shadow), `scenetest` PASS with frames identical; host matches
+  (8, 60 s, items at 4, 4 players on Fountain of Dreams among them) exit 0 with 0 dropped draws; the TEV check build
+  0 differences in 5.9 million draw setups.
+- Run 57 package: `.got` 0x49b0, 0 `r2off` stubs, 23.8 MB in loaded segments.
+- Melee run 57 (2026-10-31, in `build/run56_udp.txt` from line 17109), 4 players on Fountain of Dreams (Mr. Game &
+  Watch, Bowser, Peach, Yoshi; not run 56's fighters), heartbeats 30-135: 44-60 presents a second, mean 52.2 (run 56:
+  48.2); about 251,000 GX draws a second (4,800 a frame) in 73,700 RSX draws, 0 dropped. GP per mille: draws 671
+  (vertices 282, constants 137, textures 98, TEV 70, state 59, XF 22), waits for data 99, for RSX labels 37, in no
+  phase 189 (run 56: 280). GP time per GX draw 3.6 µs (run 56: 4.0); outside the draw phases 0.75 µs (1.23). Main
+  asleep 25 per mille (run 56: 95): the main thread is now the closer limit there too.
+- Run 57, the same 4 fighters on Mute City (heartbeats 190-250): 42-58 presents a second, mean 50.9 (run 56: 51.8);
+  about 147,600 GX draws (2,900 a frame) in 59,800 RSX draws a second, 0 dropped, no stop. GP per mille: draws 563,
+  waits for data 228 (run 56: 136), in no phase 166; main asleep 33, under 20 in 40 of 61 s. The GP has more spare
+  time and the frame rate stays: Mute City is limited by the main thread. The results screen after Fountain of
+  Dreams (4 fighters, about 248,000 GX draws a second) ran at 47 presents with the main thread asleep 0.
+- The user did not classify run 57, and asked for Part 2 step 4 as planned: the vertex conversion on an SPU.
+
+Part 2 step 4, vertex conversion on an SPU (2026-10-31):
+- What converts: the FIFO draws (`batch_add`), one GX draw per batch in a match (about 40,000 a second on the
+  console, mostly 4-vertex quads), about 1,600 PPE instructions each on the host. Display lists come from the vertex
+  cache; its builds and draws over 65,535 vertices stay on the PPE.
+- `vtx_step.h`: the steps and the per-step conversion, shared by `vtx.c` and the SPU program.
+- `vxjob.c` (GP thread): a 256 KB entry ring in main memory. An entry holds the header (vertex count, the output
+  address in the vertex ring, sizes, default matrix indices), the layout's steps and the arrays' addresses and
+  strides only when they changed, then a copy of the GX vertices (the FIFO bytes are released before the SPU runs).
+  The new head goes out after a release barrier.
+- `vxspu.c` (SPU, `vx_spu.elf`, 6.7 KB code, 95 KB buffers; on a thread in the host builds): reads the ring in
+  windows of up to 32 KB, gathers indexed attributes with one DMA list per 64 vertices (each window the 16-byte lines
+  of the element's bytes, so never into another page), converts, puts whole 16-byte lines, then writes its tail.
+- The RSX must not read the vertices first: PUT moves at `rsxdev_cell.c`'s flushes (ring segment switch, finish,
+  present, flush) and at the end of each command buffer segment, in the system's context callback. Each flush runs
+  `vx_drain` first (`dev_set_flush_hook`), and so does the callback: `ctx->callback` is replaced by a 32-bit
+  descriptor (entry, TOC) of `segment_callback`, which drains, then calls the system's through librsx's
+  `rsxContextCallback`. In a batch each draw's vertices start 16-byte aligned (`vx_align`), as the SPU writes whole
+  lines.
+- A wait of over 0.5 s for the SPU logs it and puts the conversion back on the PPE. A/B mode 1 (bit 33554432): the
+  conversion on the PPE; the modes after it are run 55's modes 1-14. The heartbeat's fifth line adds the jobs on the
+  SPU and on the PPE, and the GP's waits for the SPU.
+- Host check (`EXTRA_CFLAGS=-DGX_SPU_CHECK`: each queued draw also converted on the PPE, compared after the drain):
+  0 differences in about 2.5 million draws (4 players on Fountain of Dreams, Mute City, Final Destination, the 150 s
+  boot). `scenetest` PASS with frames identical (under `-R 0x100000000`; without it the queue is not below 4 GB and
+  the conversion stays on the PPE). 8 host matches of 60 s exit 0 with 0 dropped draws; the A/B switch works.
+- Host profile (the same 4-player match): GP instructions per GX draw from 1,903 to 1,691 (-11%); `vtx_convert`
+  (12%) gone, `vx_submit` 2.9%.
+- Run 58 package: `.got` 0x4aa8, 0 `r2off` stubs, 23.8 MB in loaded segments (and the 256 KB ring at run time).
+- The UDP listener of runs 56-57 stopped after run 57 (exit 255, no message); a new one writes `build/run58_udp.txt`.
+- Melee run 58 (2026-10-31, `build/run58_udp.txt`): no listener ran during the boot and the Fountain of Dreams match
+  (the port was free); the log has heartbeats 220-450, a screen with about 35,000 GX draws a second at 60 presents,
+  then the quit. It shows "vertex jobs: 0 on the SPU, 13256 on the PPE": run 58's package checked the command buffer
+  room against `ctx->end`, but `end` is the end of the current segment, so the room was always under 64 KB and every
+  draw stayed on the PPE. Fixed with the segment callback wrapper above; the room check is gone.
+- Run 59 package: `.got` 0x4ac8, 0 `r2off` stubs, 23.8 MB in loaded segments. The boot logs the system callback, our
+  descriptor and the segment size ("rsxdev: segment callback ... wrapped"). Host: `scenetest` PASS with frames
+  identical; host matches exit 0 with 0 dropped draws (the host's soft device has no segments).
+- Melee run 59 (2026-10-31, `build/run58_udp.txt` from line 1436): the boot logged "rsxdev: segment callback 10d80504
+  wrapped (entry 0043a630, TOC 00b057f0); segment 28668 bytes" and "vx: vertex conversion on an SPU". 4 players on
+  Fountain of Dreams (Roy, Fox, Young Link, Ice Climbers: 5 fighters), heartbeats 153-231: 43.6 presents a second,
+  about 237,600 GX draws (5,455 a frame), about 35,800 vertex jobs a second on the SPU, 0 on the PPE, the GP waiting
+  for the SPU 0.5 per mille; GP draws 668 per mille (vertices 277), waits for data 123; main asleep 28. Mode 1 was not
+  tried. The user: the game crashed. The log: 12 s into the results screen (`GmRst.usd` at heartbeat 233), "Memory
+  Empty", `OSPanic` at `sislib.c` line 86, back to the XMB.
+- The cause, from the code: `HSD_SisLib_Alloc` serves the text objects from one arena that `preloadState` sizes per
+  scene (`gm_1A3F.c`: 0xC000 for the results, 0x2400 the character select, 0x4800 the rest). With LP64 its
+  `SisBlock` header is 24 bytes (12 on the GameCube), and `HSD_Text` and `SisBuffer` hold more pointers, so the same
+  text needs more of the arena; the results screen with four players ran out. The SPU writes only into the vertex
+  ring and its queue line.
+- Fix (`sislib.c`, `HSD_SisLib_803A6048`, under `TARGET_PS3`): each scene's text arena is twice the size it asks for
+  (results 96 KB). Not reproduced on the host: its debug VS match does not end into the results screen.
+- The user: run 59's intro music stopped suddenly. The log: during the intro movie the stream refilled once (ARQ posts
+  201 to 205 at heartbeat 3), then none for 30 s while the movie went on (30 DVD reads a second, every read and ARQ
+  post with its callback). Runs 54 and 57 refilled every 2 s (4 ARQ posts) until the user skipped the movie at 7-8 s;
+  no run before 59 played the movie that long. The refill (`HSD_SynthPStreamMasterClockCallback`, each AX frame) needs
+  the stream voice's position to move on, AX frames to run, and no block load in flight. The cause is not found: the
+  host boot does not reach the movie. Run 60 diagnostic: a sixth heartbeat line, the audio program's command lists,
+  AI periods and silent periods a second (`ps3_audio_stats`) and the stream's state (`ps3_synth_stream_state` in
+  `synth.c`: load busy, block indices, the voice's flags, state, current, end and loop addresses). Host: 200 command
+  lists and AI periods a second, the stream moving.
+- Run 60 package: `.got` 0x4ae8, 0 `r2off` stubs, 23.8 MB in loaded segments.
+- Melee run 60 (2026-10-31, `build/run58_udp.txt` from line 14500): the intro movie's music played to the end (the
+  user: it worked): a block every 2 s, 200 command lists and AI periods a second, no silence. Same code as run 59, so
+  run 59's stop is timing-dependent; the next one shows in the `audio:` line. 4 players on Fountain of Dreams (Peach,
+  Ice Climbers, Pikachu, DK), heartbeats 68-128: 41-58 presents a second, mean 50.3, about 247,700 GX draws (4,928 a
+  frame), about 34,800 vertex jobs a second on the SPU, GP waits for data 144 per mille, main asleep 25. The results
+  screen ran from heartbeat 130 to the character select at 139 with no panic (run 59 panicked 12 s in), the four
+  fighters at 48-57 presents with the main thread asleep 0-74. Mute City, the same fighters, heartbeats 152-211:
+  35-58 presents a second, mean 50.7 (run 57: 50.9, run 56: 51.8); about 158,000 GX draws (3,117 a frame), about
+  25,300 vertex jobs a second on the SPU; GP draws 531 per mille, waits for data 265; main asleep 29 (under 20 in 41
+  of 60 s). Its results screen from heartbeat 213, the stats page from 225, still up at 240 with no panic: run 59
+  panicked 12 s into the results, about where the stats page starts, so the arena fix holds. Mode 1 was not tried.
+- Where the frame rate stands with 4 players: Fountain of Dreams about 50, Mute City about 51. On both the main thread
+  (the game logic) is the limit; the GP waits for data 14% (Fountain of Dreams) and 27% (Mute City) of the time.
+- The user on run 60: "Perfect". Not committed: the command decode, the SPU vertex conversion, the text arena fix and
+  the audio diagnostic line.
 
 Other findings of 2026-10-29:
 - C stick: the right stick is the C stick (`pad.c`). Host check (`MELEE_HOST_PAD` now takes `CL CR CU CD`): C stick

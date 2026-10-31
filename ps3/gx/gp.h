@@ -62,11 +62,10 @@ typedef struct GpState {
     u32 bp_mask;
     // Bytes per vertex for each VAT; 0xFFFF when VCD or VAT changed since.
     u16 vtx_size[8];
-    // Set on each write, for the backend to clear: one bit per BP register, per XF register, per 4 XF memory words.
-    u32 bp_dirty[8];
+    // Set on each write, for the backend to clear: one bit per XF register, per 4 XF memory words.
     u32 xf_reg_dirty[3];
     u32 xf_mem_dirty[XF_MEM_SIZE / 128];
-    // CP, XF and BP writes so far: a draw with none since the draw before has its registers.
+    // CP, XF and BP write commands so far: a draw with none since the draw before has its registers.
     u32 writes;
     // Bumped when a value changes: BP (with the TEV register sets), XF registers but the matrix indices and the
     // projection, VCD and VAT. The backend keeps what it derived while the generations it read stay.

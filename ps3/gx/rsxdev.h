@@ -101,6 +101,9 @@ void dev_draw_indexed(uint32_t prim, uint32_t offset, uint32_t count);
 void dev_clear(bool color, bool alpha, bool depth, uint32_t argb, uint32_t z24);
 // Later draws wait until the RSX has finished all earlier work (render to texture, then sample it).
 void dev_barrier(void);
+// fn runs before each move of the RSX's PUT, the command buffer segments' too, after which the RSX reads what is
+// queued (vx_drain). It must not send RSX commands.
+void dev_set_flush_hook(void (*fn)(void));
 void dev_flush(void);
 // Waits until the RSX has run everything queued so far.
 void dev_finish(void);

@@ -17,6 +17,7 @@
 #include "texdec.h"
 #include "vpgen.h"
 #include "vtx.h"
+#include "vxjob.h"
 #include "xfgen.h"
 
 #define EFB_PITCH (EFB_WIDTH * 4)
@@ -1791,17 +1792,19 @@ static bool batch_open(const GpState* s, const VtxLayout* l, int vat, u32 count,
 // False when the draw does not fit in the open batch.
 static bool batch_add(const GpState* s, int prim, u32 count, const u8* data, u32 nidx)
 {
-    u32 verts = batch.verts + count, total = batch.nidx + nidx;
+    // The SPU writes whole 16-byte lines: each draw's vertices start on one, the vertices between go unused.
+    u32 first = vx_align(batch.verts, batch.l->out_size), verts = first + count, total = batch.nidx + nidx;
+    u8* out = batch.base + first * batch.l->out_size;
 
     if (verts > BATCH_VERTICES || total > BATCH_INDICES ||
         ((verts * batch.l->out_size + 15) & ~15u) + total * 2 > batch.avail) {
         return false;
     }
-    if (!vtx_convert(batch.l, s, data, count, batch.base + batch.verts * batch.l->out_size)) {
+    if (!vx_submit(batch.l, s, data, count, out) && !vtx_convert(batch.l, s, data, count, out)) {
         stats.dropped_draws++;
         return true;
     }
-    put_indices(batch_idx + batch.nidx, prim, batch.verts, count);
+    put_indices(batch_idx + batch.nidx, prim, first, count);
     batch.verts = verts;
     batch.nidx = total;
     return true;
@@ -3017,6 +3020,9 @@ bool gx_rsx_init(void)
     dev_scissor(0, 0, EFB_WIDTH, EFB_HEIGHT);
     dev_color_mask(true, true);
     dev_clear(true, true, true, 0xFF000000, 0xFFFFFF);
+    // The ring draws' vertices from the SPU, written before the RSX may read them.
+    vx_init();
+    dev_set_flush_hook(vx_drain);
     initialized = true;
     return true;
 }

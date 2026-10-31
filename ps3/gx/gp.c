@@ -186,11 +186,37 @@ u32 gp_list_draws(GpState* s, const u8* p, u32 size, GpListDraw* out, u32 max)
     return n;
 }
 
-static void cp_write(u8 addr, u32 v)
+// The GpState counters register writes change, in registers over a run of commands (run_regs): on the PPE a value
+// stored by one command and loaded again by the next stalls the pipeline (load-hit-store).
+typedef struct Gens {
+    u32 writes, bp_gen, xf_gen, cp_gen, tev_gen, bp_mask;
+} Gens;
+
+static inline void gens_load(Gens* g)
+{
+    g->writes = state.writes;
+    g->bp_gen = state.bp_gen;
+    g->xf_gen = state.xf_gen;
+    g->cp_gen = state.cp_gen;
+    g->tev_gen = state.tev_gen;
+    g->bp_mask = state.bp_mask;
+}
+
+static inline void gens_store(const Gens* g)
+{
+    state.writes = g->writes;
+    state.bp_gen = g->bp_gen;
+    state.xf_gen = g->xf_gen;
+    state.cp_gen = g->cp_gen;
+    state.tev_gen = g->tev_gen;
+    state.bp_mask = g->bp_mask;
+}
+
+static inline void cp_write(Gens* g, u8 addr, u32 v)
 {
     u32 n = addr & 0xF;
 
-    state.writes++;
+    g->writes++;
     switch (addr & 0xF0) {
     case CP_MATINDEX_A:
         state.matindex_a = v;
@@ -201,14 +227,14 @@ static void cp_write(u8 addr, u32 v)
     case CP_VCD_LO:
         if (state.vcd_lo != v) {
             state.vcd_lo = v;
-            state.cp_gen++;
+            g->cp_gen++;
             invalidate_vtx_sizes();
         }
         break;
     case CP_VCD_HI:
         if (state.vcd_hi != v) {
             state.vcd_hi = v;
-            state.cp_gen++;
+            g->cp_gen++;
             invalidate_vtx_sizes();
         }
         break;
@@ -220,7 +246,7 @@ static void cp_write(u8 addr, u32 v)
                                                                                             : state.vat_c;
             if (vat[n] != v) {
                 vat[n] = v;
-                state.cp_gen++;
+                g->cp_gen++;
                 invalidate_vtx_sizes();
             }
         }
@@ -234,43 +260,64 @@ static void cp_write(u8 addr, u32 v)
     }
 }
 
-static void xf_write(u32 addr, u32 v)
+static inline void xf_reg_write(Gens* g, u32 i, u32 v)
 {
-    state.writes++;
-    if (addr < XF_MEM_SIZE) {
-        state.xf_mem[addr] = v;
-        state.xf_mem_dirty[addr >> 7] |= 1u << ((addr >> 2) & 31);
-    } else if (addr - XF_REG_BASE < XF_REG_COUNT) {
-        u32 i = addr - XF_REG_BASE;
-
-        // The matrix indices (0x18, 0x19) and the projection (0x20-0x26) feed only the vertices and constants.
-        if (state.xf_regs[i] != v && (i < 0x18 || i > 0x26 || (i >= 0x1A && i <= 0x1F))) {
-            state.xf_gen++;
-            // The texgen count and the texgens' projection bits feed the TEV config.
-            if (i >= 0x3F && i <= 0x47) {
-                state.tev_gen++;
-            }
+    // The matrix indices (0x18, 0x19) and the projection (0x20-0x26) feed only the vertices and constants.
+    if (state.xf_regs[i] != v && (i < 0x18 || i > 0x26 || (i >= 0x1A && i <= 0x1F))) {
+        g->xf_gen++;
+        // The texgen count and the texgens' projection bits feed the TEV config.
+        if (i >= 0x3F && i <= 0x47) {
+            g->tev_gen++;
         }
-        state.xf_regs[i] = v;
-        state.xf_reg_dirty[i >> 5] |= 1u << (i & 31);
+    }
+    state.xf_regs[i] = v;
+    state.xf_reg_dirty[i >> 5] |= 1u << (i & 31);
+}
+
+// count XF words from p (big-endian, any alignment) from XF address addr on: one write command. Inline, so the
+// caller's Gens stays in registers.
+static inline __attribute__((always_inline)) void xf_load(Gens* g, u32 addr, const u8* p, u32 count)
+{
+    g->writes++;
+    if (addr < XF_MEM_SIZE) {
+        u32 n = XF_MEM_SIZE - addr < count ? XF_MEM_SIZE - addr : count, i, last = (addr + n - 1) >> 2;
+
+        for (i = 0; i < n; i++) {
+            state.xf_mem[addr + i] = be32(p + 4 * i);
+        }
+        // A dirty bit per 4 words, gathered per dirty word before the store.
+        for (i = addr >> 2; i <= last;) {
+            u32 w = i >> 5, bits = 0;
+
+            do {
+                bits |= 1u << (i & 31);
+                i++;
+            } while (i <= last && (i >> 5) == w);
+            state.xf_mem_dirty[w] |= bits;
+        }
+        addr += n;
+        p += 4 * n;
+        count -= n;
+    }
+    for (; count != 0; count--, addr++, p += 4) {
+        if (addr - XF_REG_BASE < XF_REG_COUNT) {
+            xf_reg_write(g, addr - XF_REG_BASE, be32(p));
+        }
     }
 }
 
 // LOAD_INDX_A-D: XF words from arrays 12-15 (position, normal and texture matrices, lights).
-static void load_indexed(u8 op, u32 v)
+static void load_indexed(Gens* g, u8 op, u32 v)
 {
     u32 array = 12 + ((op - OP_LOAD_INDX_A) >> 3);
     u32 index = v >> 16, count = ((v >> 12) & 0xF) + 1, addr = v & 0xFFF;
     const u8* src = OSPhysicalToCached(state.array_base[array] + index * state.array_stride[array]);
-    u32 i;
 
     if (src == NULL) {
         stats.bad_addresses++;
         return;
     }
-    for (i = 0; i < count; i++) {
-        xf_write(addr + i, be32(src + 4 * i));
-    }
+    xf_load(g, addr, src, count);
 }
 
 static void finish_work(void)
@@ -289,29 +336,56 @@ static bool tev_bp(u32 reg)
            (reg >= 0xC0 && reg <= 0xE7) || (reg >= 0xEE && reg <= 0xF2) || (reg >= 0xF6 && reg <= 0xFD);
 }
 
-static void bp_write(u32 v)
+// The BP registers whose write does more than store the value (bp_write).
+static inline bool bp_has_effect(u32 reg)
+{
+    return reg == BP_PE_DONE || reg == BP_PE_TOKEN || reg == BP_PE_TOKEN_INT || reg == BP_EFB_COPY ||
+           reg == BP_LOAD_TLUT1 || reg == BP_TEX_INVALIDATE;
+}
+
+// Stores a BP write under the mask: its register.
+static inline u32 bp_store(Gens* g, u32 v)
 {
     u32 reg = v >> 24;
     u32 value = v & 0xFFFFFF;
 
-    state.writes++;
+    g->writes++;
     if (reg == BP_MASK) {
-        state.bp_mask = value;
-        return;
+        g->bp_mask = value;
+        return reg;
     }
     // The mask applies to the next write only.
-    value = (state.bp[reg] & ~state.bp_mask) | (value & state.bp_mask);
-    state.bp_mask = 0xFFFFFF;
+    value = (state.bp[reg] & ~g->bp_mask) | (value & g->bp_mask);
+    g->bp_mask = 0xFFFFFF;
     // A TEV register write that leaves bp[reg] as it was also leaves its register set as it was.
     if (state.bp[reg] != value) {
-        state.bp_gen++;
+        g->bp_gen++;
         if (tev_bp(reg)) {
-            state.tev_gen++;
+            g->tev_gen++;
         }
     }
     state.bp[reg] = value;
-    state.bp_dirty[reg >> 5] |= 1u << (reg & 31);
+    if (reg - BP_TEV_REGISTER < 8) {
+        u32 i = (reg - BP_TEV_REGISTER) >> 1, half = reg & 1;
 
+        if ((value >> 23) & 1) {
+            state.tev_konst[i][half] = value;
+        } else {
+            state.tev_color[i][half] = value;
+        }
+    }
+    return reg;
+}
+
+static void bp_write(Gens* g, u32 v)
+{
+    u32 reg = bp_store(g, v), value = state.bp[reg];
+
+    if (!bp_has_effect(reg)) {
+        return;
+    }
+    // The backend reads the registers and the counters.
+    gens_store(g);
     switch (reg) {
     case BP_PE_DONE:
         if ((value & 0xFF) == 2) {
@@ -342,17 +416,6 @@ static void bp_write(u32 v)
     case BP_TEX_INVALIDATE:
         if (backend->tex_invalidate != NULL) {
             backend->tex_invalidate(&state);
-        }
-        break;
-    default:
-        if (reg - BP_TEV_REGISTER < 8) {
-            u32 i = (reg - BP_TEV_REGISTER) >> 1, half = reg & 1;
-
-            if ((value >> 23) & 1) {
-                state.tev_konst[i][half] = value;
-            } else {
-                state.tev_color[i][half] = value;
-            }
         }
         break;
     }
@@ -388,13 +451,82 @@ static void run_copy(u32 dst_paddr, u32 size, const void* src)
     }
 }
 
-// Runs one command. Returns false at the end of a display list or on a truncated one.
+// The register commands whole in [p, end) in one pass, up to another command, a BP write with an effect or
+// GP_FIFO_RELEASE_STEP bytes: the position after them.
+static const u8* run_regs(const u8* p, const u8* end)
+{
+    const u8* stop = (u32) (end - p) > GP_FIFO_RELEASE_STEP ? p + GP_FIFO_RELEASE_STEP : end;
+    u32 n = 0;
+    u8 op = 0;
+    Gens g;
+
+    gens_load(&g);
+    while (p < stop) {
+        u8 next = *p;
+
+        if (next == OP_LOAD_BP) {
+            if (end - p < 5 || bp_has_effect(p[1])) {
+                break;
+            }
+            bp_store(&g, be32(p + 1));
+            p += 5;
+        } else if (next == OP_LOAD_XF) {
+            u32 head, count;
+
+            if (end - p < 5) {
+                break;
+            }
+            head = be32(p + 1);
+            count = (head >> 16) + 1;
+            if ((u32) (end - p) - 5 < 4 * count) {
+                break;
+            }
+            xf_load(&g, head & 0xFFFF, p + 5, count);
+            p += 5 + 4 * count;
+        } else if (next == OP_LOAD_CP) {
+            if (end - p < 6) {
+                break;
+            }
+            cp_write(&g, p[1], be32(p + 2));
+            p += 6;
+        } else if (next == OP_NOP || next == OP_METRICS || next == OP_INVL_VC) {
+            p++;
+        } else {
+            break;
+        }
+        op = next;
+        n++;
+    }
+    if (n != 0) {
+        gens_store(&g);
+        stats.commands += n;
+        ps3_diag.gp_op = op;
+        ps3_diag.gp_site = "commands";
+    }
+    return p;
+}
+
+// Runs one command, or a run of register commands. Returns false at the end of a display list or on a truncated one.
 static bool run_command(Src* s, bool in_list)
 {
-    const u8* p = take(s, 1);
+    const u8* p;
     u8 op;
+    Gens g;
 
-    if (p == NULL) {
+    if (s->end == NULL) {
+        p = run_regs(gp_fifo_rp, gp_fifo_avail);
+        if (p != gp_fifo_rp) {
+            gp_fifo_rp = p;
+            return true;
+        }
+    } else {
+        p = run_regs(s->p, s->end);
+        if (p != s->p) {
+            s->p = p;
+            return true;
+        }
+    }
+    if ((p = take(s, 1)) == NULL) {
         return false;
     }
     op = p[0];
@@ -436,23 +568,24 @@ static bool run_command(Src* s, bool in_list)
         if ((p = take(s, 5)) == NULL) {
             return false;
         }
-        cp_write(p[0], be32(p + 1));
+        gens_load(&g);
+        cp_write(&g, p[0], be32(p + 1));
+        gens_store(&g);
         break;
     case OP_LOAD_XF: {
-        u32 head, count, addr, i;
+        u32 head, count;
 
         if ((p = take(s, 4)) == NULL) {
             return false;
         }
         head = be32(p);
         count = (head >> 16) + 1;
-        addr = head & 0xFFFF;
-        for (i = 0; i < count; i++) {
-            if ((p = take(s, 4)) == NULL) {
-                return false;
-            }
-            xf_write(addr + i, be32(p));
+        if ((p = take(s, 4 * count)) == NULL) {
+            return false;
         }
+        gens_load(&g);
+        xf_load(&g, head & 0xFFFF, p, count);
+        gens_store(&g);
         break;
     }
     case OP_LOAD_INDX_A:
@@ -462,7 +595,9 @@ static bool run_command(Src* s, bool in_list)
         if ((p = take(s, 4)) == NULL) {
             return false;
         }
-        load_indexed(op, be32(p));
+        gens_load(&g);
+        load_indexed(&g, op, be32(p));
+        gens_store(&g);
         break;
     case OP_CALL_DL: {
         u32 addr, size;
@@ -482,7 +617,9 @@ static bool run_command(Src* s, bool in_list)
         if ((p = take(s, 4)) == NULL) {
             return false;
         }
-        bp_write(be32(p));
+        gens_load(&g);
+        bp_write(&g, be32(p));
+        gens_store(&g);
         break;
     case OP_PS3_MEM_CHANGED:
         if ((p = take(s, 8)) == NULL) {

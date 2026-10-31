@@ -1698,6 +1698,27 @@ int HSD_SynthPStreamStart(int entrynum, u8 vol, u8 vol2, int channel)
     return HSD_Synth_804D7760;
 }
 
+#ifdef TARGET_PS3
+// The stream's state for the heartbeat (ps3/vi/vi.c): load busy, the block indices, the voice's flags, state and
+// current, end and loop addresses (all ~0 without a stream node).
+void ps3_synth_stream_state(u32 out[10])
+{
+    struct HSD_SynthSFXNode* node = getNode(HSD_Synth_804D7760);
+    AXVPB* v = node != NULL ? node->voice[0] : NULL;
+
+    out[0] = HSD_Synth_804D7778;
+    out[1] = HSD_Synth_804D7768;
+    out[2] = HSD_Synth_804D776C;
+    out[3] = HSD_Synth_804D7770;
+    out[4] = HSD_Synth_804D7774;
+    out[5] = node != NULL ? node->flags : ~0u;
+    out[6] = v != NULL ? v->pb.state : ~0u;
+    out[7] = v != NULL ? (u32) v->pb.addr.currentAddressHi << 16 | v->pb.addr.currentAddressLo : ~0u;
+    out[8] = v != NULL ? (u32) v->pb.addr.endAddressHi << 16 | v->pb.addr.endAddressLo : ~0u;
+    out[9] = v != NULL ? (u32) v->pb.addr.loopAddressHi << 16 | v->pb.addr.loopAddressLo : ~0u;
+}
+#endif
+
 void HSD_SynthStreamSetVolume(f32 volume)
 {
     HSD_Synth_804D6030 = volume;

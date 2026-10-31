@@ -459,6 +459,10 @@ void HSD_SisLib_803A6048(size_t size)
 {
     int i;
 
+#ifdef TARGET_PS3
+    // LP64: the block headers (12 to 24 bytes) and the text objects' pointers double; the results screen ran out.
+    size *= 2;
+#endif
     HSD_SisLib_804D7968 = size;
     used_head = NULL;
     HSD_SisLib_804D796C = free_head = HSD_MemAlloc(HSD_SisLib_804D7968);

@@ -104,6 +104,8 @@ static void log_profile(u32 n, const GpStats* gs, const GxRsxStats* rs)
     static u32 last_draws, last_batchable, last_reuses, last_reloads, last_vp, last_uploads, last_presents;
     static u32 last_batched, last_rsx, last_hits, last_builds, last_runs, last_evictions, last_tex_hashes;
     static u32 last_tex_evictions, last_tex_waits, last_tex_failures, last_indirect, last_tev_setups, last_tev_builds;
+    static u32 last_spu_jobs, last_spu_ppe, last_spu_waits;
+    static uint64_t last_spu_ticks;
     uint64_t now = ps3_prof_now(), d[PROF_COUNT], span = now - last_now, other;
     u32 pm[PROF_COUNT], i;
 
@@ -135,15 +137,22 @@ static void log_profile(u32 n, const GpStats* gs, const GxRsxStats* rs)
         // OSReport keeps 511 characters: the caches get their own line.
         OSReport("heartbeat %u: per second: display lists: %u drawn from the vertex cache, %u converted, %u run as "
                  "commands, %u evicted; textures: %u hashes, %u evicted, %u waits, %u not found; %u indirect TEVs; "
-                 "TEV setups %u, %u built\n",
+                 "TEV setups %u, %u built; vertex jobs: %u on the SPU, %u on the PPE, %u waits (%u per mille)\n",
                  n, ps3_prof.list_hits - last_hits, ps3_prof.list_builds - last_builds, ps3_prof.list_runs - last_runs,
                  ps3_prof.list_evictions - last_evictions, ps3_prof.tex_hashes - last_tex_hashes,
                  ps3_prof.tex_evictions - last_tex_evictions, ps3_prof.tex_waits - last_tex_waits,
                  ps3_prof.tex_failures - last_tex_failures, ps3_prof.indirect_tevs - last_indirect,
-                 ps3_prof.tev_setups - last_tev_setups, ps3_prof.tev_builds - last_tev_builds);
+                 ps3_prof.tev_setups - last_tev_setups, ps3_prof.tev_builds - last_tev_builds,
+                 ps3_prof.spu_jobs - last_spu_jobs, ps3_prof.spu_ppe - last_spu_ppe,
+                 ps3_prof.spu_waits - last_spu_waits,
+                 (u32) (span != 0 ? (ps3_prof.spu_wait_ticks - last_spu_ticks) * 1000 / span : 0));
     }
     last_tev_setups = ps3_prof.tev_setups;
     last_tev_builds = ps3_prof.tev_builds;
+    last_spu_jobs = ps3_prof.spu_jobs;
+    last_spu_ppe = ps3_prof.spu_ppe;
+    last_spu_waits = ps3_prof.spu_waits;
+    last_spu_ticks = ps3_prof.spu_wait_ticks;
     last_tex_hashes = ps3_prof.tex_hashes;
     last_tex_evictions = ps3_prof.tex_evictions;
     last_tex_waits = ps3_prof.tex_waits;
@@ -164,6 +173,27 @@ static void log_profile(u32 n, const GpStats* gs, const GxRsxStats* rs)
     last_uploads = rs->texture_uploads;
     last_presents = rs->presents;
     last_bytes = ps3_prof.upload_bytes;
+}
+
+// sdk_audio.c and synth.c.
+void ps3_audio_stats(u32* frames, u32* ticks, u32* silent_ticks, u32* bad_commands);
+void ps3_synth_stream_state(u32 out[10]);
+
+// The audio program's command lists and AI periods a second, and the game's music stream: where it stops.
+static void log_audio(u32 n)
+{
+    static u32 last_frames, last_ticks, last_silent;
+    u32 frames, ticks, silent, bad, st[10];
+
+    ps3_audio_stats(&frames, &ticks, &silent, &bad);
+    ps3_synth_stream_state(st);
+    OSReport("heartbeat %u: audio: %u command lists, %u AI periods, %u silent a second, %u bad lists; stream: "
+             "load busy %u, blocks %u %u %u %u, voice flags %#x state %u at %08x, end %08x, loop %08x\n",
+             n, frames - last_frames, ticks - last_ticks, silent - last_silent, bad, st[0], st[1], st[2], st[3], st[4],
+             st[5], st[6], st[7], st[8], st[9]);
+    last_frames = frames;
+    last_ticks = ticks;
+    last_silent = silent;
 }
 
 // Once a second, apart from the interrupts: a log that stops means the process is gone, counts that stop
@@ -209,6 +239,7 @@ static void heartbeat_main(void* arg)
                      site != NULL ? site : "start", ps3_diag.gp_op, ps3_diag.gp_draw,
                      q == NULL ? "nothing" : q == &retrace_queue ? "the retrace queue" : "the queue at", q);
         }
+        log_audio(n);
         if (ps3_diag.main_calls != 0) {
             log_calltrace(n);
         }

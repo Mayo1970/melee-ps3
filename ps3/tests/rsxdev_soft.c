@@ -59,6 +59,20 @@ static u32 dump_every = 1;
 // No frame before this present is drawn or written.
 u32 soft_dump_from;
 static void (*vblank_fn)(void);
+// As rsxdev_cell.c's PUT moves: before a segment switch, a flush or finish, and each draw this device draws.
+static void (*flush_hook)(void);
+
+void dev_set_flush_hook(void (*fn)(void))
+{
+    flush_hook = fn;
+}
+
+static void run_flush_hook(void)
+{
+    if (flush_hook != NULL) {
+        flush_hook();
+    }
+}
 
 // Draws drawn and pixels written, for the tests.
 u32 soft_draws, soft_pixels;
@@ -162,6 +176,7 @@ void* dev_ring_reserve(u32 min, u32* avail, u32* io_offset)
     pos = pos >= RING_SIZE ? 0 : pos;
     end = (pos / RING_SEGMENT + 1) * RING_SEGMENT;
     if (pos + min > end) {
+        run_flush_hook();
         pos = end % RING_SIZE;
         end = pos + RING_SEGMENT;
     }
@@ -590,6 +605,7 @@ void dev_draw(u32 prim, u32 count)
         free(v);
         return;
     }
+    run_flush_hook();
     for (i = 0; i < count; i++) {
         transform(i, &v[i]);
     }
@@ -638,6 +654,7 @@ void dev_draw_indexed(u32 prim, u32 offset, u32 count)
     if (dropping()) {
         return;
     }
+    run_flush_hook();
     for (i = 0; i < count; i++) {
         u32 k = (u32) (p[2 * i] << 8 | p[2 * i + 1]);
 
@@ -687,9 +704,15 @@ void dev_clear(bool color, bool alpha, bool depth, u32 argb, u32 z24)
 
 void dev_barrier(void) {}
 
-void dev_flush(void) {}
+void dev_flush(void)
+{
+    run_flush_hook();
+}
 
-void dev_finish(void) {}
+void dev_finish(void)
+{
+    run_flush_hook();
+}
 
 void dev_set_present_programs(const u32 (*vp)[4], u32 vp_n, u32 vp_inputs, u32 vp_outputs, u32 fp_offset,
                               u32 fp_regs, u16 fp_texcoords)

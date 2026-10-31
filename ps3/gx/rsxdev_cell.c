@@ -48,6 +48,54 @@ static u32 present_fp_off, present_fp_regs;
 static u16 present_fp_tc;
 
 static void (*vblank_fn)(void);
+static void (*flush_hook)(void);
+
+// librsx's call of the context callback (rsx_function_macros.h): it loads a 32-bit descriptor and switches r2.
+s32 rsxContextCallback(gcmContextData* context, u32 count);
+
+// The system's callback, and ours as the 32-bit descriptor (entry, TOC) rsxContextCallback calls.
+static gcmContextCallback sys_callback;
+static u32 hook_opd[2];
+
+static void flush(void)
+{
+    if (flush_hook != NULL) {
+        flush_hook();
+    }
+    rsxFlushBuffer(ctx);
+}
+
+// At each command buffer segment's end the system's callback moves PUT: the flush hook runs before it.
+static s32 segment_callback(gcmContextData* context, u32 count)
+{
+    s32 r;
+
+    if (flush_hook != NULL) {
+        flush_hook();
+    }
+    context->callback = sys_callback;
+    r = rsxContextCallback(context, count);
+    context->callback = (gcmContextCallback) (uintptr_t) hook_opd;
+    return r;
+}
+
+static void hook_segments(void)
+{
+    // An ELFv1 function pointer is its descriptor: entry, then TOC, both below 4 GB.
+    const u64* opd = (const u64*) (uintptr_t) segment_callback;
+
+    hook_opd[0] = (u32) opd[0];
+    hook_opd[1] = (u32) opd[1];
+    sys_callback = ctx->callback;
+    ctx->callback = (gcmContextCallback) (uintptr_t) hook_opd;
+    ps3_log("rsxdev: segment callback %08x wrapped (entry %08x, TOC %08x); segment %u bytes\n",
+            (u32) (uintptr_t) sys_callback, hook_opd[0], hook_opd[1], (u32) (ctx->end - ctx->begin) * 4);
+}
+
+void dev_set_flush_hook(void (*fn)(void))
+{
+    flush_hook = fn;
+}
 
 static void on_flip(const u32 head)
 {
@@ -174,7 +222,7 @@ void* dev_ring_reserve(u32 min, u32* avail, u32* io_offset)
 
         // A backend label: the RSX writes it once the draws that read this segment have left the pipeline.
         rsxSetWriteBackendLabel(ctx, LABEL_RING, ++ring_value);
-        rsxFlushBuffer(ctx);
+        flush();
         ring_fence[ring_seg] = ring_value;
         if (ring_fence[next] != 0) {
             wait_label(LABEL_RING, ring_fence[next]);
@@ -447,13 +495,13 @@ void dev_barrier(void)
 
 void dev_flush(void)
 {
-    rsxFlushBuffer(ctx);
+    flush();
 }
 
 void dev_finish(void)
 {
     rsxSetWriteBackendLabel(ctx, LABEL_SYNC, ++sync_value);
-    rsxFlushBuffer(ctx);
+    flush();
     wait_label(LABEL_SYNC, sync_value);
 }
 
@@ -504,7 +552,7 @@ static bool init_display(void)
         rsxClearSurface(ctx, GCM_CLEAR_R | GCM_CLEAR_G | GCM_CLEAR_B | GCM_CLEAR_A);
     }
     gcmSetFlip(ctx, 0);
-    rsxFlushBuffer(ctx);
+    flush();
     gcmSetWaitFlip(ctx);
     flips_queued = 1;
     disp_next = 1;
@@ -524,6 +572,7 @@ bool dev_init(void)
     }
     ring = host + CB_SIZE;
     rsxAddressToOffset(ring, &ring_off);
+    hook_segments();
     ps3_log("rsxdev: rsxInit done, host %p, ring IO offset %08x\n", host, ring_off);
     return init_display();
 }
@@ -608,7 +657,7 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
     dev_draw(GCM_TYPE_QUADS, 4);
     // No gcmSetWaitFlip: it would hold the GX draws until the vblank. A buffer with a flip pending is not drawn.
     gcmSetFlip(ctx, (u8) b);
-    rsxFlushBuffer(ctx);
+    flush();
     flips_queued++;
     if (flips_queued <= 4) {
         ps3_log("rsxdev: present %u queued (buffer %u, source %08x %ux%u), %u flips done\n", flips_queued, b,

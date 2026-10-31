@@ -92,10 +92,10 @@ $(BUILD)/gx_test: $(GX_TEST_SRCS) $(wildcard $(ROOT)/ps3/gx/*.h $(ROOT)/ps3/os/*
 	$(CC) $(CFLAGS) -static -o $@ $(GX_TEST_SRCS) -lpthread -lm
 
 # The RSX backend over a software RSX: the GX test frame as PPM files (TOOLCHAIN=linux, big-endian hosts).
-GX_RSX_SRCS := $(addprefix ps3/gx/,fpgen.c tevgen.c vpgen.c xfgen.c vtx.c texdec.c backend.c)
+GX_RSX_SRCS := $(addprefix ps3/gx/,fpgen.c tevgen.c vpgen.c xfgen.c vtx.c texdec.c backend.c vxjob.c)
 SCENE_TEST_SRCS := $(addprefix $(ROOT)/,ps3/tests/gx_scene_test.c ps3/tests/gx_scene.c ps3/tests/gx_stubs.c \
                    ps3/tests/rsxdev_soft.c ps3/tests/rsx_interp.c ps3/tests/udplog_host.c ps3/os/intr.c \
-                   ps3/os/sync_host.c ps3/os/globals.c $(GX_PORT_SRCS) \
+                   ps3/os/sync_host.c ps3/os/globals.c ps3/tests/vxspu_host.c ps3/gx/vxspu.c $(GX_PORT_SRCS) \
                    $(GX_RSX_SRCS) $(SDK_GX_SRCS))
 scenetest: $(BUILD)/gx_scene_test
 $(BUILD)/gx_scene_test: $(SCENE_TEST_SRCS) $(wildcard $(ROOT)/ps3/gx/*.h $(ROOT)/ps3/os/*.h $(ROOT)/ps3/tests/*.h)
@@ -153,10 +153,16 @@ $(EBOOT_DIR)/gx_test.pkg: $(EBOOT_DIR)/gx_test.elf
 SPU_CC := $(PS3DEV)/spu/bin/spu-gcc
 SPU_CFLAGS := -O2 -Wall -ffunction-sections -fdata-sections -I$(PS3DEV)/spu/include
 SPU_SRCS := $(ROOT)/ps3/audio/ax_spu.c $(ROOT)/ps3/audio/spu_io_cell.c
-spu: $(BUILD)/spu/ax_spu.elf
+spu: $(BUILD)/spu/ax_spu.elf $(BUILD)/spu/vx_spu.elf
 $(BUILD)/spu/ax_spu.elf: $(SPU_SRCS) $(wildcard $(ROOT)/ps3/audio/*.h)
 	@mkdir -p $(dir $@)
 	$(SPU_CC) $(SPU_CFLAGS) -Wl,--gc-sections -s $(SPU_SRCS) -L$(PS3DEV)/spu/lib -lsputhread -o $@
+	@$(PS3DEV)/spu/bin/spu-size $@
+# The vertex program for the SPU (gx/vxjob.h), with the same source the host builds run on a thread.
+VX_SPU_SRCS := $(ROOT)/ps3/gx/vxspu.c $(ROOT)/ps3/gx/vxspu_cell.c
+$(BUILD)/spu/vx_spu.elf: $(VX_SPU_SRCS) $(ROOT)/ps3/gx/vx_shared.h $(ROOT)/ps3/gx/vtx_step.h $(ROOT)/ps3/gx/vxspu_io.h
+	@mkdir -p $(dir $@)
+	$(SPU_CC) $(SPU_CFLAGS) -Wl,--gc-sections -s $(VX_SPU_SRCS) -L$(PS3DEV)/spu/lib -lsputhread -o $@
 	@$(PS3DEV)/spu/bin/spu-size $@
 
 # Melee as an EBOOT (ppu toolchain): the game, the SDK libraries the port builds, the port, the SPU program and
@@ -175,7 +181,7 @@ GAME_PORT_SRCS := $(addprefix ps3/,dvd/dvd.c os/intr.c os/globals.c os/os.c os/o
                   $(EXTRA_SRCS)
 # The PSL1GHT side, which no SDK header meets.
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_cell.c os/sys_cell.c os/udplog_cell.c audio/audio_cell.c \
-                  gx/rsxdev_cell.c pad/pad_cell.c pad/gcadapter_cell.c)
+                  gx/rsxdev_cell.c gx/vxjob_cell.c pad/pad_cell.c pad/gcadapter_cell.c)
 DAT_SRCS := $(addprefix tools/dat-cli/native/src/,archive.c reader.c hsd.c) ps3/dat/lookup.c \
             $(sort $(shell cd $(ROOT) && find $(DAT_SCHEMA) -name '*.c' 2> /dev/null))
 # Their allocations come from the .dat pool; GeoTypes.h stands in for Aurora's.
@@ -185,13 +191,14 @@ DAT_FLAGS := -include $(ROOT)/ps3/dat/redirect.h -I$(ROOT)/tools/dat-cli/native/
 # without drawing, no pads or a script, the lv2 calls on Linux. glibc's setjmp keeps 64-bit registers.
 ifeq ($(TOOLCHAIN),linux)
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_host.c tests/sys_host.c tests/udplog_host.c tests/audio_host.c \
-                  audio/ax_spu.c tests/rsxdev_soft.c tests/rsx_interp.c tests/pad_host.c tests/host_start.c)
+                  audio/ax_spu.c tests/rsxdev_soft.c tests/rsx_interp.c tests/pad_host.c tests/host_start.c \
+                  tests/vxspu_host.c gx/vxspu.c)
 HOST_WRAP := -Wl,--wrap=gm_ChangeGameModeAfterCurrentScene,--wrap=gm_LoadAnnouncer
 endif
 GAME_OBJ = $(patsubst %.c,$(GAME_DIR)/%.o,$(1))
 GAME_OBJS := $(call GAME_OBJ,$(GAME_SRCS) $(GAME_SDK_SRCS) $(GAME_PORT_SRCS) $(GAME_CELL_SRCS) $(DAT_SRCS))
 ifneq ($(TOOLCHAIN),linux)
-GAME_OBJS += $(GAME_DIR)/ps3/os/setjmp.o $(GAME_DIR)/ax_spu_elf.o
+GAME_OBJS += $(GAME_DIR)/ps3/os/setjmp.o $(GAME_DIR)/ax_spu_elf.o $(GAME_DIR)/vx_spu_elf.o
 endif
 # Untyped lookups become typed ones, parses free the native data of the buffers they reuse (ps3/dat/lookup.c);
 # the trace logs typed lookups (step 3).
@@ -226,6 +233,10 @@ $(GAME_DIR)/ax_spu_elf.o: $(BUILD)/spu/ax_spu.elf
 	@mkdir -p $(GAME_DIR)
 	cd $(dir $<) && bin2s -a 128 ax_spu.elf > $(CURDIR)/$(GAME_DIR)/ax_spu_elf.S
 	$(CC) $(ARCH) -x assembler-with-cpp -c $(GAME_DIR)/ax_spu_elf.S -o $@
+$(GAME_DIR)/vx_spu_elf.o: $(BUILD)/spu/vx_spu.elf
+	@mkdir -p $(GAME_DIR)
+	cd $(dir $<) && bin2s -a 128 vx_spu.elf > $(CURDIR)/$(GAME_DIR)/vx_spu_elf.S
+	$(CC) $(ARCH) -x assembler-with-cpp -c $(GAME_DIR)/vx_spu_elf.S -o $@
 
 # The two fonts the game reads from its DOL's data, as the matching build extracts them (config.yml).
 $(GAME_DIR)/include/sysdolphin/baselib/debug_font.inc: $(DOL)
