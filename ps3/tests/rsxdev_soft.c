@@ -33,6 +33,7 @@ static float vp_scale[4], vp_offset[4];
 static u32 sc_x, sc_y, sc_w, sc_h;
 static bool depth_test, depth_write;
 static u32 depth_func;
+static float depth_bias;
 static bool blend_on;
 static u16 blend_src, blend_dst, blend_eq;
 static bool alpha_on;
@@ -210,6 +211,11 @@ void dev_depth(bool test, u32 func, bool write)
     depth_test = test;
     depth_func = func & 7;
     depth_write = write;
+}
+
+void dev_depth_bias(float units)
+{
+    depth_bias = units;
 }
 
 void dev_blend(bool enable, u16 src, u16 dst, u16 eq)
@@ -415,7 +421,7 @@ static void shade(const Vert* v0, const Vert* v1, const Vert* v2, float b0, floa
                                  : NULL;
     int i, k;
 
-    z = clamp01(b0 * v0->z + b1 * v1->z + b2 * v2->z);
+    z = clamp01(b0 * v0->z + b1 * v1->z + b2 * v2->z + depth_bias / 16777215.0f);
     if (zp != NULL && depth_test && !compare(depth_func, z, (float) (*zp >> 8) / 16777215.0f)) {
         return;
     }

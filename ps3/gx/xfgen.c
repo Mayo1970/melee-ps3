@@ -317,9 +317,14 @@ int xf_gen(const XfKey* key, VpProg* p)
     for (i = 0; i < 4; i++) {
         vp_op(p, VOP_DP4, T_CLIP, 1 << i, false, vp_c(C_PROJ + i, NULL), vp_t(T_EYE, NULL), z);
     }
-    // GX clip z is in [-w, 0]; the RSX viewport takes it in [0, w].
+    // GX clip z is in [-w, 0]; the RSX clips to [0, w]. -z keeps z's low bits, which z + w lost at stage distance;
+    // the viewport's negative z scale then gives GX's far + range * z / w.
     vp_op(p, VOP_MOV, VP_OUT(VO_POS), 0xB, false, vp_t(T_CLIP, NULL), z, z);
-    vp_op(p, VOP_ADD, VP_OUT(VO_POS), 4, false, vp_t(T_CLIP, "zzzz"), vp_t(T_CLIP, "wwww"), z);
+    if (key->old_depth) {
+        vp_op(p, VOP_ADD, VP_OUT(VO_POS), 4, false, vp_t(T_CLIP, "zzzz"), vp_t(T_CLIP, "wwww"), z);
+    } else {
+        vp_op(p, VOP_MOV, VP_OUT(VO_POS), 4, false, vp_neg(vp_t(T_CLIP, "zzzz")), z, z);
+    }
     if (need_nrm) {
         if (has(key, VA_NRM)) {
             vp_op(p, VOP_MUL, T_RAWN, 7, false, vp_in(VA_NRM, NULL), dq(1), z);
@@ -644,7 +649,7 @@ void xf_ref(const XfKey* key, const float c[C_COUNT][4], const XfIn* in, XfOut* 
     }
     out->pos[0] = clip[0];
     out->pos[1] = clip[1];
-    out->pos[2] = clip[2] + clip[3];
+    out->pos[2] = key->old_depth ? clip[2] + clip[3] : -clip[2];
     out->pos[3] = clip[3];
     if (has(key, VA_NRM)) {
         for (i = 0; i < 3; i++) {

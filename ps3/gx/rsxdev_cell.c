@@ -270,6 +270,16 @@ void dev_depth(bool test, u32 func, bool write)
     rsxSetDepthWriteEnable(ctx, write ? GCM_TRUE : GCM_FALSE);
 }
 
+void dev_depth_bias(float units)
+{
+    if (units == 0.0f) {
+        rsxSetPolygonOffsetFillEnable(ctx, GCM_FALSE);
+        return;
+    }
+    rsxSetPolygonOffset(ctx, 0.0f, units);
+    rsxSetPolygonOffsetFillEnable(ctx, GCM_TRUE);
+}
+
 void dev_blend(bool enable, u16 src, u16 dst, u16 eq)
 {
     rsxSetBlendEnable(ctx, enable ? GCM_TRUE : GCM_FALSE);

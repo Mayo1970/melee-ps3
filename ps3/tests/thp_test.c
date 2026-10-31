@@ -19,6 +19,14 @@ void OSReport(char* fmt, ...)
 
 void gp_post_mem_changed(const void* p, u32 size) {}
 
+u32 gp_post_copy(void* dst, const void* src, u32 size)
+{
+    memcpy(dst, src, size);
+    return 0;
+}
+
+void gp_wait_copy(u32 n) {}
+
 static u32 be32(const u8* p)
 {
     return (u32) p[0] << 24 | (u32) p[1] << 16 | (u32) p[2] << 8 | p[3];

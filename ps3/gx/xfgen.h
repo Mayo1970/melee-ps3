@@ -40,6 +40,8 @@ enum {
 typedef struct XfKey {
     u16 attrs; // bit n: RSX attribute n present
     u8 pos3;   // the position has z
+    // Depth out as z + w (before run 54), not -z: an A/B mode keeps it, with the viewport to match (backend.c).
+    u8 old_depth;
     u8 numchans, numtexgens, dualtex;
     // First texcoord output of the TEV constants. The RSX has texcoord outputs 0-7 only: tev_first plus the
     // number of TEV constants must stay within 8.

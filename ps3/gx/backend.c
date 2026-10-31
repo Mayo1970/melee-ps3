@@ -169,11 +169,11 @@ static struct {
     u16 tev_mask;
     u32 vp_xf;
     u16 vp_attrs, vp_tev;
-    bool vp_pos3;
+    bool vp_pos3, vp_nospec, vp_olddepth;
     VpEntry* v;
     // The RSX raster state as apply_state left it, and its result.
     u32 state_bp, state_xf;
-    bool state_pass;
+    bool state_pass, state_olddepth;
     u32 tex_bp, tex_stamp, tex_tluts;
 } memo;
 
@@ -358,6 +358,10 @@ static void use_vp(VpEntry* v)
 static void use_fp(const FpEntry* f)
 {
     if (f != fp_current) {
+        // A/B: the RSX finishes its draws before a fragment program change.
+        if (ps3_diag.gx_ab & 16384) {
+            dev_barrier();
+        }
         dev_fragment_program(f->offset, f->regs, f->texcoords, f->texcoords4);
         fp_current = f;
     }
@@ -571,6 +575,17 @@ static u16 blend_factor(u32 f, bool is_dst, bool efb_alpha)
     }
 }
 
+// Marks GX compare c of 8-bit alpha against ref as a constant (*k) of value *v when every alpha gives one result.
+static void alpha_const(u32 c, u32 ref, bool* k, bool* v)
+{
+    if ((c == 6 && ref == 0) || (c == 3 && ref == 255)) {
+        *k = *v = true;
+    } else if ((c == 1 && ref == 0) || (c == 4 && ref == 255)) {
+        *k = true;
+        *v = false;
+    }
+}
+
 // The single-compare forms of the GX alpha test. False when no pixel can pass.
 static bool apply_alpha_test(const GpState* s)
 {
@@ -578,7 +593,23 @@ static bool apply_alpha_test(const GpState* s)
     u32 c0 = (at >> 16) & 7, c1 = (at >> 19) & 7, logic = (at >> 22) & 3;
     bool k0 = c0 == 0 || c0 == 7, k1 = c1 == 0 || c1 == 7;
     bool v0 = c0 == 7, v1 = c1 == 7;
+    bool old = (ps3_diag.gx_ab & 524288) != 0;
 
+    // Not in the old A/B mode: always-true or always-false compares, and two equal halves, reduce too. Melee's
+    // translucent materials use alpha > 0 AND alpha > 0 with depth writes: with no test, clear pixels wrote depth.
+    if (!old) {
+        alpha_const(c0, ref0, &k0, &v0);
+        alpha_const(c1, ref1, &k1, &v1);
+        if (!k0 && c0 == c1 && ref0 == ref1) {
+            if (logic >= 2) {
+                dev_alpha_test(false, 0, 0);
+                return logic == 3;
+            }
+            // x AND true, x OR false: x.
+            k1 = true;
+            v1 = logic == 0;
+        }
+    }
     if (k0 && k1) {
         bool pass = logic == 0 ? v0 && v1 : logic == 1 ? v0 || v1 : logic == 2 ? v0 != v1 : v0 == v1;
 
@@ -598,6 +629,14 @@ static bool apply_alpha_test(const GpState* s)
             return true;
         }
         dev_alpha_test(true, DEV_FUNC_NEVER + (k0 ? c1 : c0), (u8) (k0 ? ref1 : ref0));
+        return true;
+    }
+    if (!old && (k0 || k1)) {
+        // x XOR false and x XNOR true are x; the other two invert x (7 - c in GX's order).
+        bool keep = (logic == 2) != (k0 ? v0 : v1);
+        u32 c = k0 ? c1 : c0;
+
+        dev_alpha_test(true, DEV_FUNC_NEVER + (keep ? c : 7 - c), (u8) (k0 ? ref1 : ref0));
         return true;
     }
     unsupported(U_ALPHA_TWO, "a two-compare alpha test");
@@ -629,15 +668,16 @@ static bool apply_state(const GpState* s)
         efb_bound = true;
     }
     scissor_offset(s, &ox, &oy);
-    // The XF viewport less the scissor offset; GX depth moves from [-w, 0] to [0, w] in the program.
+    // The XF viewport less the scissor offset. The program gives -z (z + w in the old A/B mode, xfgen.h), so
+    // depth is GX's far + range * z / w either way.
     scale[0] = u2f(x[0x1A]);
     scale[1] = u2f(x[0x1B]);
-    scale[2] = u2f(x[0x1C]) / 16777215.0f;
+    scale[2] = (memo.vp_olddepth ? 1.0f : -1.0f) * u2f(x[0x1C]) / 16777215.0f;
     scale[3] = 0.0f;
     // GX samples pixels at 7/12 of a pixel, the RSX at 1/2: as Dolphin, the image moves 1/12 pixel up and left.
     offset[0] = u2f(x[0x1D]) - (float) ox - 1.0f / 12.0f;
     offset[1] = u2f(x[0x1E]) - (float) oy - 1.0f / 12.0f;
-    offset[2] = (u2f(x[0x1F]) - u2f(x[0x1C])) / 16777215.0f;
+    offset[2] = (u2f(x[0x1F]) - (memo.vp_olddepth ? u2f(x[0x1C]) : 0.0f)) / 16777215.0f;
     offset[3] = 0.0f;
     dev_viewport(scale, offset);
     x0 = (int) ((s->bp[0x20] >> 12) & 0x7FF) - ox;
@@ -1226,6 +1266,32 @@ static void tex_check(const TexEntry* e)
 }
 #endif
 
+// A/B: a white 16x16 texture with d's sampling, in place of a fighter's shadow copy; made at the first use.
+static const DevTexture* white_for(const DevTexture* d)
+{
+    static DevTexture w;
+    static u32 texels[16 * 16], off;
+    static bool made;
+
+    if (!made) {
+        void* mem = dev_local_alloc(128, sizeof(texels), &off);
+
+        if (mem == NULL) {
+            return d;
+        }
+        memset(texels, 0xFF, sizeof(texels));
+        dev_write_local(mem, texels, sizeof(texels));
+        made = true;
+    }
+    w = *d;
+    w.offset = off;
+    w.pitch = 64;
+    w.width = w.height = 16;
+    w.levels = 1;
+    w.swizzled = 0;
+    return &w;
+}
+
 static void bind_textures(const GpState* s, const TevConfig* cfg)
 {
     static const u8 base[2] = { 0x80, 0xA0 };
@@ -1274,11 +1340,18 @@ static void bind_textures(const GpState* s, const TevConfig* cfg)
 #endif
         }
         if (!same || !textures_bound || bound[i] != tex_memo[i].e) {
+            const TexEntry* e = tex_memo[i].e;
+            const DevTexture* d = e != NULL ? &tex_memo[i].d : NULL;
+
             if (ps3_diag.gx_ab & 256) {
                 dev_barrier();
             }
-            dev_texture(i, tex_memo[i].e != NULL ? &tex_memo[i].d : NULL);
-            tex_bind(i, tex_memo[i].e);
+            // A/B: the fighters' shadows (lbshadow.c's 256x256 EFB copies) sample white.
+            if ((ps3_diag.gx_ab & 262144) && e != NULL && e->efb && e->width == 256 && e->height == 256) {
+                d = white_for(d);
+            }
+            dev_texture(i, d);
+            tex_bind(i, e);
         }
     }
     textures_bound = true;
@@ -1368,10 +1441,18 @@ static void put_indices(u16* d, int prim, u32 b, u32 count)
     }
 }
 
+// The layout of the RSX's vertex bindings; NULL after a copy or present pass bound its own.
+static const VtxLayout* bound_layout;
+
 static void bind_attribs(const VtxLayout* l, u32 io)
 {
     u32 i;
 
+    // A/B: the RSX finishes its draws before the vertex format changes (offsets change at nearly every draw).
+    if ((ps3_diag.gx_ab & 32768) && l != bound_layout) {
+        dev_barrier();
+    }
+    bound_layout = l;
     for (i = 0; i < 16; i++) {
         if ((l->attrs >> i) & 1) {
             dev_attrib((int) i, io + l->attr[i].offset, l->out_size, l->attr[i].count, l->attr[i].type);
@@ -1381,17 +1462,38 @@ static void bind_attribs(const VtxLayout* l, u32 io)
     }
 }
 
-// A/B tests of the race behind the z-fighting (diag.h): the PPE waits for each draw (8), the RSX waits for its own
-// backend before the next command (16), or the commands go to the RSX at once (32).
-static void after_rsx_draw(void)
+// A/B after an RSX draw (diag.h): the PPE waits for it (8); the RSX waits for its own backend after every draw (16),
+// after cached list draws (4096) or after ring draws (8192); or the commands go to the RSX at once (32).
+static void after_rsx_draw(bool cached)
 {
-    if (ps3_diag.gx_ab & 8) {
+    unsigned ab = ps3_diag.gx_ab;
+
+    if (ab & 8) {
         dev_finish();
-    } else if (ps3_diag.gx_ab & 16) {
+    } else if ((ab & 16) || (ab & (cached ? 4096u : 8192u))) {
         dev_barrier();
-    } else if (ps3_diag.gx_ab & 32) {
+    } else if (ab & 32) {
         dev_flush();
     }
+}
+
+// RSX draws since the last display copy, and the display copies so far (GX frames).
+static u32 frame_draws, gx_frame;
+
+// A/B: each RSX draw of a frame lies 2 depth steps nearer than the one before, so a later draw wins a near tie, as
+// GX's equal depths with "less or equal" do. Called before each RSX draw of the GX draws.
+static void before_rsx_draw(void)
+{
+    static bool on;
+
+    if (ps3_diag.gx_ab & 1048576) {
+        dev_depth_bias(-2.0f * (float) frame_draws);
+        on = true;
+    } else if (on) {
+        dev_depth_bias(0.0f);
+        on = false;
+    }
+    frame_draws++;
 }
 
 // Sends the open batch. Each backend call that sends other RSX commands, or waits for the RSX, calls it first.
@@ -1411,9 +1513,10 @@ static void batch_flush(void)
     memcpy(batch.base + at, batch_idx, batch.nidx * 2);
     dev_ring_commit(at + batch.nidx * 2);
     bind_attribs(batch.l, batch.io);
+    before_rsx_draw();
     dev_draw_indexed(batch.family, batch.io + at, batch.nidx);
     stats.rsx_draws++;
-    after_rsx_draw();
+    after_rsx_draw(false);
 }
 
 static bool batch_open(const GpState* s, const VtxLayout* l, int vat, u32 count, u32 family, u32 nidx)
@@ -1462,9 +1565,10 @@ static void draw_direct(const GpState* s, const VtxLayout* l, int prim, u32 coun
         return;
     }
     bind_attribs(l, io);
+    before_rsx_draw();
     dev_draw(prim_type(prim), count);
     stats.rsx_draws++;
-    after_rsx_draw();
+    after_rsx_draw(false);
 }
 
 
@@ -1491,7 +1595,7 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
     VpEntry* v;
     XfKey key;
     u32 numtexgens = s->xf_regs[0x3F] & 0xF, stamp;
-    bool tev_hit, reused = true;
+    bool tev_hit, reused = true, nospec, olddepth;
 
     l = current_layout(s, vat);
     if (!(l->attrs & (1u << VA_POS)) || (((s->bp[0x00] >> 14) & 3) == 3 && prim <= 4)) {
@@ -1517,16 +1621,31 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
     f = memo.f;
     ps3_prof_lap(PROF_DRAW_TEV, t);
     ps3_diag.gp_site = "draw: XF";
+    nospec = (ps3_diag.gx_ab & 2048) != 0;
+    olddepth = (ps3_diag.gx_ab & 4194304) != 0;
     if (!memo.vp_ok || memo.vp_xf != s->xf_gen || memo.vp_attrs != l->attrs || memo.vp_pos3 != l->pos3 ||
-        memo.vp_tev != memo.tev_mask) {
+        memo.vp_tev != memo.tev_mask || memo.vp_nospec != nospec || memo.vp_olddepth != olddepth) {
         reused = false;
         xf_make_key(s, l->attrs, l->pos3, memo.tev_mask, &key);
+        key.old_depth = olddepth;
+        if (nospec) {
+            int i;
+
+            // A/B: specular channels (attenuation on, spot off) light nothing and give their ambient colour.
+            for (i = 0; i < 4; i++) {
+                if (((key.chan[i] >> 9) & 3) == 1) {
+                    key.chan[i] &= ~0x783Cu;
+                }
+            }
+        }
         memo.v = vp_get(&key);
         memo.vp_ok = memo.v != NULL;
         memo.vp_xf = s->xf_gen;
         memo.vp_attrs = l->attrs;
         memo.vp_pos3 = l->pos3;
         memo.vp_tev = memo.tev_mask;
+        memo.vp_nospec = nospec;
+        memo.vp_olddepth = olddepth;
     }
     v = memo.v;
     ps3_prof_lap(PROF_DRAW_XF, t);
@@ -1534,11 +1653,14 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
     if (f == NULL || v == NULL) {
         return NULL;
     }
-    if (!memo.state_ok || memo.state_bp != s->bp_gen || memo.state_xf != s->xf_gen) {
+    // The viewport's depth follows the program's depth output (apply_state).
+    if (!memo.state_ok || memo.state_bp != s->bp_gen || memo.state_xf != s->xf_gen ||
+        memo.state_olddepth != olddepth) {
         reused = false;
         memo.state_pass = apply_state(s);
         memo.state_bp = s->bp_gen;
         memo.state_xf = s->xf_gen;
+        memo.state_olddepth = olddepth;
         memo.state_ok = true;
     }
     if (!memo.state_pass) {
@@ -1628,7 +1750,8 @@ static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
 #define VC_HEAP (16u << 20)
 #define VC_ENTRIES 4096
 #define VC_BUCKETS 4096
-#define VC_MAX_DRAWS 512
+// Fountain of Dreams' star field is one list of 1,852 point draws.
+#define VC_MAX_DRAWS 4096
 // The largest entry: vertices, then indices.
 #define VC_STAGE (1u << 20)
 
@@ -1655,6 +1778,9 @@ typedef struct VcEntry {
     u32 off, bytes, idx_at;
     u32 nidx, ndraws, nverts;
     u32 frame; // last drawn in this frame
+    // The flicker detector's GX frame and draw count of this list in it.
+    u32 watch_frame;
+    u16 watch_occ;
 } VcEntry;
 
 static VcEntry vc_entries[VC_ENTRIES];
@@ -1980,6 +2106,132 @@ static void vc_check(GpState* s, const VcEntry* e, const u8* list, u32 size)
 }
 #endif
 
+// A/B, the black flicker detector: each cached list draw's setup, less the matrices, keyed by list and its count in
+// the GX frame. A setup that changes for one frame and then comes back goes to the log with what changed.
+#define WATCH_SLOTS 8192
+enum { W_DRAWN, W_VP, W_FP, W_TEX, W_ZMODE, W_CMODE, W_ALPHA, W_CULL, W_VIEW, W_CHAN, W_LIGHT, W_TEV, W_COUNT };
+
+typedef struct WatchEntry {
+    u32 paddr, size, occ, frame;
+    u32 s[2][W_COUNT]; // two frames back, then the last frame
+    float tev[2][XF_TEV_CONSTS][4];
+    u8 n; // setups held
+} WatchEntry;
+
+static WatchEntry watch[WATCH_SLOTS];
+
+static void watch_setup(const GpState* s, bool drawn, u32* w)
+{
+    u32 h = 2166136261u;
+    int i;
+
+    memset(w, 0, sizeof(u32) * W_COUNT);
+    w[W_DRAWN] = drawn;
+    if (!drawn) {
+        return;
+    }
+    w[W_VP] = (u32) (uintptr_t) memo.v;
+    w[W_FP] = (u32) (uintptr_t) memo.f;
+    w[W_TEX] = hash_words(bound, sizeof(bound), h);
+    w[W_ZMODE] = s->bp[0x40] & 0xFFFFFF;
+    w[W_CMODE] = s->bp[0x41] & 0xFFFFFF;
+    w[W_ALPHA] = s->bp[0xF3] & 0xFFFFFF;
+    w[W_CULL] = (s->bp[0x00] >> 14) & 3;
+    w[W_VIEW] = hash_words(&s->xf_regs[0x1A], 24, hash_words(&s->bp[0x20], 8, h ^ s->bp[0x59]));
+    w[W_CHAN] = hash_words(vc[C_CHAN], 64, h);
+    for (i = 0; i < 8; i++) {
+        h = hash_words(vc[C_LIGHT + LIGHT_STRIDE * i], 16, h);
+    }
+    w[W_LIGHT] = h;
+    w[W_TEV] = hash_words(memo.tev, sizeof(memo.tev), 2166136261u ^ memo.tev_mask);
+}
+
+static void watch_draw(const GpState* s, VcEntry* e, bool drawn)
+{
+    static const char* const names[W_COUNT] = { "drawn", "VP",   "FP",   "textures", "zmode",  "cmode0",
+                                                "alpha", "cull", "view", "channels", "lights", "TEV values" };
+    static u32 found, lines, last;
+    u32 cur[W_COUNT], occ, h, i, k;
+    WatchEntry* w = NULL;
+
+    if (!(ps3_diag.gx_ab & 2097152)) {
+        return;
+    }
+    if (e->watch_frame != gx_frame) {
+        e->watch_frame = gx_frame;
+        e->watch_occ = 0;
+    }
+    occ = e->watch_occ++;
+    h = (e->paddr >> 5) * 2654435761u ^ e->size * 40503u ^ occ * 2246822519u;
+    for (i = 0; i < 64; i++) {
+        WatchEntry* c = &watch[(h + i) % WATCH_SLOTS];
+
+        if (c->n == 0 && c->frame == 0) {
+            c->paddr = e->paddr;
+            c->size = e->size;
+            c->occ = occ;
+            w = c;
+            break;
+        }
+        if (c->paddr == e->paddr && c->size == e->size && c->occ == occ) {
+            w = c;
+            break;
+        }
+    }
+    if (w == NULL || w->frame == gx_frame) {
+        return;
+    }
+    watch_setup(s, drawn, cur);
+    if (w->n > 0 && w->frame + 1 != gx_frame) {
+        w->n = 0;
+    }
+    if (w->n == 2) {
+        if (memcmp(cur, w->s[0], sizeof(cur)) == 0 && memcmp(w->s[1], w->s[0], sizeof(cur)) != 0) {
+            char buf[400];
+            int len;
+
+            found++;
+            // Fighters' colour animations alone give about 20 lines a second (host).
+            if (lines < 60) {
+                lines++;
+                len = snprintf(buf, sizeof(buf), "watch: frame %u list %08x (at %p) size %u #%u, for one frame:",
+                               gx_frame - 1, e->paddr, OSPhysicalToCached(e->paddr), e->size, occ);
+                for (k = 0; k < W_COUNT && len < (int) sizeof(buf) - 40; k++) {
+                    if (w->s[1][k] != w->s[0][k]) {
+                        len += snprintf(buf + len, sizeof(buf) - len, " %s %x->%x", names[k], w->s[0][k], w->s[1][k]);
+                    }
+                }
+                ps3_log("%s\n", buf);
+                // The TEV value rows that changed (K0-K3, PREV and REG0-REG2 start values, fog), in 1/255 steps.
+                for (k = 0; k < XF_TEV_CONSTS; k++) {
+                    const float* a = w->tev[0][k];
+                    const float* b = w->tev[1][k];
+
+                    if (memcmp(a, b, 16) != 0) {
+                        ps3_log("watch:   TEV row %u: %d %d %d %d -> %d %d %d %d\n", k, (int) (a[0] * 255.0f),
+                                (int) (a[1] * 255.0f), (int) (a[2] * 255.0f), (int) (a[3] * 255.0f),
+                                (int) (b[0] * 255.0f), (int) (b[1] * 255.0f), (int) (b[2] * 255.0f),
+                                (int) (b[3] * 255.0f));
+                    }
+                }
+            }
+        }
+        memcpy(w->s[0], w->s[1], sizeof(cur));
+        memcpy(w->s[1], cur, sizeof(cur));
+        memcpy(w->tev[0], w->tev[1], sizeof(w->tev[0]));
+        memcpy(w->tev[1], memo.tev, sizeof(w->tev[1]));
+    } else {
+        memcpy(w->tev[w->n], memo.tev, sizeof(w->tev[0]));
+        memcpy(w->s[w->n++], cur, sizeof(cur));
+    }
+    w->frame = gx_frame;
+    if (gx_frame - last >= 60) {
+        ps3_log("watch: %u one-frame setup changes in the last %u frames\n", found, gx_frame - last);
+        found = lines = 0;
+        last = gx_frame;
+    }
+}
+
 static bool call_list(GpState* s, u32 paddr, const u8* list, u32 size, u32* draws, u32* vertices)
 {
     const VtxLayout* l;
@@ -2018,16 +2270,18 @@ static bool call_list(GpState* s, u32 paddr, const u8* list, u32 size, u32* draw
     // The lookup and any conversion count as vertex work.
     ps3_prof_lap(PROF_DRAW_VTX, &t);
     l = draw_setup(s, e->prim, e->vat, e->nverts, &t);
+    watch_draw(s, e, l != NULL);
     if (l == NULL) {
         stats.dropped_draws += e->ndraws;
         return true;
     }
     ps3_diag.gp_site = "draw: cached list";
     bind_attribs(l, (vc_mem_off + e->off) | DEV_LOCAL);
+    before_rsx_draw();
     dev_draw_indexed(e->family, (vc_mem_off + e->off + e->idx_at) | DEV_LOCAL, e->nidx);
     stats.rsx_draws++;
     e->frame = frame;
-    after_rsx_draw();
+    after_rsx_draw(true);
     ps3_prof_lap(PROF_DRAW_VTX, &t);
     ps3_prof.ticks[PROF_DRAW] += t - t0;
     return true;
@@ -2167,6 +2421,12 @@ static void copy_pass(const DevTarget* dst, u32 sx, u32 sy, u32 sw, u32 sh, cons
     }
     // The EFB is read as a texture: the draws into it must be done.
     dev_barrier();
+    // A/B: no texture unit holds the destination while the copy renders into it, as Dolphin's PR 1689 (D3D).
+    if (ps3_diag.gx_ab & 65536) {
+        for (i = 1; i < 8; i++) {
+            dev_texture(i, NULL);
+        }
+    }
     dev_target(dst);
     efb_bound = false;
     dev_viewport(scale, offset);
@@ -2193,6 +2453,7 @@ static void copy_pass(const DevTarget* dst, u32 sx, u32 sy, u32 sw, u32 sh, cons
     }
     dev_attrib(VA_POS, io, sizeof(CopyVertex), 4, VTX_F32);
     dev_attrib(VA_TEX0, io + 16, sizeof(CopyVertex), 2, VTX_F32);
+    bound_layout = NULL;
     dev_draw(DEV_PRIM_QUADS, 4);
     // Later draws may sample dst.
     dev_barrier();
@@ -2220,6 +2481,49 @@ static Xfb* xfb_for(u32 addr)
     return x;
 }
 
+// A/B: reads a fighter's shadow copy back once the RSX wrote it, as the black floor's suspect. Its 2-pixel border is
+// always white on the GameCube; the inside is white but for the fighter. The PPE waits for the RSX at each one.
+static void check_shadow(const TexEntry* e)
+{
+    static u32 copies, dark, dark_edge, lines, last;
+    const volatile u8* m = e->mem;
+    u32 x, y, in = 0, in_dark = 0, edge = 0, edge_dark = 0, sum = 0;
+
+    dev_finish();
+    for (y = 8; y < 248; y += 8) {
+        for (x = 8; x < 248; x += 8) {
+            u32 r = (*(const volatile u32*) (m + y * e->pitch + x * 4) >> 16) & 0xFF;
+
+            in++;
+            in_dark += r < 64;
+            sum += r;
+        }
+    }
+    for (x = 0; x < 256; x += 8) {
+        u32 r[4] = { *(const volatile u32*) (m + x * 4), *(const volatile u32*) (m + 255 * e->pitch + x * 4),
+                     *(const volatile u32*) (m + x * e->pitch), *(const volatile u32*) (m + x * e->pitch + 255 * 4) };
+        int k;
+
+        for (k = 0; k < 4; k++) {
+            edge++;
+            edge_dark += ((r[k] >> 16) & 0xFF) < 64;
+        }
+    }
+    copies++;
+    dark += in_dark * 2 > in;
+    dark_edge += edge_dark * 10 > edge;
+    if ((in_dark * 2 > in || edge_dark * 10 > edge) && lines < 30) {
+        lines++;
+        ps3_log("shadow check: present %u copy to %08x dark: inside %u of %u (mean %u), border %u of %u\n",
+                stats.presents, e->addr, in_dark, in, sum / in, edge_dark, edge);
+    }
+    if (stats.presents - last >= 60) {
+        ps3_log("shadow check: %u copies, %u mostly dark inside, %u with a dark border\n", copies, dark, dark_edge);
+        copies = dark = dark_edge = lines = 0;
+        last = stats.presents;
+    }
+}
+
 static void efb_copy(GpState* s)
 {
     u32 v = s->bp[BP_EFB_COPY], tl = s->bp[0x49], wh = s->bp[0x4A];
@@ -2240,6 +2544,9 @@ static void efb_copy(GpState* s)
         sh = EFB_HEIGHT - sy;
     }
     if ((v >> 14) & 1) {
+        // The GX frame ends here, not at the present, which may come during the next frame's draws.
+        frame_draws = 0;
+        gx_frame++;
         // Display copy: an RSX surface for the XFB at addr, the lines scaled as the copy's Y scale says.
         u32 ys = s->bp[0x4E] & 0x1FF;
         float yscale = ys == 0 ? 1.0f : ((v >> 10) & 1) ? 256.0f / (float) ys : (float) ys / 256.0f;
@@ -2296,6 +2603,10 @@ static void efb_copy(GpState* s)
 
                 e->frame = frame;
                 copy_pass(&t, sx, sy, sw, sh, fp, half);
+                // lbshadow.c's shadows are 256x256.
+                if ((ps3_diag.gx_ab & 131072) && dw == 256 && dh == 256) {
+                    check_shadow(e);
+                }
             }
         }
     }
@@ -2482,11 +2793,17 @@ void gx_rsx_present(u32 xfb)
                 dev_finish();
             }
             stats.presents++;
-            // The present pass leaves its own state on the RSX.
+            // The present pass leaves its own state, and the console's flip runs gcm's state reset (all texture units
+            // off). The present can come mid-frame, so every binding goes; A/B: the old way, which drew those black.
             efb_bound = false;
             fp_current = NULL;
             vp_current = NULL;
-            textures_bound = false;
+            bound_layout = NULL;
+            if (ps3_diag.gx_ab & 16777216) {
+                textures_bound = false;
+            } else {
+                tex_forget();
+            }
             vc_valid = false;
             memo.state_ok = false;
             ps3_prof_lap(PROF_PRESENT, &t);

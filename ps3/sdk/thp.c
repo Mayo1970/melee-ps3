@@ -499,6 +499,13 @@ static void put_block(const s16 in[64], const u16 q[64], s32 last, u8* plane, u3
     }
 }
 
+// The main thread runs up to a frame ahead of the GP thread, which uploads the planes when it draws them. So a
+// frame is decoded into a staging set, and the GP thread copies it into the planes in stream order.
+#define STAGE_BYTES (640 * 480 * 3 / 2)
+static u8 stage[2][STAGE_BYTES] __attribute__((aligned(128)));
+static u32 stage_copy[2];
+static int stage_next;
+
 // Y is w x rows, U and V half that, all in I8 tiles. MCUs are Y0 Y1 Y2 Y3 U V.
 static void decode(THPFileInfo* info, u8* ty, u8* tu, u8* tv, u32 w)
 {
@@ -507,8 +514,23 @@ static void decode(THPFileInfo* info, u8* ty, u8* tu, u8* tv, u32 w)
     s16 pred[3] = { 0, 0, 0 };
     s16 blk[64];
     u32 mcux = (d->width + 15u) / 16, mcuy = (d->rows + 15u) / 16, left = d->restart, mx, my, i;
+    u32 ysize = w * d->rows, uvsize = w / 2 * (d->rows / 2u);
     const Huff* dc[3];
     const Huff* ac[3];
+    u8* gy = ty;
+    u8* gu = tu;
+    u8* gv = tv;
+    bool staged = ysize + 2 * uvsize <= STAGE_BYTES;
+    int k = stage_next;
+
+    if (staged) {
+        stage_next ^= 1;
+        // The copy that last read this set must be made before it is written again.
+        gp_wait_copy(stage_copy[k]);
+        ty = stage[k];
+        tu = ty + ysize;
+        tv = tu + uvsize;
+    }
 
     for (i = 0; i < 3; i++) {
         dc[i] = &d->huff[d->dcsel[i] * 2];
@@ -535,10 +557,16 @@ static void decode(THPFileInfo* info, u8* ty, u8* tu, u8* tv, u32 w)
             }
         }
     }
+    if (staged) {
+        gp_post_copy(gy, ty, ysize);
+        gp_post_copy(gu, tu, uvsize);
+        stage_copy[k] = gp_post_copy(gv, tv, uvsize);
+        return;
+    }
     // The GX texture cache samples large textures for its hash; the new frame must not be missed.
-    gp_post_mem_changed(ty, w * d->rows);
-    gp_post_mem_changed(tu, w / 2 * (d->rows / 2u));
-    gp_post_mem_changed(tv, w / 2 * (d->rows / 2u));
+    gp_post_mem_changed(ty, ysize);
+    gp_post_mem_changed(tu, uvsize);
+    gp_post_mem_changed(tv, uvsize);
 }
 
 void THPDec_80331340(THPFileInfo* info, void* tileY, void* tileU, void* tileV)

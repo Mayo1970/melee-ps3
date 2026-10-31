@@ -174,15 +174,30 @@ u32 PADRead(PADStatus* status)
         connected |= PAD_CHAN0_BIT >> chan;
     }
     {
-        // As built, then without the display list cache, without it and batching, and with an RSX barrier per draw.
-        static const unsigned modes[] = { 0, 1024, 1, 16 };
-        static const char* const names[] = { "as built", "no display list cache", "no list cache, no batching",
-                                             "an RSX barrier after each draw" };
+        // As built; the old bindings after a present (the black flicker); the old depth output; the flicker
+        // detector; then the black flicker's earlier tests (runs 46-52, none cleared it) and specular lights off.
+        static const unsigned modes[] = { 0,      16777216, 4194304, 2097152, 1048576, 524288, 262144, 131072,
+                                          65536,  16,       4096,    8192,    16384,   32768,  2048 };
+        static const char* const names[] = { "as built",
+                                             "the old texture bindings after a present (the black flicker)",
+                                             "the old depth output (z + w)",
+                                             "flicker detector: one-frame setup changes go to the log",
+                                             "later draws win depth ties (depth offset)",
+                                             "the old alpha test (two-compare tests off)",
+                                             "fighter shadows sample white",
+                                             "shadow copies read back (slow)",
+                                             "no texture unit holds an EFB copy's destination",
+                                             "an RSX barrier after each draw",
+                                             "an RSX barrier after cached list draws",
+                                             "an RSX barrier after ring draws",
+                                             "an RSX barrier before fragment program changes",
+                                             "an RSX barrier before vertex format changes",
+                                             "specular lights off" };
         static unsigned held, mode;
 
         // Select is no GameCube button: each press moves the backend to the next A/B mode.
         if ((pads[0].buttons & PS3_PAD_SELECT) && !held) {
-            mode = (mode + 1) % 4;
+            mode = (mode + 1) % (sizeof(modes) / sizeof(modes[0]));
             ps3_diag.gx_ab = modes[mode];
             OSReport("gx A/B: mode %u: %s\n", mode, names[mode]);
         }

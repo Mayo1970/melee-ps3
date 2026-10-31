@@ -113,6 +113,11 @@ void gp_post_present(u32 xfb);
 void gp_stop(void);
 // The GX thread only: tells the backend, in stream order, that the CPU rewrote memory a texture may come from.
 void gp_post_mem_changed(const void* p, u32 size);
+// The GX thread only: in stream order the GP thread copies size bytes of src (the port's memory) to dst, then tells
+// the backend dst changed. Returns the copy's number for gp_wait_copy.
+u32 gp_post_copy(void* dst, const void* src, u32 size);
+// Not on the GP thread: waits until the GP thread has made copy n, so its source may be written again.
+void gp_wait_copy(u32 n);
 // The registers, for tests and logs: read them only while the GP thread is idle (after gp_fifo_sync).
 GpState* gp_get_state(void);
 

@@ -2,6 +2,7 @@
 // lists, and hands draws and EFB operations to the backend. Opcodes and register layout as in Dolphin.
 #include "gp.h"
 
+#include <stdint.h>
 #include <string.h>
 
 #include <dolphin/os.h>
@@ -25,7 +26,9 @@
 #define OP_METRICS 0x44
 #define OP_INVL_VC 0x48
 #define OP_LOAD_BP 0x61
-// The port's own: a memory range the CPU rewrote (gp_post_mem_changed). The GameCube has no opcode 0x7E.
+// The port's own, opcodes the GameCube does not have: a copy into game memory (gp_post_copy), and a memory range
+// the CPU rewrote (gp_post_mem_changed).
+#define OP_PS3_COPY 0x7D
 #define OP_PS3_MEM_CHANGED 0x7E
 #define OP_DRAW 0x80
 
@@ -342,6 +345,34 @@ static void bp_write(u32 v)
 
 static void run_list(u32 paddr, u32 size);
 
+// Copies posted (GX thread) and made (GP thread); copy_waiting with the SEQ_CST pair as fifo.c's cons_waiting.
+static u32 copies_posted;
+static u32 copies_done;
+static int copy_waiting;
+static PsMutex copy_lock = PS_MUTEX_INIT;
+static PsCond copy_cond = PS_COND_INIT;
+
+static void run_copy(u32 dst_paddr, u32 size, const void* src)
+{
+    void* dst = OSPhysicalToCached(dst_paddr);
+
+    ps3_diag.gp_site = "copy";
+    if (dst != NULL) {
+        memcpy(dst, src, size);
+        if (backend->mem_changed != NULL) {
+            backend->mem_changed(&state, dst_paddr, size);
+        }
+    } else {
+        stats.bad_addresses++;
+    }
+    __atomic_store_n(&copies_done, copies_done + 1, __ATOMIC_SEQ_CST);
+    if (__atomic_load_n(&copy_waiting, __ATOMIC_SEQ_CST)) {
+        ps_mutex_lock(&copy_lock);
+        ps_cond_broadcast(&copy_cond);
+        ps_mutex_unlock(&copy_lock);
+    }
+}
+
 // Runs one command. Returns false at the end of a display list or on a truncated one.
 static bool run_command(Src* s, bool in_list)
 {
@@ -447,6 +478,12 @@ static bool run_command(Src* s, bool in_list)
             backend->mem_changed(&state, be32(p), be32(p + 4));
         }
         break;
+    case OP_PS3_COPY:
+        if ((p = take(s, 16)) == NULL) {
+            return false;
+        }
+        run_copy(be32(p), be32(p + 4), (const void*) (uintptr_t) ((u64) be32(p + 8) << 32 | be32(p + 12)));
+        break;
     default:
         // An unknown opcode loses the stream position, as on the GameCube; count it and go on.
         stats.unknown_opcodes++;
@@ -549,6 +586,34 @@ void gp_post_mem_changed(const void* p, u32 size)
     __GXPipe_u8(OP_PS3_MEM_CHANGED);
     __GXPipe_u32(paddr);
     __GXPipe_u32(size);
+}
+
+u32 gp_post_copy(void* dst, const void* src, u32 size)
+{
+    u64 s = (u64) (uintptr_t) src;
+
+    __GXPipe_u8(OP_PS3_COPY);
+    __GXPipe_u32(OSCachedToPhysical(dst));
+    __GXPipe_u32(size);
+    __GXPipe_u32((u32) (s >> 32));
+    __GXPipe_u32((u32) s);
+    return ++copies_posted;
+}
+
+void gp_wait_copy(u32 n)
+{
+    if ((s32) (__atomic_load_n(&copies_done, __ATOMIC_SEQ_CST) - n) >= 0) {
+        return;
+    }
+    // An unpublished copy would never run.
+    __GXPipeFlush();
+    ps_mutex_lock(&copy_lock);
+    __atomic_store_n(&copy_waiting, 1, __ATOMIC_SEQ_CST);
+    while ((s32) (__atomic_load_n(&copies_done, __ATOMIC_SEQ_CST) - n) < 0) {
+        ps_cond_wait(&copy_cond, &copy_lock);
+    }
+    __atomic_store_n(&copy_waiting, 0, __ATOMIC_SEQ_CST);
+    ps_mutex_unlock(&copy_lock);
 }
 
 static void gp_main(void* arg)

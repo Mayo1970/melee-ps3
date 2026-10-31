@@ -447,6 +447,184 @@ Waiting for the user:
   one. Rumble needs the adapter's power plug. Package: `.got` 0x4858, 0 `r2off` stubs.
 - Melee run 44 (2026-10-29, `build/run44_udp.txt`) SUCCESS: the GC pad on the adapter plays. The PS3's HID driver
   does not take the adapter: driver registered 0, attach, pipes in 1 out 2, init command result 0.
+- Specular lights, checked on the host (2026-10-30, temporary probe build): Mute City, Peach and DK, 7,320 presents
+  (about 2 minutes of match). On each draw with a specular channel: 117 million vertices through `xf_ref`, 0 NaN or
+  infinite outputs; 14.6 million also through the vertex program on the interpreter, 0 differences (largest 2.7e-6);
+  N.H at most 1.0, the attenuation divisor at least 1.00001, the half-angle vector length 1. The constants after
+  each partial update against a full `xf_constants` (3.6 million draws): 0 stale rows. So the specular math is not
+  the flicker on the host. Not checked anywhere: the RSX's colour 1 (secondary colour) path, which only the specular
+  channel uses. Select mode 4 (A/B bit 2048) clears the lights of the specular channels (attenuation on, spot off):
+  they give their ambient colour, black in HSD, so no highlights. If the flicker stays in mode 4, specular is out.
+- Fountain of Dreams below 60: the star field (`GrdIzumiStar_TopN_joint`, point size 18) is one display list of
+  1,852 point draws (24,630 points, VAT 0, 104,096 bytes). `VC_MAX_DRAWS` was 512, so the list ran as commands each
+  frame: run 40's 45 lists a second "run as commands" and 83,295 "batched" draws are this list. It was the only list
+  the cache refused in host runs of the boot, the menus, Fountain of Dreams and Mute City. Immediate draws there are
+  particles only (`psDispSub`, `psDispParticles`, about 6,800 `GXBegin` a second). `VC_MAX_DRAWS` is 4096 now
+  (`backend.c`). Host: 0 lists run as commands, GP vertices 262-286 to 89-104 per mille, GP waits for data 126-175 to
+  288-382; the cache check (`-DGX_VCACHE_CHECK`) 1.1 million cached draws, 0 differ.
+- `tools/ppm2png.py` split the header with `split()`, which also took pixel bytes with whitespace values: the PNG was
+  short and invalid. It reads the header with a pattern now.
+- Package (2026-10-30): the list limit, Select mode 4. `progtest` 3000 of 3000, `scenetest` PASS; host matches on
+  Fountain of Dreams and Mute City (Select pressed 4 times) exit 0. `.got` 0x4858, 0 `r2off` stubs, 19.2 MB in loaded
+  segments.
+- Melee run 45 (2026-10-30, `build/run45_udp.txt`, Peach against a CPU Ganondorf in Training): Fountain of Dreams
+  at 49-52 presents a second in mode 0 (run 40: 42), 0 lists run as commands, about 204,000 GX draws in 57,500 RSX
+  draws. The GP is still the limit (waits for data 32-67 per mille): TEV 292 per mille, vertices 173, constants 94,
+  textures 79. Mute City per Select mode: 0 and 4 (specular off) 50-52, 1 (no list cache) 33-35, 2 (no cache, no
+  batching) 31-33, 3 (RSX barrier after each draw) 25, with the GP waiting for RSX labels 55% of the time.
+- The user's video of run 45 (Fountain of Dreams, mode 0, 11 s): the right part of the green slope and the top of
+  the right platform turn solid black for one frame, about 10 times in 11 s. They are drawn black: the black band
+  covers what lies behind it. The same symptom as Mute City, so neither Mute City nor its specular lights are the
+  cause. In those seconds the log has 0 texture uploads, 0 evictions and 0 list conversions: the PPE wrote nothing
+  into RSX memory. The user: on Mute City the slowest mode (3, RSX barrier after each draw) flickers least, as in
+  runs 41-43. So the fault is between consecutive draws on the RSX.
+- Run 46 package: Select cycles 0 as built, 1 an RSX barrier after each draw, 2 only after cached list draws (bit
+  4096), 3 only after ring draws (8192), 4 only before fragment program changes (16384), 5 only before vertex format
+  changes (32768: a layout change, as the offsets change at nearly every draw), 6 specular lights off (2048). The mode
+  that clears the flicker as well as mode 1 names the step. Host: `progtest` 3000 of 3000, `scenetest` PASS, a match
+  through all 7 modes exits 0. `.got` 0x4860, 0 `r2off` stubs, 19.2 MB in loaded segments.
+- Melee run 46 (2026-10-30, in `build/run45_udp.txt` from line 4351): the user: none of the 7 modes clears the
+  flicker, so it is not a hazard between consecutive draws on the RSX, nor the specular lights (mode 6).
+- Dolphin had the same bug: issue 7945, "Black or flickering floor in stages in Super Smash Bros. Melee" (D3D,
+  2014), a duplicate of 7929, fixed by PR 1689: an EFB copy rendered into a texture still bound for sampling, which
+  D3D then unbound, so the floor was drawn without it. In Melee the floors sample EFB copies for the fighters'
+  shadows: per fighter, `lbshadow.c` renders it into a 256x256 corner of the EFB (`HSD_ShadowStartRender`: a white
+  rectangle, then the fighter in the stage's shadow intensity), copies it as R4 (`HSD_ShadowEndRender`) and
+  projects it onto the floor. Run 45's video fits: the black patch is next to Ganondorf, with a straight edge across
+  the grass. Host (a temporary probe that drew the shadow passes in software): 469 shadow copies on Fountain of
+  Dreams, Peach against Ganondorf, none mostly dark. So the game and the GX side make the shadow maps correctly.
+- Run 47 package: Select mode 1 (bit 65536) turns texture units 1-7 off before an EFB copy renders into its
+  destination (`copy_pass`; unit 0 holds the EFB), as Dolphin's fix; the next draw binds its textures again. Modes
+  2-7 are run 46's modes 1-6. Host: `progtest` 3000 of 3000, `scenetest` PASS, a Fountain of Dreams match in mode 1
+  exits 0 and draws the floor and shadows. `.got` 0x4860, 0 `r2off` stubs, 19.2 MB in loaded segments.
+- Melee run 47 (2026-10-31, in `build/run45_udp.txt` from line 6265): mode 1 ran about 8 s on Fountain of Dreams and
+  4 s on Mute City; the user saw the flicker in it. Run 48 (from line 9635), mode 1 only on Fountain of Dreams: 19
+  L1 marks in about 26 s; the user: rarer than before, still there. The marks come a few frames late. In those
+  seconds: 0-7 texture hashes, 0 evictions, 0 lookups without a texture, so the floor gets the shadow copy's entry.
+- Run 49 package: Select mode 1 (bit 131072, `check_shadow`) waits for the RSX after each 256x256 copy, reads 900
+  inside pixels and 128 border pixels of the shadow texture back, and logs the copies with a dark inside (over
+  half) or a dark border (over a tenth), and once every 60 presents the counts. As many dark copies as flickers: the
+  shadow pass or the copy fails on the RSX. None: the floor samples a good texture wrongly. Modes 2-9 are run 47's
+  modes 1-8. Host: `progtest` 3000 of 3000, `scenetest` PASS; drawn shadow copies read back bright. `.got` 0x4898,
+  0 `r2off` stubs, 19.2 MB in loaded segments.
+- Melee run 49 (2026-10-31, in `build/run45_udp.txt` from line 10894), mode 1 on Fountain of Dreams: about 7,500
+  shadow copies read back, all with a white border; 3 dark inside, in 2 frames late in the session (5410, 5445),
+  not the flicker's rate. The user still saw the flicker. So the shadow pass and the copy work on the RSX, and the
+  floor draws after a finished copy: the black comes from how the floor uses the shadow, or not from the shadow.
+- Run 50 package: Select mode 1 (bit 262144, `white_for`) binds a white 16x16 texture with the same sampling in
+  place of each 256x256 EFB copy. The flicker stops: the floor samples the shadow wrongly (texture coordinates, the
+  projection's divide, the sampler). It stays: the black is not the shadow (the floor's other textures, lighting).
+  Modes 2-10 are run 49's modes 1-9. Host: `progtest` 3000 of 3000, `scenetest` PASS, a Fountain of Dreams frame in
+  mode 1 draws normally. `.got` 0x48c0, 0 `r2off` stubs, 19.2 MB in loaded segments.
+- Melee run 50 (2026-10-31, in `build/run45_udp.txt` from line 14051), mode 1 on Fountain of Dreams: the user: the
+  flicker stays. So the black is not the shadow.
+- The alpha test: `apply_alpha_test` turned the test off for every two-compare form it did not know. HSD's default
+  for translucent materials (`HSD_SetupPEMode`) is alpha > 0 AND alpha > 0, with depth writes and the test before
+  them (ZCompLoc 0): on the GameCube clear pixels write no depth, here they did, and later draws behind them were cut
+  out, showing what was drawn before (Fountain of Dreams: the black sky). Host, a 90 s Fountain of Dreams match: about
+  950,000 two-compare setups, 5% of them with depth writes, all alpha > 0 AND alpha > 0. The other forms seen,
+  without depth writes: >= 1 AND <= 255 (alpha > 0), >= 0 AND <= 1 (alpha <= 1), >= 0 AND <= 255 (always).
+- Fix (`alpha_const`, `apply_alpha_test`): a compare that 8-bit alpha always passes or fails (>= 0, <= 255, < 0,
+  > 255) is a constant, two equal halves are one compare, and XOR or XNOR with a constant half is that compare or
+  its inverse (7 - c). Every form above becomes one RSX alpha test; in a host match the "not drawn as on the
+  GameCube" line no longer came. Run 51 package: the fix as built; Select mode 1 (bit 524288) is the old alpha test,
+  modes 2-11 are run 50's modes 1-10. Host: `progtest` 3000 of 3000, `scenetest` PASS, a Fountain of Dreams frame
+  draws the water, the fountain and the effects. `.got` 0x48c0, 0 `r2off` stubs, 19.2 MB in loaded segments.
+- Melee run 51 (2026-10-31, in `build/run45_udp.txt` from line 15224): mode 0 (the alpha fix) about 5 s on Fountain
+  of Dreams, then mode 1 to the end. The user: the flicker is still there. The fix stays (GX's behaviour).
+- Lead: depth precision between two nearly coplanar surfaces. Run 45's video has a straight edge across the grass
+  that follows no polygon, as the line where two near planes cross. GX writes depth from z/w; the program gives
+  the RSX z + w, a float sum that rounds near the far plane, so two layers GX keeps equal can differ by a step.
+- Run 52 package: Select mode 1 (bit 1048576, `before_rsx_draw`, `dev_depth_bias`) puts each RSX draw of a frame 2
+  depth steps nearer than the one before (a polygon offset; the count restarts at the display copy), so a later draw
+  wins a near tie. Modes 2-12 are run 51's modes 1-11. The software RSX applies the offset too. Host: `progtest`
+  3000 of 3000, `scenetest` PASS, a Fountain of Dreams frame in mode 1 draws normally. `.got` 0x48d8, 0 `r2off`
+  stubs, 19.2 MB in loaded segments.
+- Melee run 52 (2026-10-31, in `build/run45_udp.txt` from line 16500), mode 1 from about 25 s into the Fountain of
+  Dreams match: the user: the flicker stays. Depth precision is ruled out.
+- Host frames: 87 consecutive frames of Fountain of Dreams (old alpha test) in software, no black floor; too few to
+  rule the host in or out.
+- Run 53 package: Select mode 1 (bit 2097152, `watch_draw`), the flicker detector. Each cached list draw's setup
+  (drawn or dropped, VP and FP entries, the bound textures, zmode, cmode0, the alpha test, cull, viewport and scissor,
+  the channel colours, the light colours, the TEV values; not the matrices), keyed by list and its count in the GX
+  frame (`gx_frame`, at the display copy). A setup that differs for one frame and then comes back is logged with
+  the list's address and the components, and the TEV rows that changed (at most 60 lines in 60 frames); a count
+  every 60 frames. Host, Fountain of Dreams, Peach against Ganondorf: 1-19 such changes in 60 frames, all fighter
+  colour animations (`PlCo.dat` and `PlGnNr.dat` lists, by their addresses against the "dat: parse" lines), none in
+  `GrIz.dat`. Modes 2-13 are run 52's modes 1-12. `.got` 0x4930, 0 `r2off` stubs, 22.6 MB in loaded segments (the
+  detector's table, 3.4 MB).
+- Melee run 53 (2026-10-31, in `build/run45_udp.txt` from line 18452), mode 1, Peach against Link on Fountain of
+  Dreams: 115 one-frame changes, nearly all fighter colour animations (`PlPeNr.dat`, `PlLkBk.dat`); in `GrIz.dat`
+  only one event, frame 2272, the light colours of 356 lists at once (probably the pause). So the stage lists'
+  setups, less the matrices, do not change for one frame.
+- Melee-X (TechProGabe/Melee-X, this decomp on the original Xbox, ideas only): its v3 notes "Fountain of Dreams'
+  grass no longer flicker with the wrong textures"; commit 07d33ae: that was z-fighting with a 16-bit depth buffer,
+  as Melee's match camera has near 0.1 and far 16384. It writes depth as a linear function of the clip coordinates
+  (`row2 = ZMAX * ((vf - vn) * P[2] + vf * P[3])`), with no sum before the divide. Also there: material and
+  texture tracks that flip every frame (Brinstar's lamps) flicker on a progressive display, shown as their mean
+  (commit 82b2e49); not seen on Fountain of Dreams' stage here (run 53).
+- Depth output (`xf_gen`, `apply_state`): the program gave the RSX z + w, a float sum at w's scale, which rounds
+  away z's low bits at stage distance (about 2-4 of the 24-bit steps; a step there is about 0.05 units). It gives
+  -z now, and the viewport's z scale is -range and its offset far, so the RSX computes GX's far + range * z / w
+  with no sum before the divide. `XfKey.old_depth` keeps z + w for an A/B mode. `xf_ref` and `prog_test` follow
+  (every other case each way; 3000 of 3000). The vertex program text put an absolute value's swizzle after the
+  bars, which cgcomp dropped (`rsxcheck`'s "xf specular" differed since `safe_rcp`): inside now, 19 of 19 match.
+- Run 54 package: the new depth output as built; Select mode 1 (bit 4194304) is the old z + w, modes 2-14 are run
+  53's modes 1-13. Host: `progtest` 3000 of 3000, `scenetest` PASS, a Fountain of Dreams frame draws in the right
+  depth order. `.got` 0x4930, 0 `r2off` stubs, 22.6 MB in loaded segments.
+- Melee run 54 (2026-10-31, in `build/run45_udp.txt` from line 19850), Fountain of Dreams: mode 0 (the new depth
+  output) about 10 s, mode 1 (the old z + w) about 110 s, then modes 2-10. The user: the flicker is still there.
+  So depth precision is not the cause either; the new depth output stays (GX's formula, fewer lost bits).
+- Cause found (2026-10-31, code review and host probes, not yet on the console): the flip. The flicker comes where
+  the GP is busy at the retrace (GP idle per mille: Fountain of Dreams 24, Mute City 50; Green Greens 253, Big Blue
+  211, Final Destination and Flat Zone about 505; the XMB open makes any stage busy), so the VI's present runs
+  between GX commands of the next frame. The firmware's flip (`gcmSetFlip`) runs gcm's default state block: per
+  RPCS3's flip handler and an RPCS3 log of the real firmware's flip, all 16 texture units off, the vertex arrays and
+  masks, surface, viewport, raster state. `gx_rsx_present` cleared only `textures_bound`, so the first draw after it
+  bound its own units, and a later draw in the frame that reused a texture on another unit passed `bind_textures`'
+  "same and bound" check, sampled a unit that was off (black), until the next EFB copy's `tex_forget`. The victims
+  are the fighters' shadow units (1 and 2) on the shadow receivers: HSD's shadow stage is CPREV * TEXC, so the whole
+  receiving DObj draws black, next to the fighter. A host probe (the soft device turns all units off at each present):
+  on Fountain of Dreams about 2% of mid-frame presents leave stale draws, 18 of 20 of them stage lists (the grass slope
+  with the shadows), the forced frames show the slope right of Ganondorf black with straight edges; on Mute City
+  only GrMc.dat track lists go stale, the forced frame shows the whole track black, platforms, cars and fighters
+  unchanged. It explains every A/B result: barriers and waits leave the skipped bind, `white_for` acts only on a
+  bind, the shadow copies were good, the run 53 detector hashed `bound[]` (the backend's belief), and the host's soft
+  `dev_present` never touched the units. Unit 0 also held the XFB after each present (`dev_present` binds it).
+- Fix: `gx_rsx_present` calls `tex_forget()`, so every unit is bound again at its next use. Host probe with the fix:
+  0 stale draws in about 500 mid-frame presents. Other state the flip resets is sent again after a present already
+  (`apply_state`, `dev_target`, `use_vp`/`use_fp`, `bind_attribs`, all constants; the cull cache matches, as
+  `dev_present` turns culling off itself).
+- Also checked this session and ruled out: PSL1GHT call encodings on the draw path (librsx disassembled), the
+  command buffer wrap, the vertex ring fences, clipping with depth clamp (the hardware still clips at w > 0), fog
+  (Fountain of Dreams has none; Mute City's fog colour is not black), TXP, TEV values as interpolants, stale
+  constants, matrix indices, CPU/GP data races on stage data (all per-frame values go through the FIFO by value),
+  the triple buffering (the flip handler fires at the executed flip). Fountain of Dreams' 80x60 water reflection copy
+  (a multiply on the translucent water disc) was a lead: a black map blacks out only the water below the water line.
+- Intro movie tearing (the user: "blocks or tearing"): `lbMthp_8001F67C` decodes the next frame into the one Y/U/V
+  plane set on the main thread, while the GP thread may still upload the frame before from it (HSD lets the main
+  thread run a frame ahead; an upload is about 20 ms of GP time on the console). Fix in the port only: `thp.c`
+  decodes into one of two staging sets (900 KB of `.bss`), and a new port opcode 0x7D (`gp_post_copy`, `gp.c`) has
+  the GP thread copy it into the planes in stream order, then free the cached textures there; before a set is
+  written again, `gp_wait_copy` waits for the copy that read it. Host: `thptest` frames byte for byte as before
+  (MvOpen, MvEndFox, a GmRegend still); a 170 s boot with `-DGX_TCACHE_CHECK` over the movie: no texture drawn with
+  changed data (the movie planes were reported before).
+- Run 55 package: both fixes as built; Select mode 1 (bit 16777216) is the old present invalidation (the flicker),
+  modes 2-14 are run 54's modes 1-13. Host: `progtest` 3000 of 3000, `scenetest` PASS, a 90 s Fountain of Dreams
+  match exits 0 with 0 dropped draws. `.got` 0x4980, 0 `r2off` stubs, 23.5 MB in loaded segments.
+
+Where the work stopped (2026-10-31), for the next session:
+- The working tree holds all of runs 45-55's changes, not committed: `backend.c`, `rsxdev.h`, `rsxdev_cell.c`,
+  `vpgen.c`, `xfgen.c`, `xfgen.h`, `gp.c`, `gp.h`, `thp.c`, `thp_test.c`, `diag.h`, `pad.c`, `prog_test.c`,
+  `rsxdev_soft.c`, `ppm2png.py`, this file.
+- Kept as built (GX behaviour or speed): `VC_MAX_DRAWS` 4096 (Fountain of Dreams 49-52 presents a second), the
+  two-compare alpha test reductions, the -z depth output, the rsxcheck text fix, the `ppm2png.py` header fix.
+- A/B modes only (Select, `pad.c`'s table, mode 0 as built): 1 the old present invalidation, 2 old depth (z + w), 3
+  the flicker detector, 4 the per-draw depth offset, 5 the old alpha test, 6 white shadows, 7 the shadow copy
+  readback, 8 Dolphin's EFB copy fix, 9-13 RSX barriers in one place, 14 specular lights off. The detector's table
+  costs 3.4 MB of `.bss`.
+- The UDP listener (port 18194) wrote runs 45-54 into `build/run45_udp.txt`; each run starts at its "melee: boot".
+- Melee run 55 (2026-10-31) SUCCESS: the user reports both fixed, the black flicker and the intro movie's tearing.
 
 The UDP log goes to `192.168.178.99`, port 18194 (`ps3/os/udplog_cell.c`). A listener: `nc -ul 18194`, or any
 UDP listener on that port.
@@ -740,15 +918,16 @@ Other findings of 2026-10-29:
 
 The user's list of what is left to address. Details of each are in the run entries above.
 
-1. **Mute City: the stage model flickers black, now and then.** Only on Mute City, only the stage (not the
-   platforms). It happens in every A/B mode, so it is not the display list cache, batching, RSX timing, the
-   constants, vertex program loads or texture binds (runs 41-43). Also ruled out: texture cache pressure, failed
-   texture lookups, indirect stages (`lbRefract`), depth variance between layers (one position sequence in every
-   program), the current matrix registers, and a divide by 0 in the specular attenuation (Mute City's lights keep
-   the divisor >= 1). Mute City's own traits: specular lights 2 and 3 on the stage, and the display list cache
-   evicts there all the time. Needed next: a photo or video of the flicker (whole stage or parts, pure black or the
-   background showing through, and when: camera moves, cars, a new track section). The current package has the L1
-   mark and the Select modes (0 as built, 1 no list cache, 2 no list cache and no batching, 3 RSX barrier per draw).
+1. **Stage floors flicker black for one frame, now and then.** Mute City's stage model (runs 40-45) and, in run 45's
+   video, Fountain of Dreams' right slope and right platform top: drawn solid black. It happens in every A/B mode
+   of runs 41-54 and with no PPE writes into RSX memory (run 45). Ruled out: the display list cache, batching, RSX
+   barriers per draw or before constants, VP loads, texture binds or fragment programs, the specular lights (run
+   46), texture cache pressure, failed texture lookups, indirect stages, the current matrix registers, the shadow
+   maps and their sampling (runs 49, 50, host), a one-frame change in the stage lists' setups less the matrices
+   (run 53), and depth precision (runs 52, 54). Fixed on the way, flicker unchanged: two-compare alpha tests (run
+   51), the depth output (run 54). Cause found 2026-10-31: the flip turns every texture unit off, and texture
+   bindings were kept across a mid-frame present; fixed with `tex_forget()` in `gx_rsx_present`. Run 55 SUCCESS
+   (see the entries after run 54), with the intro movie's tearing fixed in the same package.
 2. **32-bit and 64-bit faults left in the game code.** The LP64 class: GameCube views of structs that hold
    pointers (a pointer field over a 32-bit field in a union or item/fighter vars, as the G&W Chef's
    `gamewatch.attr` over `gamewatchchef.x4`), `.dat` fields read as another type than the native reader converted
@@ -759,9 +938,9 @@ The user's list of what is left to address. Details of each are in the run entri
    conversion (`ps3_mwcc_f2u`, 72 sites), MSL's `sqrtf`, GCC's hoisted loads in busy-waits, MWCC stack slots,
    argument order, registers the DOL relies on. To look for: other MSL or runtime calls with other results than
    newlib's, more such conversions in code not compiled into the scanned objects, and DOL-offset reads.
-4. **Smaller open items.** Fountain of Dreams runs at about 42 presents a second (its draws do not go through the list
-   cache; vertices 37% of the GP). Part 2 steps 3 (TEV lookup) and 4 (SPUs) are not done. The title ID is still the
-   placeholder `MELE00001`.
+4. **Smaller open items.** Fountain of Dreams runs at 49-52 presents a second (run 45; 42 before the cache took its
+   star field list). The GP is the limit there, and the TEV setup its largest part (292 per mille): Part 2 step 3
+   (TEV lookup). Step 4 (SPUs) is not done either. The title ID is still the placeholder `MELE00001`.
 
 ## Not done for the game
 

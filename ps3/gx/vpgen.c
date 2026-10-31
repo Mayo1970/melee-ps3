@@ -374,7 +374,8 @@ static void src_text(char* buf, int size, const VpSrc* s, bool scalar)
     } else {
         snprintf(reg, sizeof(reg), "c[%d]", s->index);
     }
-    snprintf(buf, size, "%s%s%s%s%s", s->neg ? "-" : "", s->abs ? "|" : "", reg, s->abs ? "|" : "", sw);
+    // The swizzle inside the bars: cgcomp drops one after them (rsxcheck's "xf specular" case).
+    snprintf(buf, size, "%s%s%s%s%s", s->neg ? "-" : "", s->abs ? "|" : "", reg, sw, s->abs ? "|" : "");
 }
 
 void vp_op(VpProg* p, int op, int dst, int mask, bool sat, VpSrc a, VpSrc b, VpSrc c)

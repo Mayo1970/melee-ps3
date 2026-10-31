@@ -74,6 +74,8 @@ void dev_target(const DevTarget* t);
 void dev_viewport(const float scale[4], const float offset[4]);
 void dev_scissor(uint32_t x, uint32_t y, uint32_t w, uint32_t h);
 void dev_depth(bool test, uint32_t func, bool write);
+// Moves later polygons by units of the smallest depth step (negative: nearer); 0 turns the offset off.
+void dev_depth_bias(float units);
 void dev_blend(bool enable, uint16_t src, uint16_t dst, uint16_t eq);
 void dev_alpha_test(bool enable, uint32_t func, uint8_t ref);
 void dev_color_mask(bool rgb, bool alpha);

@@ -54,6 +54,8 @@ static void xf_case(int n)
         }
     }
     key.pos3 = rnd() & 1;
+    // Every other case, outside rnd(): the random states stay those of the earlier runs.
+    key.old_depth = (u8) (n & 1);
     key.numchans = rnd() % 3;
     key.numtexgens = rnd() % 5;
     key.dualtex = rnd() & 1;
