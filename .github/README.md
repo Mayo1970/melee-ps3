@@ -1,249 +1,144 @@
-Super Smash Bros Melee \
-[![Build Status]][actions]
-[![Discord Badge]][discord]
-[![Linked Progress]][progress]
-=============
+# Melee-PS3
 
-[actions]: https://github.com/doldecomp/melee/actions/workflows/build.yml
-[discord]: https://discord.gg/hKx3FJJgrV
-[progress]: https://decomp.dev/doldecomp/melee
+A native port of Super Smash Bros. Melee to the PlayStation 3, built on the
+[doldecomp/melee](https://github.com/doldecomp/melee) decompilation. It runs as homebrew on a PS3 with CFW or HEN.
+It is built with the open-source [PSL1GHT](https://github.com/ps3dev/PSL1GHT) SDK.
 
-[Build Status]: https://github.com/doldecomp/melee/actions/workflows/build.yml/badge.svg
-[Linked Progress]: https://decomp.dev/doldecomp/melee.svg?mode=shield&measure=complete_code&label=linked&category=all
-[Discord Badge]: https://img.shields.io/discord/727908905392275526?color=%237289DA&logo=discord&logoColor=%23FFFFFF
+Melee-PS3 is not an emulator. The game code is compiled for the Cell PPE, GX is translated to the RSX, and the
+GameCube DSP runs on an SPU.
 
-This repo contains a matching decompilation of Super Smash Bros Melee (US).
+Melee-PS3 is work in progress.
 
-> [!TIP]
-> The DOL this repository builds can be shifted! Meaning you are able to now add and remove code as you see fit, for modding or research purposes.
+## Install and set up
 
-It builds `main.dol`:
+1. Install `melee.pkg` with the Package Manager on the XMB.
+2. Copy your disc image to `/dev_hdd0/game/MELE00001/USRDIR/games/` or to `/dev_usbXXX/games/` on a USB drive.
+   Subfolders are fine.
+3. Start **Super Smash Bros: Melee** from the Game column.
 
-|Version|Game ID|SHA-1
--|-|-
-1.02|`GALE01`|`08e0bf20134dfcb260699671004527b2d6bb1a45`
+**Melee-PS3 does not include any game data.** You need your own disc of the US version, `GALE01` revision 2 (1.02).
 
-# Dependencies
+Supported disc formats: `.iso`, `.gcm`, `.ciso`, or an extracted disc folder (`sys/` and `files/`).
 
-## Windows:
-On Windows, it's **highly recommended** to use native tooling. WSL or msys2 are **not** required.
-When running under WSL, [objdiff](#diffing) is unable to get filesystem notifications for automatic rebuilds.
+| Path | Content |
+|---|---|
+| `/dev_hdd0/game/MELE00001/USRDIR/games/` | Disc images. |
+| `/dev_hdd0/game/MELE00001/USRDIR/options.txt` | Settings from the PS3 menu. |
+| `/dev_hdd0/game/MELE00001/USRDIR/disc.txt` | Optional. A game ID or a path to choose the disc. Without it, the first `GALE01` revision 2 disc is used. |
+| `/dev_hdd0/game/MELE00001/USRDIR/card/` | Memory card saves, as GCI files. |
 
-- Install [Python](https://www.python.org/downloads/) and add it to `%PATH%`.
-  - Also available from the [Windows Store](https://apps.microsoft.com/store/detail/python-311/9NRWMJP3717K).
-- Download [ninja](https://github.com/ninja-build/ninja/releases) and add it to `%PATH%`.
-  - Quick install via pip: `pip install ninja`
+## Controls
 
-## macOS:
-- Install [ninja](https://github.com/ninja-build/ninja/wiki/Pre-built-Ninja-packages):
-  ```
-  brew install ninja
-  ```
-- Install [Game Porting Toolkit](https://github.com/Gcenx/homebrew-wine) (the `wine-crossover` cask was removed from this tap in favor of this one):
-  ```
-  brew install --cask gcenx/wine/game-porting-toolkit
-  ```
+### DualShock 3
 
-After OS upgrades, if macOS complains about `Game Porting Toolkit.app` being unverified, you can unquarantine it using:
+| Input | GameCube |
+|---|---|
+| Left stick | Control stick |
+| Right stick | C-stick |
+| **Cross** | A |
+| **Square** | B |
+| **Circle** | X |
+| **Triangle** | Y |
+| **R1** | Z |
+| **L2 / R2** | L / R (analog) |
+| D-pad | D-pad |
+| **Start** | Start |
+| **Select** | PS3 menu |
+
+### GameCube controller
+
+Plug the Wii U GameCube adapter into a USB port. No setup is needed. Rumble works when the adapter's power plug is
+connected. To open the PS3 menu, hold **Z** and press **D-pad Up**.
+
+## PS3 menu
+
+Press **Select** on a DualShock 3, or hold **Z** and press **D-pad Up** on any controller. The menu opens only
+outside matches. **B**, **Start** or **Select** close it. Settings are saved to `options.txt`.
+
+| Option | Effect |
+|---|---|
+| Widescreen | 16:9 rendering. Letterboxed on a 4:3 TV. |
+| Unlock All | Unlocks all characters, stages, events 1-50 and trophies. |
+| Tap Jump | ON or OFF, per controller port. |
+| C-Stick | SMASH (default) or TILT, per port. TILT gives tilt attacks on the C-stick instead of smash attacks. |
+| D-Pad Swap | DualShock 3 only, per port. The D-pad acts as the control stick. |
+| Input Delay | Netplay input delay, 0-7 frames. Default 2. |
+| Netplay | Host or join an online match. |
+
+## Netplay
+
+Online 1v1 with rollback, in the style of Slippi.
+
+- Rollback only. There is no delay-based mode.
+- Save and restore of the game state run on an SPU, about 1-2 ms each.
+- A desync check compares the gameplay state of both consoles every 30 frames.
+- Each player picks their own fighter. The host picks the stage in the normal VS menus.
+- Rules are the host's VS rules.
+
+### Play online
+
+1. Both players install the **same build**. A different build refuses the pairing.
+2. Host: open the PS3 menu, go to **NETPLAY**, choose **HOST**, press **A**. The row shows an 8-digit code.
+3. Joiner: go to **NETPLAY**, choose **JOIN**, press **A**, enter the host's code, press **A**.
+4. When the row shows **PLAYER 1** / **PLAYER 2**, close the menu and both start a VS match.
+
+The host opens UDP port **51000** with UPnP. If the router has no UPnP, forward UDP 51000 to the host's PS3 by hand.
+The joiner needs no setup. The code is the host's public IPv4 address in hexadecimal (`94.35.119.59` is `5E23773B`).
+
+## Compiling
+
+The build makes `ps3/build/ppu/game/melee.pkg`. The maintainer builds in Docker with `ppu-gcc` 7.2.0.
+
+### With Docker
+
+`ps3/build.sh` runs `make` in a Docker image named `ps3dev-latest:latest`. Use the same image as NotDC-PS3:
+
 ```sh
-sudo xattr -rd com.apple.quarantine '/Applications/Game Porting Toolkit.app'
+docker pull mayo2853/ps3dev-latest:latest
+docker tag mayo2853/ps3dev-latest:latest ps3dev-latest:latest
 ```
 
-## Linux:
-- Install [ninja](https://github.com/ninja-build/ninja/wiki/Pre-built-Ninja-packages).
-- For non-x86(_64) platforms: Install wine from your package manager.
-  - For x86(_64), [WiBo](https://github.com/decompals/WiBo), a minimal 32-bit Windows binary wrapper, will be automatically downloaded and used.
+On Windows, run the scripts from Git Bash with Docker Desktop.
 
-# Building
-- Clone the repository:
-  ```
-  git clone https://github.com/doldecomp/melee.git --depth=1
-  ```
-- Using [Dolphin Emulator](https://dolphin-emu.org/), find your ISO and click `Properties`. Go to the `Filesystem` tab, right-click `Disc - GALE01` and select `Extract System Data`. Choose `orig/GALE01` of this repository.
-  - To save space, only `main.dol` (and `.gitkeep`) are necessary. Other files can be deleted.
-  ![](assets/dolphin-extract.png)
-- Configure:
-  ```
-  python configure.py
-  ```
-- Build:
-  ```
-  ninja
-  ```
+### Steps
 
-# Tooling
+1. Extract your disc into the repo:
 
-We use Python for our command line tooling. It is recommended that you use a [virtual environment](https://docs.python.org/3/library/venv.html).
-
-1. Create a virtual environment.
-    ```sh
-    python -m venv --upgrade-deps '.venv'
-    ```
-1. You'll need to activate it whenever you open a new shell.
-    * Windows:
-        ```ps1
-        .venv/Scripts/Activate.ps1
-        ```
-    * Linux/macOS:
-        ```ps1
-        . .venv/bin/activate
-        ```
-1. After that, you can install or update our packages with:
-    ```sh
-    pip install -r reqs/decomp.txt
-    ```
-1. Now you can run `decomp.py` to decomp a function using [m2c](https://github.com/matt-kempster/m2c). Pass it `-h` to see all the options.
-    ```sh
-    python tools/decomp.py my_function_name
-    ```
-
-# Modding
-1. Dump the full game disc to a folder as described under [Building](#building), not just the system files.
-1. After cloning the repository, you can freely add new source files/folders under `/src`.
-1. Enable the non-matching build by running:
+   ```sh
+   python ps3/tools/datgen/extract.py Melee.iso orig/GALE01
    ```
-   python configure.py --non-matching
+
+2. Build the `.dat` schema image and generate the native `.dat` readers (the run command is in `datgen.sh`):
+
+   ```sh
+   docker build -t melee-datgen:1 ps3/tools/datgen
+   ps3/tools/datgen/datgen.sh
    ```
-1. Add each of your source files to `configure.py`. The order determines when your files are linked, but in most cases does not matter. You can create a new `MeleeLib` definition, but you don't have to. Make sure any newly created files are marked `Equivalent`.
-   ```py
-       MeleeLib(
-           "My Custom Library",
-           [
-               Object(Equivalent, "my-cool-mod/helloworld.c"),
-           ],
-       ),
-    ```
-1. Run `ninja` to build the game.
-1. Move the build DOL from `build/GALE01/main.dol` to the `sys` folder of the game directory you created.
-1. Make sure your game directory is configured under Paths in Dolphin, then launch your `main.dol` from the Games list.
 
-# Containers
-We use [nix](https://nixos.org/) for [most of our tontinuous integration](https://github.com/doldecomp/melee/blob/1ddf751b718f86933ca93a022f93f23f823a6744/.github/workflows/build.yml#L146-L265), which can be containerized under [nixos/nix](https://hub.docker.com/r/nixos/nix/) or [nix-toolbox](https://thrix.github.io/nix-toolbox/). We plan on fully migrating our CI to nix; see [issue #1368](https://github.com/doldecomp/melee/issues/1368).
+3. Build the package:
 
-# Diffing
+   ```sh
+   ./ps3/build.sh -j12 game
+   ```
 
-Once the initial build succeeds, an `objdiff.json` should exist in the project root.
+### Build commands
 
-Download the latest release from [encounter/objdiff](https://github.com/encounter/objdiff). Under project settings, set `Project directory`. The configuration should be loaded automatically.
+| Command | Result |
+|---|---|
+| `./ps3/build.sh game` | `ps3/build/ppu/game/melee.pkg` |
+| `./ps3/build.sh clean` | Deletes `ps3/build/ppu/` |
 
-Select an object from the left sidebar to begin diffing. Changes to the project will rebuild automatically: changes to source files, headers, `configure.py`, `splits.txt` or `symbols.txt`.
+Port code lives in `ps3/`. Game and SDK sources change only under `TARGET_PC` or `TARGET_PS3`, so the matching
+GameCube build stays the same. For the decompilation itself (matching build, tooling, contributing), see
+[doldecomp/melee](https://github.com/doldecomp/melee).
 
-![](assets/objdiff.png)
+## AI disclosure
 
-# Contributing
+Melee-PS3 is an AI-assisted project. The port itself was tested on real PS3 hardware.
 
-Contributions are welcome! If you're new to decomp, check out our [Getting Started guide](https://doldecomp.github.io/melee/getting_started.html). Before [opening a pull request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/proposing-changes-to-your-work-with-pull-requests/creating-a-pull-request), please read our [contributing guidelines](CONTRIBUTING.md). If you're new to Git and don't know how to create a pull request, we encourage you to [create an issue](https://github.com/doldecomp/melee/issues/new) with your decomp.me link and a maintainer will add your code to the repository.
+## Credits
 
-Most of our efforts now are directed to naming and cleanup. See our [todo list](https://doldecomp.github.io/melee/todo.html) and [cleanup index](https://doldecomp.github.io/melee/cleanup/).
-
-We're also happy to answer any questions in the `#smash-bros-melee` channel on Discord.
-
-[![Gamecube/Wii Decompilation Discord](https://discordapp.com/api/guilds/727908905392275526/widget.png?style=banner2)](https://discord.gg/hKx3FJJgrV)
-
-# FAQ
-## How is the codebase structured?
-
-The code in `src` is divided into several modules, the main one being `melee`, which is the game code.
-
-### `melee`
-The main game code is divided into several two-letter folders, which were left behind by HAL in assert messages and game data on the original disc.
-
-Short|Full|Notes
--|-|-
-`cm`|Camera|
-`db`|Debug|
-`ef`|Effect|Visual effects.
-`ft`|Fighter|The player characters.
-`gm`|Game|The main game loop.
-`gr`|Ground|Stages and other levels.
-`if`|Interface|User interface.
-`it`|Items|
-`lb`|Library|Utility functions that are often thin wrappers around `dolphin` or `baselib` code.
-`mn`|Menu|
-`mp`|Map|Related to stages and contains things like `mpcoll` (map collisions).
-`pl`|Player|As in users.
-`sc`|Scene|Menu, versus mode, single-player, etc. The game mode.
-`ty`|Toy|Trophies.
-`vi`|Visual|Cutscenes, etc.
-
-#### `melee/ft/kinds`
-
-HAL also used two-letter abbreviations for each fighter.
-
-Short|Full|Canonical English
--|-|-
-`Bo`|Zako<sup>1</sup> Boy|[Male wire frame](https://www.ssbwiki.com/Fighting_Wire_Frames#Male_Wire_Frame.2FCaptain_Falcon)
-`Ca`|Captain|Captain Falcon
-`Ch`|Crazy Hand|
-`Cl`|Child Link|Young Link
-`Co`|Common|Shared code
-`Dk`|Donkey Kong|
-`Dr`|Dr. Mario|
-`Fc`|Falco|
-`Fe`|Fire Emblem|Roy
-`Fx`|Fox|
-`Gk`|Giga Koopa|Giga Bowser
-`Gl`|Zako Girl|[Female wire frame](https://www.ssbwiki.com/Fighting_Wire_Frames#Female_Wire_Frame.2FZelda)
-`Gn`|Ganondorf|
-`Gw`|Mr. Game & Watch|
-`Kb`|Kirby|
-`Kp`|Koopa|Bowser
-`Lg`|Luigi|
-`Lk`|Link|
-`Mh`|Master Hand|
-`Mr`|Mario|
-`Ms`|Mars|Marth
-`Mt`|Mewtwo|
-`Nn`|Nana|
-`Ns`|Ness|
-`Pc`|Pichu|
-`Pe`|Peach|
-`Pk`|Pikachu|
-`Pp`|Popo|
-`Pr`|Purin|Jigglypuff
-`Sb`|Sandbag|
-`Sk`|Seak|Sheik
-`Ss`|Samus|
-`Ys`|Yoshi|
-`Zd`|Zelda|
-
-<sup>1</sup> Zako (雑魚) is Japanese for "trash mob" in video games, literally "small fish."
-
-### `sysdolphin/baselib`
-
-HAL's core internal library.
-Class|Full
--|-
-`AObj`|Animation
-`CObj`|Camera
-`DObj`|Draw/Display
-`FObj`|Frame
-`GObj`|Global/Game
-`JObj`|Joint
-`LObj`|Light
-`MObj`|Material
-`PObj`|Polygon
-`TObj`|Texture
-`RObj`|Reference
-`SObj`|Scene
-`WObj`|World
-
-### `dolphin`
-
-The [Dolphin SDK](https://wiki.raregamingdump.ca/index.php/Dolphin_SDK).
-
-### `MetroTRK`
-
-The Metrowerks Target Resident Kernel.
-
-### `MSL`
-
-The Metrowerks Standard Library.
-
-### `Runtime`
-
-The Gekko hardware runtime.
-
-## What can be done now that the game is fully decompiled?
-
-See our [FAQ](https://github.com/doldecomp/melee/wiki/FAQ).
+- [doldecomp/melee](https://github.com/doldecomp/melee) and its contributors: the decompilation this port is built on.
+- [PSL1GHT](https://github.com/ps3dev/PSL1GHT) / [ps3toolchain](https://github.com/ps3dev/ps3toolchain): PS3
+  homebrew toolchain and runtime library.
+- [Dolphin](https://github.com/dolphin-emu/dolphin): the AX HLE that the SPU audio follows.

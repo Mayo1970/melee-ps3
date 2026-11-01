@@ -1488,7 +1488,7 @@ Fixes to do, most severe first:
    the block item from `arg1->x10C[i]` and set `arg1->x134[i]`. On LP64 the `Ground` header and
    `grCastle_GroundVars10`'s 15 JObj pointers move `u.castle10.x10C` (u32) and `u.castle10.state`, so the callback
    destroys a wrong value. Fix under `TARGET_PS3`: take `Ground*` and use `gp->u.castle10.x10C[i]` (cast to the item
-   GObj) and `gp->u.castle10.state[i]`.
+   GObj) and `gp->u.castle10.state[i]`. Done 2026-11-01 (see "Cross-view audit").
 2. **Credits (crash expected, from the audit).** `gmstaffroll.c` allocates and clears `staffInfo` with
    `sizeof(struct staffInfo_t)` (0x948: 198 entries of 12 bytes) and `staffInfoSortBuf` with 0x2E68 (198 of 0x3C).
    On LP64 an entry is 24 and 0x48 bytes. `fn_801AAB74` walks all 198 entries each frame, so entries 99-197 lie in
@@ -1586,6 +1586,54 @@ A tester: the game crashes on "Race to the Finish" (Adventure stage 8), and obje
   session (depth 184928: entries without exits); its last calls are.
 - Run 69 packages: normal `.got` 0x5A58, call trace 0x6BB0, 0 `r2off` stubs each, segments as runs 67 and 68.
   Run 67's stop at the Pokemon fight's start is still unexplained (no call trace then).
+
+Cross-view audit (2026-11-01, the user's request: other freezes of run 68's kind). Five audits (items, fighter `mv`,
+fighter `u`, Ground `u`, the Pokemon fight's start), each finding checked again with ppu-gcc `offsetof` asserts
+(`build/audit_cv/`, findings in `build/brr/cv_audit.txt`):
+- Run 68's real cause: `itZako_ItemVars` starts with an 8-byte `jobj`, so `idx`, `x8` and `x14` sit 4 bytes later
+  than the enemy views that alias them. `it_8027C9D8` (every defeat and bounce) stores a sound id in `x14.z`, at +0x20:
+  the high word of Topi's ice-block link (`oldottosea.x20`) and of Birdo's owner (`kyasarin.x20`). A defeated Topi
+  then reads `it_8028ECF0(x20)` and faults. Host repro: `MELEE_HOST_ADV="8/0x49"`, up and A every 40 retraces: SIGSEGV
+  in `it_8028ECF0` from `it_802E35CC` in 3 of 3 seeds. The same shift lost the generator slot hand-off (`idx` against
+  `nokonoko.x4`, `patapata.x4`, `zgshell.xDD8`: extra enemies in Mushroom Kingdom) and the bounce counter reset.
+  Fix under `TARGET_PS3`: `jobj` is a `u32` (`itCommonItems.h`; `itzako.c` stores it through `uintptr_t`, `itmato.c`
+  reads the targets' JObj from it), so `idx`/`x8`/`x14` are at the GameCube offsets 4/8/0x14 (asserted). The view's
+  fields from `x20` on are not used by name. Host with the fix: Icicle Mountain 3 seeds, Mushroom Kingdom, Mushroom
+  Kingdom II 2 seeds, no fault.
+- Peach's Castle switch blocks (fix 1 of "Unlocks, challengers and saves"): `grCastle_801D0550_sub` and
+  `grCastle_801D06CC_sub` use `u.castle10.x10C[i]`/`state[i]` under `TARGET_PS3`. Host: 3 CPU matches, no panic.
+- Not fixed, wrong state only (no freeze): see "Bugfixes to do" below. Clean: fighter `u` views (all
+  kind-guarded), the other item views, Ground views except the castle, and the Pokemon fight's window (no
+  candidate; maybe stale memory from earlier stages).
+- Run 70 packages: normal `.got` 0x5A58, call trace 0x6BB0, 0 `r2off` stubs each.
+
+## Bugfixes to do (2026-11-01, from the cross-view audit)
+
+Each one checked with ppu-gcc `offsetof` asserts (`build/audit_cv/`); details in `build/brr/cv_audit.txt`. None of
+them freezes the game; the fixes keep the MWCC build unchanged.
+1. **Item throw out of a dash or run shield (`ftCo_ItemThrow.c` 130, 137-138, `ftCo_8009515C`).** It reads the
+   shield's throw timer through `mv.co.itemthrow.x20`. On the GameCube that is `guard.x20` (+0x20); with LP64 the
+   unused `UNK_T` fields `itemthrow.x18`/`x1C` move it to +0x28, which no shield writes (stale data from earlier
+   states). Effect: the dash throw from a run or dash shield is lost, and a stale nonzero value gives LightThrowDash
+   where the stick throw belongs; the decrement writes +0x28 each frame. Runs on every shield frame, all modes.
+   Fix in `ftCommon/types.h`, `ftCommon_MotionVars_itemthrow`: under `TARGET_PS3` declare `x18` and `x1C` as `s32`
+   (as `ys.guard.x1C` already is). Alternative: test and decrement `mv.co.guard.x20` in `ftCo_8009515C`.
+2. **Escape from Kirby's forward and back throws (`ftCo_Thrown.c` 79, `ftCo_800DE5A4`).** It reads the buffered
+   jump escape through `mv.co.thrown.xC`. On the GameCube that is `capturewait.xC` (+0x0C); with LP64 the unused
+   `UNK_T thrown.x8` moves it to +0x10, which the grab never writes. Effect: a stale nonzero byte sends the victim to
+   CaptureJump instead of CaptureCut, and a real buffered jump escape is lost. Runs only while a victim mashes out of
+   Kirby's forward or back throw. Fix in `ftCommon/types.h`, `ftCommon_MotionVars_thrown`: under `TARGET_PS3` declare
+   `x8` as `s32`. Alternative: read `mv.co.capturewait.xC` in `ftCo_800DE5A4`.
+3. **Debug coin pickup range (`itdraw.c` 84-88, `it_8026ECE0`), low priority.** For the Unk4 coin it reads the
+   flags and capsule through the `it_266F` view (+0x28, +0x2C with LP64) instead of `it_2E5A.x18` (+0x18) and
+   `it_2E5A.sub` (+0x20). Effect: the debug bubble never draws. Runs only with the debug menu's "Show coin pickup
+   range", never in normal play. Fix: under `TARGET_PS3` read `it_2E5A.x18` and pass `lbColl_8000A10C` a local
+   `lbColl_8000A10C_arg0_t` filled from `it_2E5A.sub` (`x0`, `x8`, `x14`).
+4. **Run 67's stop at the start of the Adventure Pokemon fight (cause unknown).** After the loads and the music,
+   the main thread stopped with no logic frame and no call (a PPU fault, by its signature). Not reproduced on the
+   host (27 seeds, difficulties 0-4, Pichu and Jigglypuff unlocked); the audit found no cross-view access in that
+   window. Lead: stale memory left by stages 1-6 (Fighter and Ground blocks are not cleared). Next time: the call
+   trace package (its last calls name the place).
 
 ## Open issues (2026-10-29)
 

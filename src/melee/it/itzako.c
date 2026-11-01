@@ -88,7 +88,11 @@ Item_GObj* it_8027B5B0(ItemKind kind, Vec3* pos, HSD_JObj* jobj, Vec3* vel,
     }
     if (gobj != NULL) {
         ip = GET_ITEM(gobj);
+#ifdef TARGET_PS3
+        ip->xDD4_itemVar.zako.jobj = (u32) (uintptr_t) jobj;
+#else
         ip->xDD4_itemVar.zako.jobj = jobj;
+#endif
         ip->xDD4_itemVar.zako.idx = -1;
         ip->xDD4_itemVar.zako.x14.z = 0;
         ip->x378_itemColl.x34_flags.b1234 = 3;

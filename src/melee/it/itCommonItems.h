@@ -1387,7 +1387,12 @@ typedef struct itPokemonSpawn_DatAttrs {
 ASSERT_SIZE(itPokemonSpawn_DatAttrs, 0x2BC);
 
 typedef struct itZako_ItemVars {
+#ifdef TARGET_PS3
+    // 4 bytes, so idx, x8 and x14 keep the GameCube offsets the enemy views alias (x14.z hit Topi's and Birdo's x20).
+    /* ip+DD4 */ u32 jobj;
+#else
     /* ip+DD4 */ HSD_JObj* jobj;
+#endif
     /* ip+DD8 */ s32 idx;
     /* ip+DDC */ Vec3 x8;
     /* ip+DE8 */ S32Vec3 x14;

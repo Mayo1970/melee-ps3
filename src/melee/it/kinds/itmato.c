@@ -45,11 +45,22 @@ bool itMato_UnkMotion0_Anim(Item_GObj* item_gobj)
 void itMato_UnkMotion0_Phys(Item_GObj* item_gobj)
 {
     Item* it = GET_ITEM(item_gobj);
+#ifdef TARGET_PS3
+    // mato.x0 is zako.jobj, a u32 here (itCommonItems.h).
+    HSD_JObj* jobj = (HSD_JObj*) (uintptr_t) it->xDD4_itemVar.zako.jobj;
+
+    if (jobj != NULL) {
+        Vec3 pos;
+        lb_8000B1CC(jobj, NULL, &pos);
+        it->pos = pos;
+    }
+#else
     if (it->xDD4_itemVar.mato.x0 != NULL) {
         Vec3 pos;
         lb_8000B1CC(it->xDD4_itemVar.mato.x0, NULL, &pos);
         it->pos = pos;
     }
+#endif
 }
 
 bool itMato_UnkMotion0_Coll(Item_GObj* item_gobj)
