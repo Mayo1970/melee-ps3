@@ -6,6 +6,10 @@
 #include <string.h>
 
 #include <dolphin/os.h>
+#include <melee/gm/gm_1601.h>
+#include <melee/gm/gm_16F1.h>
+#include <melee/gm/gmmain_lib.h>
+#include <melee/ty/toy.h>
 #include <ps3_netplay.h>
 #include <ps3_options.h>
 #include <sysdolphin/baselib/hsd_3915.h>
@@ -33,7 +37,7 @@
 #define COLOR_DIM 0xFFA0A8B8u
 #define COLOR_CURSOR 0xFF3050A0u
 
-enum { ROW_WIDESCREEN, ROW_TAP_JUMP, ROW_CSTICK, ROW_DPAD, ROW_DELAY, ROW_NETPLAY, ROWS };
+enum { ROW_WIDESCREEN, ROW_UNLOCK, ROW_TAP_JUMP, ROW_CSTICK, ROW_DPAD, ROW_DELAY, ROW_NETPLAY, ROWS };
 enum { DIR_UP = 1, DIR_DOWN = 2, DIR_LEFT = 4, DIR_RIGHT = 8 };
 
 Ps3Options ps3_options = {
@@ -41,6 +45,8 @@ Ps3Options ps3_options = {
 };
 
 static volatile bool open, in_match;
+// UNLOCK ALL asked on the pad thread; the game thread runs it (ps3_menu_frame).
+static volatile bool unlock_pending;
 static volatile int row, col;
 // NETPLAY: hosting or joining chosen with left and right; the host code being entered, and its digit under the cursor.
 static volatile bool join_chosen, entering;
@@ -179,11 +185,57 @@ static void draw_netplay(int x, int y)
     text(MARGIN, y + LINE_H, why, COLOR_DIM);
 }
 
+#define UNLOCK_ENTRIES 0x42
+#define UNLOCK_EVENTS 50
+
+// Trophies are left out: their region list is in TyDatai, loaded only on the game thread.
+static bool all_unlocked(void)
+{
+    int i;
+
+    if (!gm_80164ABC() || !gm_80164600()) {
+        return false;
+    }
+    for (i = 0; i < UNLOCK_ENTRIES; i++) {
+        if (!gmMainLib_8015D94C(i)) {
+            return false;
+        }
+    }
+    for (i = 0; i < UNLOCK_EVENTS; i++) {
+        if (!gmMainLib_8015CEFC(i)) {
+            return false;
+        }
+    }
+    return true;
+}
+
+// gmMainLib_8015FA34's debug unlock without the notices, events 1-50 as cleared (the event list opens by clears),
+// and this region's trophies as the game gives them. The card keeps it all at the game's next save.
+static void unlock_all(void)
+{
+    int i;
+
+    gm_80164F18();
+    gm_8016468C();
+    gm_8017297C();
+    fn_8017280C();
+    for (i = 0; i < UNLOCK_EVENTS; i++) {
+        gmMainLib_8015CEB4(i);
+    }
+    Toy_803124BC();
+    for (i = 0; i < TY_TROPHY_COUNT; i++) {
+        if (Toy_80304CC8(i) && Toy_803048C0(i) == 0) {
+            Toy_SetUnlockState(i, true);
+        }
+    }
+    gm_801741FC();
+}
+
 static void draw(void)
 {
-    static const char* const labels[ROWS] = { "WIDESCREEN", "TAP JUMP", "C-STICK", "D-PAD SWAP", "INPUT DELAY",
-                                              "NETPLAY" };
-    static const int lines[ROWS] = { 2, 5, 6, 7, 9, 10 };
+    static const char* const labels[ROWS] = { "WIDESCREEN", "UNLOCK ALL", "TAP JUMP", "C-STICK", "D-PAD SWAP",
+                                              "INPUT DELAY", "NETPLAY" };
+    static const int lines[ROWS] = { 2, 3, 5, 6, 7, 9, 10 };
     char port[3] = "P1", v[12];
     int r, c;
 
@@ -202,8 +254,13 @@ static void draw(void)
             draw_netplay(MARGIN + LABEL_W, y);
             continue;
         }
-        if (r == ROW_DELAY) {
-            snprintf(v, sizeof(v), ps3_options.netplay_delay == 1 ? "1 FRAME" : "%d FRAMES", ps3_options.netplay_delay);
+        if (r == ROW_DELAY || r == ROW_UNLOCK) {
+            if (r == ROW_UNLOCK) {
+                snprintf(v, sizeof(v), unlock_pending ? "WAIT" : all_unlocked() ? "DONE" : "PRESS A");
+            } else {
+                snprintf(v, sizeof(v), ps3_options.netplay_delay == 1 ? "1 FRAME" : "%d FRAMES",
+                         ps3_options.netplay_delay);
+            }
             if (r == row) {
                 fill(MARGIN + LABEL_W, y - 2, 2 * COL_W - 4, LINE_H, COLOR_CURSOR);
             }
@@ -257,6 +314,15 @@ void ps3_menu_init(void)
 void ps3_menu_match(bool on)
 {
     in_match = on;
+}
+
+void ps3_menu_frame(void)
+{
+    if (unlock_pending && !in_match) {
+        unlock_all();
+        unlock_pending = false;
+        serial++;
+    }
 }
 
 static void close_menu(void)
@@ -333,12 +399,14 @@ static void navigate(u16 down, u8 dir)
             toggle((dir & DIR_LEFT) ? -1 : 1);
         } else if (row == ROW_NETPLAY) {
             join_chosen = !join_chosen;
-        } else {
+        } else if (row != ROW_UNLOCK) {
             col = (col + ((dir & DIR_LEFT) ? 3 : 1)) % 4;
         }
     } else if (down & PAD_BUTTON_A) {
         if (row == ROW_NETPLAY) {
             netplay();
+        } else if (row == ROW_UNLOCK) {
+            unlock_pending = true;
         } else {
             toggle(1);
         }

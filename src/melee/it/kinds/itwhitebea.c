@@ -287,7 +287,13 @@ void it_802E3784(Item_GObj* gobj, Item_GObj* ref_gobj)
 void it_802E37A4(Item_GObj* gobj)
 {
     if (gobj != NULL) {
+#ifdef TARGET_PS3
+        // The pusher's link to its ice block (whitebea and oldottosea x20, both at +0x20); with LP64 the freeze
+        // view's x20 is at +0x28, so the link would stay and point at a freed block.
+        GET_ITEM(gobj)->xDD4_itemVar.whitebea.x20 = NULL;
+#else
         GET_ITEM(gobj)->xDD4_itemVar.freeze.x20 = NULL;
+#endif
     }
 }
 

@@ -1428,6 +1428,12 @@ Done; hardware test SUCCESS (2026-11-01, the user):
   Builds: `./build.sh -j8 game` PASS. Hardware test SUCCESS (2026-11-01, the user).
 - Builds: `./build.sh -j8 game`: `.got` 0x5330, 0 `r2off` stubs, about 25.0 MB in loaded segments; host game
   build, `scenetest` PASS, `progtest` 3000 of 3000.
+- UNLOCK ALL (2026-11-01, the user; events 1-50 only, by the user's choice): A sets a request, the scene loop runs it on
+  the game thread (`ps3_menu_frame` in `gm_801A4D34`, outside matches). It runs `gmMainLib_8015FA34`'s debug unlock
+  without notices (`gm_80164F18`, `gm_8016468C`, `gm_8017297C`, `fn_8017280C`, `gm_801741FC`), marks events 0-49
+  cleared (`gmMainLib_8015CEB4`; event 51 also needs a fighter's 1P clear flag, not written), and gives each trophy of
+  the region (`Toy_803124BC`, then `Toy_SetUnlockState` where `Toy_80304CC8`). Build `./build.sh -j8 game` PASS:
+  `.got` 0x5A58, 0 `r2off` stubs. Hardware test pending.
 
 ## Unlocks, challengers and saves: investigation (2026-11-01)
 
@@ -1493,7 +1499,7 @@ Fixes to do, most severe first:
 3. **`lb_800138EC` has no `return` (`lbspdisplay.c` 652-714).** Declared `HSD_GObj*`, it ends after
    `GObj_SetupGXLinkMax`. `gmregclear.c:1062` keeps the result in `state->x2C`, and `lb_800138D8`/`lb_800138CC`
    write through its user data: the bonus screen after each 1P stage clear. It works only while r3 still holds
-   `gobj`. Fix: `return gobj;` under `TARGET_PS3`.
+   `gobj`. Fix: `return gobj;` under `TARGET_PS3`. Done 2026-11-01 (see "Race to the Finish" below).
 4. **Card file I/O while the interrupt lock is held (hitches, lost pad samples, audio dropouts at each save).**
    HSD's ring (`card.c` `hsd_803AAA48`) and `lbcardnew.c`'s mount, format, delete and rename tasks call the CARD
    functions with interrupts off. `ps3/sdk/card.c` does the file I/O in the call (`save()`: fopen, fseek, fwrite,
@@ -1535,6 +1541,51 @@ Not run yet (each needs a host hook, so a build):
   caller sets it before the call) gives an idle CPU that a pad script of smash attacks can KO.
 - The 1P clears (bonus screen, credits, ending movie, trophy, the challenge after them), event unlocks, the trophy
   lottery. A hook that ends Classic as cleared, or enters `GM_GOVER`, would reach fixes 2 and 3 on the host.
+
+## Race to the Finish: tester report (2026-11-01)
+
+A tester: the game crashes on "Race to the Finish" (Adventure stage 8), and objects disappear. No console log.
+- Host hook: `MELEE_HOST_ADV="ckind/scene"` (`tests/host_start.c`, `--wrap=gm_SetGameModeStateId`) starts Adventure
+  at a scene without the CSS: 0x38 the F-Zero cutscene (`vi0801.c`), 0x39 the intro (START goes on), 0x3A the race.
+- Host runs (Mario, `build/brr/`): cutscene, intro, race, goal, stage clear, Mute City, game over, continue, all
+  without a fault after the fix below. A trace build (`build/brr/race_trace.c`, EXTRA_SRCS, `--wrap` on
+  `Ground_GetP1Fighter`) keeps the stocks and puts the fighter on goal point 0x99 (x 2162.8).
+- Fault found: at the goal, `fn_80180630` (`GmRegClr.usd`) -> `lb_800138D8` on `lb_800138EC`'s missing return
+  (fix 3 above): SIGSEGV at address 0x48 on the host. On the console build (ppu-gcc 7.2) r3 still holds `gobj`
+  (`GObj_SetupGXLinkMax` and `GObj_GXReorder` never change it), so this is probably not the tester's crash.
+- Ruled out on the host: the vertex cache and SPU conversion (`GX_VCACHE_CHECK`, `GX_SPU_CHECK`: 0 differ in 4.7
+  million cached draws), the `.dat` pool (at most 36 MB of 64 in this section, 48 MB in 15 minutes of demos), the
+  program caches (96 vertex and 97 fragment programs in this section), the RSX attribute formats (only F32 normals
+  are new against Fountain of Dreams, Big Blue and Pokemon Stadium runs), the other 36 `-Wreturn-type` and 8
+  `-Warray-bounds` sites of the console build (each checked on its disassembly: harmless), and audits of the stage,
+  cars, cutscene, ground, camera, race mode and renderer code (no LP64 or GCC fault).
+- Open: the console crash and the vanishing objects. Wanted from the tester: where it crashes (cutscene, intro,
+  race, goal), widescreen on or off, which objects vanish, a UDP log. Widescreen only (verified, not fixed):
+  `HSD_CObjEraseScreen` erases only the middle 4:3 (`xfgen.c` scales x by 0.75), so the side bands keep the copy's
+  clear colour and depth; in `vi0801.c` far geometry hidden behind the mid-plane erase shows in the bands only.
+- Package for the user's test (2026-11-01): `./build.sh -j12 game` PASS, `.got` 0x5A58, 0 `r2off` stubs, about 25.0 MB
+  in loaded segments; it also holds the uncommitted UNLOCK ALL work. Hardware test pending.
+- Melee run 67 (2026-11-01, `build/run67_udp.txt`): Adventure from stage 1 (Captain Falcon, costume Wh); stages 1-6
+  and their clear screens pass. Stage 7, the Pokemon fight (Pikachu, Pichu, Jigglypuff team): the intro, the loads
+  and the music (`pokesta.hps`), then from heartbeat 731 the main thread runs no logic frame, no render and no
+  interrupt disable, sleeps on nothing, the sampler says "other" (outside the GObj procs): a loop in the game code
+  or a lock, after the match's loads. GP and RSX idle, audio plays, no panic. The race was not reached.
+- Host, not reproduced: that fight from scene 0x31 (and 0x30 with START) with Pichu and Jigglypuff unlocked
+  (`build/brr/unlock_trace.c`), difficulties 0-4, 27 seeds, the L-held alternate music. No exit-less loop exists
+  only in the console build (`build/brr/inf_loops.py` over both builds' objects). Next: the call trace build.
+- Run 68 package (call trace, `build/ppu_calltrace/game/melee.pkg`): `.got` 0x6BB0, 0 `r2off` stubs, about 29.6 MB in
+  loaded segments; symbols in `build/calltrace_syms.txt`. Same sources as run 67 (UNLOCK ALL included).
+- Melee run 68 (2026-11-01, `build/run67_udp.txt` from its second "melee: boot"; copy `build/brr/run68.txt`):
+  stages 1-9 pass (Pokemon fight, the race, its goal and clear, Mute City, Onett). Stage 10, Icicle Mountain: the
+  main thread stops after `it_8028ECF0` -> `HSD_GObjGetUserData` (last calls), from the polar bear's
+  `itwhitebea.c` 258, with the music on: a fault on a freed ice block (a PPU fault stops only that thread).
+- Cause: `it_802E37A4` clears the pusher's link (polar bear `whitebea.x20`, Topi `oldottosea.x20`, both at +0x20)
+  through the freeze view, whose `x20` is at +0x28 with LP64 (`unk_1C` became 8 bytes). The link stays after the
+  block is gone, and the clear zeroes the pusher's `x24`/`x28` instead. Fix under `TARGET_PS3`: clear
+  `whitebea.x20` (offsets checked with ppu-gcc). The call trace's open-call stack is not usable after a long
+  session (depth 184928: entries without exits); its last calls are.
+- Run 69 packages: normal `.got` 0x5A58, call trace 0x6BB0, 0 `r2off` stubs each, segments as runs 67 and 68.
+  Run 67's stop at the Pokemon fight's start is still unexplained (no call trace then).
 
 ## Open issues (2026-10-29)
 

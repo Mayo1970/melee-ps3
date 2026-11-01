@@ -231,7 +231,7 @@ ifeq ($(TOOLCHAIN),linux)
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_host.c tests/sys_host.c tests/udplog_host.c tests/audio_host.c \
                   audio/ax_spu.c tests/rsxdev_soft.c tests/rsx_interp.c tests/pad_host.c tests/host_start.c \
                   tests/vxspu_host.c gx/vxspu.c tests/rbspu_host.c net/rbspu.c tests/link_host.c)
-HOST_WRAP := -Wl,--wrap=gm_ChangeGameModeAfterCurrentScene,--wrap=gm_LoadAnnouncer
+HOST_WRAP := -Wl,--wrap=gm_ChangeGameModeAfterCurrentScene,--wrap=gm_LoadAnnouncer,--wrap=gm_SetGameModeStateId
 endif
 GAME_OBJ = $(patsubst %.c,$(GAME_DIR)/%.o,$(1))
 GAME_OBJS := $(call GAME_OBJ,$(GAME_SRCS) $(GAME_SDK_SRCS) $(GAME_PORT_SRCS) $(GAME_CELL_SRCS) $(DAT_SRCS))

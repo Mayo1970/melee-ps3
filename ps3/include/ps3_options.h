@@ -17,5 +17,7 @@ extern Ps3Options ps3_options;
 
 // fn_8016E730 has set up a match (on), the scene loop ended (off). The menu closes at a match start.
 void ps3_menu_match(bool on);
+// The scene loop, on the game thread before each retrace's logic frames: runs UNLOCK ALL when the menu asked for it.
+void ps3_menu_frame(void);
 
 #endif

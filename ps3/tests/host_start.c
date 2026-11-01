@@ -1,5 +1,5 @@
-// The host build's start into a match (--wrap on the two calls below). MELEE_HOST_MATCH="ckind[:color],.../
-// stkind[/item_freq[/item_mask]]": after the boot, the debug VS mode with these fighters, player 0 human.
+// The host build's start (--wrap on the calls below). MELEE_HOST_MATCH="ckind[:color],.../stkind[/item_freq[/mask]]":
+// debug VS, player 0 human. MELEE_HOST_ADV="ckind/scene": Adventure from that scene (0x38: F-Zero), no CSS.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -7,7 +7,10 @@
 #include <dolphin/os.h>
 #include <melee/gm/gm_1A3F.h>
 #include <melee/gm/gm_1601.h>
+#include <melee/gm/gmmain_lib.h>
+#include <melee/gm/gmregclear.h>
 #include <melee/gm/gmvsmelee.h>
+#include <melee/gm/types.h>
 #include <melee/mn/types.h>
 #include <melee/pl/forward.h>
 #include <ps3_netplay.h>
@@ -15,6 +18,7 @@
 
 void __real_gm_ChangeGameModeAfterCurrentScene(int pending_mode);
 void __real_gm_LoadAnnouncer(void);
+void __real_gm_SetGameModeStateId(u8 id);
 
 static bool booted;
 
@@ -23,12 +27,20 @@ static const char* match(void)
     return getenv("MELEE_HOST_MATCH");
 }
 
+static const char* adventure(void)
+{
+    return getenv("MELEE_HOST_ADV");
+}
+
 // The first mode change is the boot's, to the title or the memory card scene.
 void __wrap_gm_ChangeGameModeAfterCurrentScene(int pending_mode)
 {
     if (!booted && match() != NULL) {
         OSReport("host_start: mode %d becomes debug VS (%d)\n", pending_mode, GM_DEBUG_VS);
         pending_mode = GM_DEBUG_VS;
+    } else if (!booted && adventure() != NULL) {
+        OSReport("host_start: mode %d becomes Adventure (%d)\n", pending_mode, GM_ADVENTURE);
+        pending_mode = GM_ADVENTURE;
     }
     // MELEE_HOST_NET_HOST, or MELEE_HOST_NET_JOIN=<code>: the boot hosts or joins, so the match is a netplay one.
     if (!booted && getenv("MELEE_HOST_NET_HOST") != NULL) {
@@ -38,6 +50,38 @@ void __wrap_gm_ChangeGameModeAfterCurrentScene(int pending_mode)
     }
     booted = true;
     __real_gm_ChangeGameModeAfterCurrentScene(pending_mode);
+}
+
+// Adventure's on_load starts at its CSS (0x70); fill in what the CSS's exit would, and start at the scene.
+void __wrap_gm_SetGameModeStateId(u8 id)
+{
+    static bool done;
+    struct gmm_x0_528_t* css = gmMainLib_8015CDD4();
+    UnkAdventureData* data = gm_GetAdventureData();
+    char buf[64];
+    char* save = NULL;
+    char* scene;
+
+    if (done || adventure() == NULL || id != 0x70) {
+        __real_gm_SetGameModeStateId(id);
+        return;
+    }
+    done = true;
+    snprintf(buf, sizeof(buf), "%s", adventure());
+    css->c_kind = (s8) atoi(strtok_r(buf, "/", &save));
+    scene = strtok_r(NULL, "/", &save);
+    id = scene != NULL ? (u8) strtoul(scene, NULL, 0) : 0;
+    data->x0.x0.ckind = css->c_kind;
+    data->x0.x0.color = css->color;
+    data->x0.x0.cpu_level = css->cpu_level;
+    data->x0.x0.stocks = css->stocks;
+    data->x0.x0.nametag = css->nametag;
+    gm_80168F88();
+    if (getenv("MELEE_HOST_SEED") != NULL) {
+        *HSD_RandSeedPtr = (u32) strtoul(getenv("MELEE_HOST_SEED"), NULL, 0);
+    }
+    OSReport("host_start: Adventure as ckind %d from scene %#x, RNG seed %#x\n", css->c_kind, id, *HSD_RandSeedPtr);
+    __real_gm_SetGameModeStateId(id);
 }
 
 // onEnterDebugVs calls this last, after it fills gmVsMelee_StartData.

@@ -395,6 +395,9 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
             gmMainLib_8046B0F0.resetting = true;
             break;
         }
+#ifdef TARGET_PS3
+        ps3_menu_frame();
+#endif
 
         for (i = 0; i < pad_queue_count; i++) {
 #ifdef TARGET_PS3

@@ -711,6 +711,10 @@ HSD_GObj* lb_800138EC(HSD_ImageDesc* img, GObj_RenderFunc render_func,
     } else {
         GObj_SetupGXLinkMax(gobj, render_func, prio);
     }
+#ifdef TARGET_PS3
+    // The DOL returns gobj only because r3 still holds it; GCC need not.
+    return gobj;
+#endif
 }
 
 HSD_CObj* lb_80013B14(HSD_CameraDescPerspective* desc)
