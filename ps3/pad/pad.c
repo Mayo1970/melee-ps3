@@ -6,6 +6,7 @@
 #include <dolphin/pad.h>
 #include <dolphin/vi.h>
 #include <ps3_netplay.h>
+#include <ps3_options.h>
 
 #include "../os/diag.h"
 #include "gcadapter.h"
@@ -14,6 +15,8 @@
 
 // L and R also click at the end of their travel.
 #define TRIGGER_CLICK 230
+// With the D-pad swap, the left stick presses a D-pad direction past half its travel.
+#define SWAP_DPAD 64
 
 static const struct {
     unsigned ps3;
@@ -66,7 +69,7 @@ static u8 gc_trigger(unsigned char v, unsigned char rest)
     return v > rest ? (u8) (v - rest) : 0;
 }
 
-static void read_ds3(PADStatus* s, const Ps3Pad* p)
+static void read_ds3(PADStatus* s, const Ps3Pad* p, bool swap)
 {
     size_t i;
 
@@ -86,6 +89,15 @@ static void read_ds3(PADStatus* s, const Ps3Pad* p)
     s->stickY = axis(p->ly, true);
     s->substickX = axis(p->rx, false);
     s->substickY = axis(p->ry, true);
+    if (swap) {
+        s8 x = s->stickX, y = s->stickY;
+
+        s->button &= ~(PAD_BUTTON_LEFT | PAD_BUTTON_RIGHT | PAD_BUTTON_UP | PAD_BUTTON_DOWN);
+        s->button |= (x < -SWAP_DPAD ? PAD_BUTTON_LEFT : 0) | (x > SWAP_DPAD ? PAD_BUTTON_RIGHT : 0) |
+                     (y > SWAP_DPAD ? PAD_BUTTON_UP : 0) | (y < -SWAP_DPAD ? PAD_BUTTON_DOWN : 0);
+        s->stickX = (s8) ((p->buttons & PS3_PAD_RIGHT) ? 127 : (p->buttons & PS3_PAD_LEFT) ? -127 : 0);
+        s->stickY = (s8) ((p->buttons & PS3_PAD_UP) ? 127 : (p->buttons & PS3_PAD_DOWN) ? -127 : 0);
+    }
     s->triggerLeft = p->l2;
     s->triggerRight = p->r2;
     s->analogA = p->cross;
@@ -170,7 +182,7 @@ u32 PADRead(PADStatus* status)
         if (gc[chan].connected) {
             read_gc(s, &gc[chan], chan);
         } else if (chan_ds3[chan] >= 0) {
-            read_ds3(s, &pads[chan_ds3[chan]]);
+            read_ds3(s, &pads[chan_ds3[chan]], ps3_options.dpad_swap[chan]);
         } else {
             s->err = PAD_ERR_NO_CONTROLLER;
             continue;

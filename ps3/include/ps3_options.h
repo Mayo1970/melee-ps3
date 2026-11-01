@@ -8,6 +8,7 @@ typedef struct Ps3Options {
     bool widescreen;      // the picture at 16:9; the render only, the logic camera stays at 4:3
     bool tap_jump[4];     // per port: up on the control stick jumps
     bool cstick_tilts[4]; // per port: the C-stick gives tilts instead of smash attacks
+    bool dpad_swap[4];    // per port, DS3 pads only: the D-pad tilts the control stick, the left stick is the D-pad
     int netplay_delay;    // frames between a netplay input and its frame (0 to 7)
 } Ps3Options;
 

@@ -18,7 +18,7 @@
 
 // The rows are a multiple of 16 pixels (64 bytes), as the RSX's linear textures want.
 #define IMG_W 400
-#define IMG_H 256
+#define IMG_H 272
 #define CELL_W 10
 #define LINE_H 18
 #define MARGIN 12
@@ -33,10 +33,12 @@
 #define COLOR_DIM 0xFFA0A8B8u
 #define COLOR_CURSOR 0xFF3050A0u
 
-enum { ROW_WIDESCREEN, ROW_TAP_JUMP, ROW_CSTICK, ROW_DELAY, ROW_NETPLAY, ROWS };
+enum { ROW_WIDESCREEN, ROW_TAP_JUMP, ROW_CSTICK, ROW_DPAD, ROW_DELAY, ROW_NETPLAY, ROWS };
 enum { DIR_UP = 1, DIR_DOWN = 2, DIR_LEFT = 4, DIR_RIGHT = 8 };
 
-Ps3Options ps3_options = { false, { true, true, true, true }, { false, false, false, false }, 2 };
+Ps3Options ps3_options = {
+    false, { true, true, true, true }, { false, false, false, false }, { false, false, false, false }, 2
+};
 
 static volatile bool open, in_match;
 static volatile int row, col;
@@ -76,6 +78,8 @@ static void load(void)
             load_flags(ps3_options.tap_jump, v);
         } else if (sscanf(line, "cstick_tilts=%4s", v) == 1) {
             load_flags(ps3_options.cstick_tilts, v);
+        } else if (sscanf(line, "dpad_swap=%4s", v) == 1) {
+            load_flags(ps3_options.dpad_swap, v);
         } else if (sscanf(line, "netplay_delay=%1s", v) == 1 && v[0] >= '0' && v[0] <= '7') {
             ps3_options.netplay_delay = v[0] - '0';
         }
@@ -99,6 +103,7 @@ static void save(void)
     fprintf(f, "widescreen=%c\n", ps3_options.widescreen ? '1' : '0');
     save_flags(f, "tap_jump", ps3_options.tap_jump);
     save_flags(f, "cstick_tilts", ps3_options.cstick_tilts);
+    save_flags(f, "dpad_swap", ps3_options.dpad_swap);
     fprintf(f, "netplay_delay=%d\n", ps3_options.netplay_delay);
     fclose(f);
 }
@@ -176,8 +181,9 @@ static void draw_netplay(int x, int y)
 
 static void draw(void)
 {
-    static const char* const labels[ROWS] = { "WIDESCREEN", "TAP JUMP", "C-STICK", "INPUT DELAY", "NETPLAY" };
-    static const int lines[ROWS] = { 2, 5, 6, 8, 9 };
+    static const char* const labels[ROWS] = { "WIDESCREEN", "TAP JUMP", "C-STICK", "D-PAD SWAP", "INPUT DELAY",
+                                              "NETPLAY" };
+    static const int lines[ROWS] = { 2, 5, 6, 7, 9, 10 };
     char port[3] = "P1", v[12];
     int r, c;
 
@@ -208,6 +214,7 @@ static void draw(void)
             int x = MARGIN + LABEL_W + c * COL_W;
             const char* s = r == ROW_WIDESCREEN ? (ps3_options.widescreen ? "ON" : "OFF")
                             : r == ROW_TAP_JUMP ? (ps3_options.tap_jump[c] ? "ON" : "OFF")
+                            : r == ROW_DPAD     ? (ps3_options.dpad_swap[c] ? "ON" : "OFF")
                                                 : (ps3_options.cstick_tilts[c] ? "TILT" : "SMASH");
 
             if (r == row && (r == ROW_WIDESCREEN || c == col)) {
@@ -216,7 +223,7 @@ static void draw(void)
             text(x + 4, y, s, COLOR_TEXT);
         }
     }
-    text(MARGIN, MARGIN + 12 * LINE_H, entering ? "UP/DOWN DIGIT   A JOIN   B BACK" : "A CHANGE   B CLOSE",
+    text(MARGIN, MARGIN + 13 * LINE_H, entering ? "UP/DOWN DIGIT   A JOIN   B BACK" : "A CHANGE   B CLOSE",
          COLOR_DIM);
 }
 
@@ -270,6 +277,7 @@ static void toggle(int step)
     } else {
         bool* v = row == ROW_WIDESCREEN ? &ps3_options.widescreen
                   : row == ROW_TAP_JUMP ? &ps3_options.tap_jump[col]
+                  : row == ROW_DPAD     ? &ps3_options.dpad_swap[col]
                                         : &ps3_options.cstick_tilts[col];
 
         *v = !*v;

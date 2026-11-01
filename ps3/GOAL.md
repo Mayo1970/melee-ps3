@@ -1423,6 +1423,9 @@ Done; hardware test SUCCESS (2026-11-01, the user):
   `CheckInput`), the tilt check runs with the C-stick as the control stick and A pressed (forward: facing the
   C-stick first). Dash (`ftCo_AttackS4_8008C114`) and jump squat (`CheckInputNoD0`) give nothing. With an item, the
   C-stick gives the tilt check's light throw, not a smash throw. Aerials and other C-stick uses stay.
+- D-PAD SWAP (2026-11-01, the user; `dpad_swap` per port, DS3 pads only, `read_ds3` in `pad/pad.c`): the D-pad gives
+  the control stick at full tilt (127), the left stick past 64 gives the D-pad. The picture is now 400x272.
+  Builds: `./build.sh -j8 game` PASS. Hardware test SUCCESS (2026-11-01, the user).
 - Builds: `./build.sh -j8 game`: `.got` 0x5330, 0 `r2off` stubs, about 25.0 MB in loaded segments; host game
   build, `scenetest` PASS, `progtest` 3000 of 3000.
 
