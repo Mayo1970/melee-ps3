@@ -1,6 +1,5 @@
-// The game's RNG calls and their callers, for the rollback's sync test on the host (EXTRA_SRCS, with
-// EXTRA_LDFLAGS=-Wl,--wrap=HSD_Rand,--wrap=HSD_Randf,--wrap=HSD_Randi). A re-run frame whose calls differ from its
-// first run's logs both lists; MELEE_HOST_RB_TRACE="from:to" also logs every call of those frames.
+// Host sync test aid (EXTRA_SRCS, --wrap=HSD_Rand,HSD_Randf,HSD_Randi): logs a re-run frame's RNG callers when they
+// differ from its first run's; MELEE_HOST_RB_TRACE="from:to" logs every call of those frames.
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -85,7 +84,8 @@ static void trace(const char* what, void* caller)
         rerun_n = 0;
         rerun_bad = false;
     }
-    if (!rerun_bad && c->frame == f && (rerun_n >= c->n || c->caller[rerun_n] != caller)) {
+    // A first run longer than CALLS was cut off there.
+    if (!rerun_bad && c->frame == f && rerun_n < CALLS && (rerun_n >= c->n || c->caller[rerun_n] != caller)) {
         rerun_bad = true;
         report(c, f, rerun_n, caller);
     }

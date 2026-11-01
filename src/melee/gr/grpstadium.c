@@ -36,6 +36,9 @@
 #include <sysdolphin/baselib/random.h>
 #include <sysdolphin/baselib/sislib.h>
 #include <sysdolphin/baselib/wobj.h>
+#ifdef TARGET_PS3
+#include <ps3_rollback.h>
+#endif
 
 static struct grPStadium_YakumonoParam* yakumono_param;
 
@@ -286,6 +289,13 @@ void grStadium_801D13E0(Ground_GObj* gobj)
     if (mobj == NULL) {
         gr->u.stadium.xCC = HSD_MemAlloc(0x50000);
     }
+#ifdef TARGET_PS3
+    // The transformations load into this preload buffer, and grStadium_801D4548
+    // clears its start: a restore must give it back too.
+    if (mobj != NULL) {
+        ps3_rb_cover(mobj, 0x50000);
+    }
+#endif
     gr->u.stadium.xC4_b1 = false;
     gr->u.stadium.xD0 = NULL;
     gr->u.stadium.xD4 = 0.0F;

@@ -21,6 +21,9 @@ typedef struct PsHeap {
 void ps_heap_init(PsHeap* heap, void* start, void* end);
 // NULL when no free block is large enough.
 void* ps_heap_alloc(PsHeap* heap, size_t size);
+// From the high end of the highest free cell, and top stays: the rollback keeps its store there, above the game's
+// blocks. ps_heap_free gives it back.
+void* ps_heap_alloc_high(PsHeap* heap, size_t size);
 void ps_heap_free(PsHeap* heap, void* ptr);
 // The usable size of an allocated block.
 size_t ps_heap_block_size(void* ptr);

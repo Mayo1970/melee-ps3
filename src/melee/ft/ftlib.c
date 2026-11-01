@@ -565,9 +565,11 @@ void ftLib_UpdateScreenVisibilityAll(void)
 {
     HSD_GObj* gobj = Camera_80030A50();
 
-    // The camera's render callback gives its CObj the logic's camera first (fn_800301D0).
+    // The camera's render callback gives its CObj the logic's camera and its viewing matrix first (fn_800301D0,
+    // HSD_CObjSetCurrent); logic reads that matrix too (grStadium_801D32D0).
     if (gobj != NULL) {
         Camera_8002A4AC(gobj);
+        HSD_CObjSetupViewingMtx(GET_COBJ(gobj));
     }
     for (gobj = HSD_GObjPLinkHead[HSD_GOBJ_PLINK_FIGHTER]; gobj != NULL; gobj = gobj->next) {
         Fighter* fp = GET_FIGHTER(gobj);

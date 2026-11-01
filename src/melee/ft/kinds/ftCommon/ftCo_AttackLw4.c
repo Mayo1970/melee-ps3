@@ -17,6 +17,11 @@
 #include <melee/ft/kinds/ftNess/ftnessattacklw4.h>
 #include <melee/ft/types.h>
 
+#ifdef TARGET_PS3
+#include "ftCo_AttackLw3.h"
+#include <melee/ft/ftcommon.h>
+#endif
+
 /* 08CC5C */ static void doEnter(Fighter_GObj* gobj);
 
 static bool checkLStick(Fighter* fp)
@@ -33,6 +38,11 @@ static bool checkLStick(Fighter* fp)
 bool ftCo_AttackLw4_CheckInput(Fighter_GObj* gobj)
 {
     Fighter* fp = GET_FIGHTER(gobj);
+#ifdef TARGET_PS3
+    if (!checkLStick(fp) && ftCo_800DF3A8(fp) && ftCo_CStickTiltsOn(fp)) {
+        return ftCo_CStickTilt(gobj, ftCo_AttackLw3_CheckInput, false);
+    }
+#endif
     if (checkLStick(fp) || ftCo_800DF3A8(fp)) {
         if (fp->item_gobj != NULL && (ftCo_80094E54(fp) || ftCo_800DF3DC(fp)))
         {

@@ -1162,6 +1162,253 @@ Other findings of 2026-10-29:
   own backend), 2 a flush, 3 the PPE waits for the RSX (run 39's mode 1). XMB events are logged
   (`sys: XMB event`).
 
+## Goal: netplay with rollback (2026-11-01)
+
+Set by the user: netplay with rollback as Slippi does, 1v1, two consoles per number. The user's decisions:
+- Select opens a number entry; consoles that enter the same number play each other. A GC pad also opens it with Z
+  held and D-pad Up (it has no Select). The GX A/B modes on Select are removed, when Select gets this job.
+- Pairing: LAN broadcast first, then a small UDP server the user runs on a machine with a public IP (hole punching).
+- Flow as Slippi's direct connect: each player picks a character and colour on their own screen, player 1 (the
+  first console on the number) picks the stage, rules fixed at 4 stocks, 8 minutes, items off.
+
+Plan: 1 save state and a sync test on one console; 2 the netplay core (UDP link, input delay, prediction, rollback,
+time sync, desync check, shared RNG seed, no sound from re-run frames); 3 matchmaking and the netplay menus.
+
+Step 1 (2026-11-01, `ps3/net/rollback.c`, `include/ps3_rollback.h`):
+- A state is the game's statics, grouped by `rollback_data.ld` and `rollback_bss.ld` (INCLUDEd in `melee.ld` and the
+  generated `host.ld`) into `__rb_*` ranges, the OS heap table and the HSD heap up to its high-water mark (`PsHeap.top`,
+  the end of what the heap ever wrote). Outside the ranges: state that threads change (synth, AX, VI, devcom, rumble,
+  card, `lbarq`, the pad queue `gmMain_8046B108` and `HSD_PadLibData`, the AUX work areas in `lbaudio_ax.c`),
+  timings (`perf.o`) and HSD's shadows of GX state (`state.o`, `tev.c`'s value caches, `pobj.c`'s `prev_vtxdesc*`),
+  and `grAnime_8049EE40` (a `jmp_buf`). Pointer caches into the heap stay in the state; a restore ends with
+  `HSD_StateInvalidate(-1)`. A restore writes only differing 4 KB pages (marked with `ps3_mem_written`), keeps queued
+  alarms and `pobj.c`'s shape blend buffers, and zeros the heap from the saved top (a session zeros it from its top).
+- Host survey (`MELEE_HOST_RB=survey`): in a match only the HSD heap, the heap table and the statics change in the
+  arena and statics; the HSD heap uses about 4 MB of 42 MB. A state is 5.0-8.2 MB.
+- The scene loop runs each logic frame through `ps3_rb_frame` (`gm_RunLogicFrame`, `gmscene.c`); `fn_8016E730`
+  starts a session, the loop's exit ends it. `HSD_PadRenewMasterStatus` keeps each frame's pad entry; a re-run frame
+  gets it back and leaves the queue alone. In a session `.dat` pool frees wait for its end, the motion cache always
+  adds, and Nana's in-place parses are kept by buffer, bytes and name (`motion.c`).
+- Sync test (`MELEE_HOST_RB=sync:D:K` on the host, `RB_FLAGS=-DPS3_RB_SYNC=D` on the console): each frame is saved
+  before and after it runs, then the last D frames run again from the oldest state; the first re-run frame must match
+  all memory, each one the gameplay values (fighter motion, position, velocity, facing, animation frame, percent,
+  hitlag, shield, stocks, the RNG seed). The heartbeat's rollback line gives the counts and times.
+- Render dependencies found and fixed (logic read state that only the render sets, so frames run again without a
+  render diverged; in a session the logic now sets it after each frame, `gm_RunLogicFrame`):
+  - The off-screen state (`ftLib_UpdateScreenVisibility`: `x221F_b0`, `x2188`), which off-screen damage reads
+    (`fighter.c` 1597): `ftLib_UpdateScreenVisibilityAll`, and the render no longer writes it in a session.
+  - The magnifier's `is_offscreen` and `edge`: `ifMagnify_UpdateState`, render writes off in a session.
+  - The camera CObj: the render copies the logic camera into it (`Camera_8002A4AC`) and computes its viewing matrix
+    (`HSD_CObjSetCurrent`); the replica does both first. Pokemon Stadium's screen reads the matrix
+    (`grStadium_801D32D0`).
+  - The particle lists: `particleSort` (`psdisp.c`) re-links them, and the particle update walks them with RNG calls
+    per particle: `psSortParticles` sorts after each frame (the sort is stable, so the display's own changes nothing).
+  - Not a render dependency: the re-run skipped `lbAudioAx_80027DF8`, whose frame timers are state and whose sounds
+    take the RNG; it runs in re-runs too, so re-run frames play their sounds again (step 2 must silence them).
+- Host diagnostics: `tests/rand_trace.c` (EXTRA_SRCS with `--wrap` on the RNG calls: a re-run frame whose RNG callers
+  differ logs both lists), `MELEE_HOST_SEED` (`host_start.c`: the boot seeds the RNG from the clock),
+  `MELEE_HOST_RB_RENDERDIFF`, `MELEE_HOST_RB_HASHAT`, `MELEE_HOST_RB_FIRST` (in `rollback.c`).
+- Host results after the fixes, depth 2 every frame, going on from the re-run states: 10 matches of 3,221-5,412
+  frames with 0 gameplay differences (stkinds 2, 3 (Pokemon Stadium, with Ice Climbers and without), 8, 12, 18, 24,
+  31, 32; items on and off). The exact compare still differs in sound handles (synth state is outside the state).
+- Netplay notes for step 2: both consoles need one RNG seed at the match start (`gmmain.c:156` seeds from the clock);
+  a re-run of N frames costs N logic frames (3.4-5.5 ms each with 4 players in run 61).
+- Melee run 62 (2026-11-01, `build/run62_udp.txt`, Battlefield): "4 states of 4734 KB need 19 MB, 29 MB free": the
+  session refused to start (16 MB kept free), the match ran normally. The full-copy states do not fit.
+- The store since: a shadow of the latest state plus an undo log (the old contents of the 4 KB chunks each save found
+  changed, 2,048 chunks), in one block from the high end of the HSD heap (`ps_heap_alloc_high`; the game uses 4-8 MB
+  of the 42 MB heap in a match), no system memory. The heap gets 8 MB to grow; past that the session ends. A save scans
+  the statics, the table and the heap up to its top; a restore puts the shadow back, then the undo log newest first.
+  Host: a save 80-210 chunks (at most 452), a restore 160-630; the store 21-25 MB. The sync test's exact check is a
+  chunk hash against the last run from the same saved state (a re-run re-saves); gameplay as before. 4 host matches
+  at depth 1 and 2: 0 gameplay differences; the exact check only flags the fighters' sound handles.
+- Run 63 package: `RB_FLAGS=-DPS3_RB_SYNC=2`, `.got` 0x5198, 0 `r2off` stubs, 24.7 MB in loaded segments.
+- Melee run 63 (2026-11-01, `build/run62_udp.txt` from line 2094, Battlefield, 2 players): 1,243 frames, 2,482 frames
+  run again, 0 gameplay differences, no crash; the exact check flagged only the sound handle chunks. Store 19 MB of the
+  35 MB HSD heap, 29 MB system memory free. Costs: a save about 10.5 ms, a restore 16.5 ms, a hash 13 ms, a re-run
+  logic frame 0.2-1.1 ms: about 50 ms a logic frame. The PPE compares at about 0.6 GB/s (newlib `memcmp`, misses).
+  The same package on Pokemon Stadium (from line 3902): store 19.2 MB, 28 MB free, 697 frames, 0 gameplay differences.
+- The user (2026-11-01): the save and restore move to an SPU; no delay-based netplay at all, rollback only.
+- SPU program `net/rbspu.c` (`rb_shared.h`, `rbspu_io.h`; `rbspu_cell.c` on the SPU, `rbjob_cell.c` starts it,
+  `tests/rbspu_host.c` runs it on a host thread): jobs RB_SAVE (compare each chunk with its shadow, the old shadow
+  into the next undo slot, the chunk into the shadow), RB_RESTORE (changed chunks get their shadow back, then a list of
+  the oldest saved contents per chunk goes into chunks and shadow) and RB_HASH (`rb_hash`, four 32-bit lanes), 8
+  chunks of DMA in flight. The main thread waits at low SMT priority. Chunks and shadow slots are 128-byte aligned
+  (`rollback_*.ld` align the ranges). The PPE path stays as the fallback. Host: 4 matches at depth 1 and 2, 0
+  gameplay differences on the SPU path. SPU ELF 4 KB code, 69 KB buffers.
+- Run 64 package: `RB_FLAGS=-DPS3_RB_SYNC=2`, `.got` 0x5218, 0 `r2off` stubs, 24.7 MB in loaded segments.
+- Melee run 64 (2026-11-01, `build/run62_udp.txt` from line 5023): Battlefield, 7,438 frames, 0 gameplay
+  differences, logic at 60 a second (180 logic frames a second with the re-runs, about 40 presents): a save about
+  1.0 ms (run 63: 10.5), a restore 2.0 ms (16.5), 80-130 chunks a save. Pokemon Stadium: about 6,560 frames, then
+  assertion `archive` (`lbarchive.c` 129) from `grStadium_801D4548` → `grAnime_801C65B0`: the transformation loads
+  its stage file with an asynchronous read (`startLoad`, `lbFile_80016580`, callback `fn_801D4220`), whose callback
+  ran outside the frames; a restore took the stage back to loading after it, with the buffer's older bytes. Also a
+  netplay desync: each console's load time would start the transformation on another frame.
+- Fix: in a session `lbFile_80016580` waits for the read in the frame that starts it (as `waitForDisc`), and the
+  callback runs inside that wait. Only Pokemon Stadium loads that way in a match.
+- Host, with the fix (`build/rb/ps3t_13.txt`, `ps3t_15.txt`, `sync:2:1`, 420 s): Pokemon Stadium, 5,630 and 6,340
+  frames, the first transformation (`GrPs1.dat`) at about frame 3,800 in a session, 0 gameplay differences in all
+  417 heartbeats, no assertion. The "memory" counts (0-12 chunks) are render writes, as in runs 63 and 64.
+- Run 65 package: `RB_FLAGS=-DPS3_RB_SYNC=2`, `.got` 0x5218, 0 `r2off` stubs, same segments as run 64.
+- Melee run 65 (2026-11-01, `build/run65_udp.txt`): Battlefield 7,584 frames and a 390-frame match, 0 gameplay
+  differences. Pokemon Stadium: the same assertion at frame 6,139. Presents 20-36 a second (logic 2.1 ms a frame, run
+  3 times, plus saves, restores and hashes: about 870 ms of each second).
+- The run 64 diagnosis was wrong. Both crashes are at `grpstadium.c` 2164 (`grStadium_801D4548` + 0x8f8), the return
+  to the normal stage: `grAnime_801C65B0((void*) xCC)` reads the load buffer as an `UnkArchiveStruct` and clears its
+  start (24 bytes on LP64; `unk8` at +16 is the header's 0x5b/0x58/0x47/0x5b, so the first run frees nothing). The
+  buffer is the preload of entry 0x7D5 in lbHeap heap 4, outside the store: a re-run of that frame reads the cleared
+  start, `unk0` 0 and `unk8` 0, and calls `lbArchive_80016EFC(NULL)`.
+- Fix: `ps3_rb_cover(p, n)` adds one buffer outside the HSD heap to the store until the scene ends (range "buffer",
+  before the heap); `grStadium` init covers the 0x50000 preload buffer. The synchronous load stays: netplay needs the
+  load to end on the same frame on both consoles.
+- Run 66 package: `.got` 0x5228, 0 `r2off` stubs.
+- Host (`build/rb/ps3c_13.txt`, `ps3c_15.txt`, 900 s): 9,628 and 10,927 frames, 0 gameplay differences; seed 15 went
+  GrPs1, back to normal, GrPs4. The host's debug VS skips the stage select (`mnstagesel.c` 909 sets the preload), so
+  there `xCC` comes from `HSD_MemAlloc` in the HSD heap ("buffer 0 KB"): the cover runs only on the console.
+- Melee run 66 (2026-11-01, `build/rb/run66.txt`): Pokemon Stadium through the stage select, "buffer 320 KB", 7,565
+  frames to the match's end, 0 gameplay differences in 127 heartbeats, no assertion. Extra DVD reads (over the music
+  stream's 5 each 1.75 s) at about frames 1,900 and 3,900: two transformations, so a return to normal between them.
+- Step 1 done.
+
+Status (2026-11-01): step 2 is next and not started; it starts when the user says so (the user works on another task
+too). The user does not have two PS3s on the LAN, so step 2's network test needs another setup (open decision).
+
+## Goal: the PS3 menu (2026-11-01)
+
+Set by the user, before netplay step 2: Select opens a menu of extra features; netplay becomes an entry of it later.
+The user's decisions: tap jump and the C-stick mode are per port; the menu opens only outside matches.
+
+Done (not yet tested on hardware):
+- `pad/menu.c`, `include/ps3_options.h`: Select on any DS3 pad, or Up with Z held on any pad, opens it; B, Start or
+  Select close it. While open, and until the closing buttons are up, the game gets the pads at rest. A match start
+  (`fn_8016E730`, so demos too) closes it; `ps3_menu_match` in `gmvs.c` and `gmscene.c`. The GX A/B modes on Select
+  are gone (`ps3_diag.gx_ab` stays 0).
+- Options saved on close to `USRDIR/options.txt` (host: `build/options.txt`): `widescreen`, `tap_jump`,
+  `cstick_tilts` (one digit per port). They are outside the rollback ranges and fixed during a match, so netplay can
+  exchange them at the match start.
+- Picture: 400x184 A8R8G8B8 drawn with `HSD_DebugFontAtlas` on the GP thread (`gx_rsx_set_screen`); `dev_present`
+  copies it to local memory (two copies used in turn) and blends it at a whole scale (2 at 720p). A host check
+  (scratch, not in the repo) drew it and ran open, move, toggle, close, the in-match refusal and the GC combo.
+- Widescreen: render only. `xf_constants` scales x of perspective projections by 0.75 when the viewport is the EFB's
+  full width (XF 0x1A is 320.0; renders to textures stay), and the present shows the XFB at 16:9 (letterboxed on a
+  4:3 TV). The logic camera keeps `cm_803BCB64.aspect`, so off-screen checks stay at 4:3. Orthographic draws (HUD)
+  stretch by 4/3.
+- Tap jump off (`ftCo_TapJumpOn`, humans only): ground jump (`ftCo_Jump_GetInput`, `fn_800CAF78`), double jump
+  (`ft_did_jump`), multi-jump rise (`ftCo_JumpAerialF1.c`), wall jump (`ftCo_800C1E0C`), Peach's float hold.
+- C-stick tilts (`ftCo_CStickTilt`, humans only): where a smash check sees the C-stick (`AttackS4`, `Hi4`, `Lw4`
+  `CheckInput`), the tilt check runs with the C-stick as the control stick and A pressed (forward: facing the
+  C-stick first). Dash (`ftCo_AttackS4_8008C114`) and jump squat (`CheckInputNoD0`) give nothing. With an item, the
+  C-stick gives the tilt check's light throw, not a smash throw. Aerials and other C-stick uses stay.
+- Builds: `./build.sh -j8 game`: `.got` 0x5330, 0 `r2off` stubs, about 25.0 MB in loaded segments; host game
+  build, `scenetest` PASS, `progtest` 3000 of 3000.
+
+## Unlocks, challengers and saves: investigation (2026-11-01)
+
+The user: run the character unlocks, the challenges and the saves in Docker, make sure they cannot stop the game on
+the PS3, and list the fixes for another session. Nothing was changed or built: host runs of the existing host build,
+and read-only code audits.
+
+How the host runs were made:
+- A copy of `build/linux/game/melee_host` as built at 04:42 (HEAD 6a96d37 with the netplay session's uncommitted
+  `gmscene.c`, `psdisp.c`, `motion.c`), run in a scratch folder, so `build/card` stayed untouched.
+- A GCI save editor (Python, not in the repo): the per-sector `HSD_Encrypt` checksum and scrambling of `crypt.c`.
+  `GmSaveData` is logical file 1, one block, mirrored (sectors 1 and 10 of the 11-block file); the nametag banks are
+  files 2-8. The VS match count (`save_data.unk_8.x0`, offset 0x8) and `unk_28.x0` (0x28) were set to 49: the next
+  VS match gives Jigglypuff's challenge and Brinstar Depths (both at 50).
+- The menus by `MELEE_HOST_PAD` (one human, a CPU with a random fighter, a random stage):
+  `300:START,520:START,800:DOWN,870:A,1000:A,1300:SL+SD:40,1360:SR:15,1390:SU:16,1420:A,1440:SU:17,1470:SL:5,1490:A,1560:START,1900:START,2000:START`.
+  START at 300 skips the intro movie, START at 520 is the title, then VS Mode, Melee. In the character select the
+  cursor moves 1.24 units a retrace at full stick (clamp 80): the lower left corner, then right 15 and up 16 is P2's
+  HMN/CPU button (A: P2 becomes a CPU with a random fighter), up 17 and left 5 puts P1's coin on Mario, A, START;
+  START at the stage select picks a random stage. The 2-minute match starts at about retrace 2,100 and the results
+  load at 9,533 (logic stays 1:1 with the retraces).
+- The results screen wants any button (state 2), then START after its 50-frame animation (state 3): a single START
+  that comes too early leaves it waiting for good (not a fault). START pairs 60 retraces apart, every 300 from 10400,
+  and A every 200 from 10500, pass the results, the challenger notice and the prize screen; in a match a pair pauses
+  and resumes.
+- `MELEE_HOST_DRAW=1` and `=2` stall this build: the presents stop after 57-79, the main thread waits in
+  `VIWaitForRetrace` from `HSD_VICopyXFBAsync`. Without drawing the boot, menus and matches run. So no frame dumps.
+
+Host results:
+- The challenge works on the host: VS match (49 to 50), results, the challenger notice (`NtAppro.usd`, the "new
+  challenger" music), the challenger match on Pokemon Stadium (Mario against a level 5 Jigglypuff, 1 stock each),
+  Mario loses, the prize screen (`IfPrize.usd`, Brinstar Depths), back to the character select. No fault, no stall.
+- Saves: the card is written after the results and at the prize screen (the mount logs each time). The GCI then
+  holds VS 50, play time 120 s and stage bit 0 (Brinstar Depths), sequence numbers rising. A reboot with that file
+  loads it, keeps the values and writes it again. A pause in the challenger match (START) idled 3 minutes with no
+  fault.
+- Peach's Castle crashes twice, both "Not Found Item_Struct" (`item.c` 1997, `OSPanic`): the attract demo after the
+  title (Link, Kirby, Captain Falcon, Bowser; only the boot, no test hook), from `grCastle_801D06CC`; and a VS match
+  through the menus, from `grCastle_801D0550` (`it_2E6A_Logic117_DmgReceived`). Both from `Item_8026A8EC` via
+  `grMaterial_801C8CDC`. The same as the host-only "13,14,5,12 on Castle" in the open issues: any Castle match can
+  hit it. Cause in fix 1.
+- "use dummy CamRange ...!" on Pokemon Stadium in every host log with that stage (the challenger match here, and
+  `build/hostmatch/6-16_3_4.txt`, `8-2_3_4.txt`): joints 0x94-0x96 are not found, so the camera takes the default
+  range (`Ground_801C39C0`). No "dummy DeadRange". Not checked on the GameCube.
+- The heartbeat's ARQ posts run 135-169 ahead of the callbacks from the stage select on, and the gap stays: posts
+  with no callback or removed ones (`sdk_audio.c` counts only callbacks run), not a stall.
+
+Fixes to do, most severe first:
+1. **Peach's Castle switch blocks (crash, seen twice on the host).** `grcastle.c` lays `struct unkCastle`
+   (`_pad[0x10C]`, `x10C[5]`, `x134[5]`) over the `Ground` with the GameCube offsets. The callbacks
+   `grCastle_801D0550`..`801D0680` and `grCastle_801D06CC`..`801D08AC` (tables `grCs_803B7F28`, `grCs_803B7F3C`) take
+   the block item from `arg1->x10C[i]` and set `arg1->x134[i]`. On LP64 the `Ground` header and
+   `grCastle_GroundVars10`'s 15 JObj pointers move `u.castle10.x10C` (u32) and `u.castle10.state`, so the callback
+   destroys a wrong value. Fix under `TARGET_PS3`: take `Ground*` and use `gp->u.castle10.x10C[i]` (cast to the item
+   GObj) and `gp->u.castle10.state[i]`.
+2. **Credits (crash expected, from the audit).** `gmstaffroll.c` allocates and clears `staffInfo` with
+   `sizeof(struct staffInfo_t)` (0x948: 198 entries of 12 bytes) and `staffInfoSortBuf` with 0x2E68 (198 of 0x3C).
+   On LP64 an entry is 24 and 0x48 bytes. `fn_801AAB74` walks all 198 entries each frame, so entries 99-197 lie in
+   the sort buffer's block: garbage `HSD_Text*` to the SIS calls, and text pointers written over sort entries. The
+   credits run after every Classic, Adventure and All-Star clear (`gm_Mode_GOver_States`). Fix under `TARGET_PS3`:
+   `ARRAY_SIZE(gm_803DBFD8) * sizeof(*staffInfo)` and `* sizeof(*staffInfoSortBuf)` for both `HSD_MemAlloc` calls
+   (lines 1229-1230) and the `memzero` (line 1334).
+3. **`lb_800138EC` has no `return` (`lbspdisplay.c` 652-714).** Declared `HSD_GObj*`, it ends after
+   `GObj_SetupGXLinkMax`. `gmregclear.c:1062` keeps the result in `state->x2C`, and `lb_800138D8`/`lb_800138CC`
+   write through its user data: the bonus screen after each 1P stage clear. It works only while r3 still holds
+   `gobj`. Fix: `return gobj;` under `TARGET_PS3`.
+4. **Card file I/O while the interrupt lock is held (hitches, lost pad samples, audio dropouts at each save).**
+   HSD's ring (`card.c` `hsd_803AAA48`) and `lbcardnew.c`'s mount, format, delete and rename tasks call the CARD
+   functions with interrupts off. `ps3/sdk/card.c` does the file I/O in the call (`save()`: fopen, fseek, fwrite,
+   fclose), and each mount reads every GCI in the folder again (`load()`): `executeNextTask` unmounts after each
+   operation and `CARDUnmount` frees the files. The same class as the DVD reads that kept the lock for a whole
+   file. Fix in `card.c`: keep the files across `CARDUnmount` (writes already go to disk), and run `save()`,
+   `remove()` and `rename()` on a worker thread that raises `PS3_INTR_EXI` when done, as `dvd.c` does (HSD sets its
+   busy flag before it restores interrupts, and the lbcardnew tasks count under the lock, so a later callback is
+   safe).
+5. **`finish()` drops a 17th pending callback but returns READY (`card.c` 83-86).** Then `hsd_804D799C` stays 1 or
+   `tasks_remaining` never reaches 0, and `lb_8001CDB4` (each mode change) spins for good. The game keeps one
+   operation in flight, so unlikely. Fix: check the queue before the I/O and return `CARD_RESULT_BUSY`, or `OSPanic`.
+6. **Smaller `card.c` items.** `CARDRenameAsync` keeps the new path when `rename()` fails, so later writes get
+   IOERROR: report IOERROR and keep the old name. `CARDFreeBlocks` wraps below 0 with more than 251 blocks in the
+   folder: clamp at 0. `load()` takes every `.gci` in the folder, whatever its name.
+7. **Rollback and saves (only if a save runs inside a session).** The card statics are outside the saved state, but
+   `lbCardNew_AllocWorkArea`'s `work_area` and `lib_area` (HSD's `sector_buf`) come from the HSD heap, which a
+   restore writes back; a restore between two ring commands would write a wrong block. Saves finish at each mode
+   change (`gm_1A3F.c`, `lb_8001CDB4`), but Training, Home-Run and Multi-Man call `lbCardGame_SaveChanges` inside the
+   mode. Fix: allocate both from the OS heap, or hold saves while a session runs.
+8. **Pokemon Stadium's camera range (low).** Compare with Dolphin whether the GameCube also logs "use dummy
+   CamRange" there; if not, find why joints 0x94-0x96 are not registered (`Ground_801C2D24`).
+9. **Host tool.** `MELEE_HOST_DRAW=1`/`2` stall (above): frame dumps do not work in this build.
+
+Checked and safe (audits): the VS unlock checks (`gmVsMelee_ExitResults`, `gm_16F1.c`, `gm_1601.c`), the challenger
+data and the Approach scene (`gm_1736.c`, `gm_1BFA.c`, `gmapproach.c`: `ScNtcApproach_scene_data` is a typed root,
+`HSD_AObjSetRate` takes a NULL aobj), the prize list (`un_804A1F48_t` matches ifprize's view, 16 bytes) and
+`gm_8049E558`, `GmSaveData` and the nametag banks (no pointers, so the GCI stays GameCube-compatible, 11 blocks),
+`CARDDir` (64 bytes), the busy-waits on card results (each pass calls out, the states escape), the
+`tasks_remaining` race (CARD calls are made with interrupts off, so their callbacks run at the caller's restore),
+`CARDRead`/`CARDWrite` (dead code, the link has none), the results screen (`gm_8046E1B0` under `TARGET_PS3`), the
+`gmregclear.c` bonus values. Right today but fragile: `gmregclear.c`'s `RegClearEv` view over `CameraBlurData` (the
+pointer's alignment lands on the right fields). Debug only: `toy.c` `ToyUnkJObjData` reads JObj+0x10 as `child`
+(LP64: `next`) in `_Toy_8030B530`, installed only with `_Toy_sbss_804D6EA2` set.
+
+Not run yet (each needs a host hook, so a build):
+- Winning the challenge (`gm_UnlockCKind`, the unlock notice, the character select's reveal). A `--wrap` on
+  `gm_DecideChallengerCpuLevel` in `host_start.c` that also sets `gmVsMelee_StartData.players[1].cpu_kind = 0` (the
+  caller sets it before the call) gives an idle CPU that a pad script of smash attacks can KO.
+- The 1P clears (bonus screen, credits, ending movie, trophy, the challenge after them), event unlocks, the trophy
+  lottery. A hook that ends Classic as cleared, or enters `GM_GOVER`, would reach fixes 2 and 3 on the host.
+
 ## Open issues (2026-10-29)
 
 The user's list of what is left to address. Details of each are in the run entries above.
@@ -1196,8 +1443,10 @@ The user's list of what is left to address. Details of each are in the run entri
      and DOL-offset reads in code not scanned yet.
    - `mpLib_80056C54` reads `total_dist` unset on a first wall line; `hsd_3A76.c` SIS jump operands (opcodes 8/9)
      read 8 bytes where the stream has 4.
-   - Host only: 13,14,5,12 on Castle panics "Not Found Item_Struct" (`item.c` 1997); 8,2/26 never starts
+   - Peach's Castle panics "Not Found Item_Struct" (`item.c` 1997): seen in the attract demo and a menu VS match
+     on 2026-11-01, cause and fix in "Unlocks, challengers and saves" (fix 1). Host only: 8,2/26 never starts
      (`ground.c` 2310, stage param of stkind 26 not found).
+   - The credits, the 1P bonus screen and the card I/O under the interrupt lock: fixes 2-7 of that section.
 
 ## Not done for the game
 
@@ -1248,6 +1497,8 @@ The user's list of what is left to address. Details of each are in the run entri
   `datgen.sh` forces `ps3/tools/datgen/gx_wg.h` into the DWARF build.
 - `OSSleepThread`, `OSWakeupThread` and `OSInitThreadQueue` in `ps3/os/intr.c` are minimal (one condition for
   all queues); `GXWaitDrawDone` and `VIWaitForRetrace` use them.
+- Netplay step 2: the first network test needs two consoles, and the user has only one PS3 on the LAN. The test
+  setup is not chosen yet.
 
 ## Findings
 

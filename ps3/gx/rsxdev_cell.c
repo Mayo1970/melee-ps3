@@ -627,20 +627,104 @@ void dev_set_present_programs(const u32 (*vp)[4], u32 vp_n, u32 vp_inputs, u32 v
     present_fp_tc = fp_texcoords;
 }
 
-void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
+// Draws the quad of pixels x0-x1, y0-y1 of the display with texture t, through the present programs. False when
+// the ring has no room.
+static bool present_quad(float x0, float x1, float y0, float y1, const DevTexture* t)
 {
     typedef struct {
         float pos[4], tc[2];
     } Vertex;
+    const float tu[4] = { 0, 1, 1, 0 }, tv[4] = { 0, 0, 1, 1 };
+    float px[4], py[4];
+    Vertex* v;
+    u32 io;
+    int i;
+
+    v = dev_ring_alloc(4 * sizeof(Vertex), &io);
+    if (v == NULL) {
+        return false;
+    }
+    px[0] = px[3] = x0 / disp_w * 2.0f - 1.0f;
+    px[1] = px[2] = x1 / disp_w * 2.0f - 1.0f;
+    py[0] = py[1] = 1.0f - y0 / disp_h * 2.0f;
+    py[2] = py[3] = 1.0f - y1 / disp_h * 2.0f;
+    for (i = 0; i < 4; i++) {
+        v[i].pos[0] = px[i];
+        v[i].pos[1] = py[i];
+        v[i].pos[2] = 0.5f;
+        v[i].pos[3] = 1.0f;
+        v[i].tc[0] = tu[i];
+        v[i].tc[1] = tv[i];
+    }
+    dev_texture(0, t);
+    dev_attrib(0, io, sizeof(Vertex), 4, GCM_VERTEX_DATA_TYPE_F32);
+    dev_attrib(8, io + 16, sizeof(Vertex), 2, GCM_VERTEX_DATA_TYPE_F32);
+    dev_draw(GCM_TYPE_QUADS, 4);
+    return true;
+}
+
+// Two copies in local memory, used in turn: the RSX may still read the one the last present drew.
+#define OVERLAY_BYTES (512u * 256u * 4u)
+static void* overlay_mem[2];
+static u32 overlay_off[2], overlay_serial;
+static int overlay_cur;
+static bool overlay_failed;
+
+static void present_overlay(const DevOverlay* o)
+{
+    // A whole scale: 2 at 720p, 3 at 1080p.
+    u32 scale = disp_h / 360 != 0 ? disp_h / 360 : 1, size, x0, y0;
+    DevTexture t;
+    int i;
+
+    if (o == NULL || o->pixels == NULL || overlay_failed) {
+        return;
+    }
+    size = (u32) o->w * o->h * 4;
+    if (size > OVERLAY_BYTES || o->w % 16 != 0 || o->w * scale > disp_w || o->h * scale > disp_h) {
+        return;
+    }
+    if (overlay_mem[0] == NULL) {
+        for (i = 0; i < 2; i++) {
+            overlay_mem[i] = dev_local_alloc(128, OVERLAY_BYTES, &overlay_off[i]);
+            overlay_failed |= overlay_mem[i] == NULL;
+        }
+        if (overlay_failed) {
+            return;
+        }
+    }
+    if (o->serial != overlay_serial) {
+        overlay_cur ^= 1;
+        dev_write_local(overlay_mem[overlay_cur], o->pixels, size);
+        overlay_serial = o->serial;
+    }
+    memset(&t, 0, sizeof(t));
+    t.offset = overlay_off[overlay_cur];
+    t.pitch = (u32) o->w * 4;
+    t.width = o->w;
+    t.height = o->h;
+    t.levels = 1;
+    t.wrap_s = t.wrap_t = DEV_WRAP_CLAMP;
+    t.min_filter = t.mag_filter = DEV_FILTER_NEAREST;
+    x0 = (disp_w - o->w * scale) / 2;
+    y0 = (disp_h - o->h * scale) / 2;
+    dev_blend(true, DEV_SRC_ALPHA, DEV_ONE_MINUS_SRC_ALPHA, DEV_EQ_ADD);
+    present_quad((float) x0, (float) (x0 + o->w * scale), (float) y0, (float) (y0 + o->h * scale), &t);
+    dev_blend(false, GCM_ONE, GCM_ZERO, GCM_FUNC_ADD);
+}
+
+void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h, bool wide, const DevOverlay* overlay)
+{
     float tv_aspect = disp_aspect == VIDEO_ASPECT_16_9 ? 16.0f / 9.0f : 4.0f / 3.0f;
-    float iw = (float) disp_w * (4.0f / 3.0f) / tv_aspect, left = (float) (u32) (((float) disp_w - iw) / 2.0f);
-    float x0 = left / disp_w * 2.0f - 1.0f, x1 = -x0;
+    float aspect = wide ? 16.0f / 9.0f : 4.0f / 3.0f;
+    // A picture wider than the TV keeps the full width and loses height.
+    float iw = aspect <= tv_aspect ? (float) disp_w * aspect / tv_aspect : (float) disp_w;
+    float ih = aspect <= tv_aspect ? (float) disp_h : (float) disp_h * tv_aspect / aspect;
+    float left = (float) (u32) (((float) disp_w - iw) / 2.0f), top = (float) (u32) (((float) disp_h - ih) / 2.0f);
     float scale[4] = { disp_w * 0.5f, disp_h * -0.5f, 0.5f, 0.0f };
     float offset[4] = { disp_w * 0.5f, disp_h * 0.5f, 0.5f, 0.0f };
-    const float px[4] = { x0, x1, x1, x0 }, py[4] = { 1, 1, -1, -1 }, tu[4] = { 0, 1, 1, 0 }, tv[4] = { 0, 0, 1, 1 };
     DevTexture t;
-    Vertex* v;
-    u32 io, b = disp_next;
+    u32 b = disp_next;
     uint64_t t0;
     int i;
 
@@ -652,18 +736,6 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
     }
     ps3_prof_lap(PROF_GP_FLIP, &t0);
     ps3_diag.gp_wait = 0;
-    v = dev_ring_alloc(4 * sizeof(Vertex), &io);
-    if (v == NULL) {
-        return;
-    }
-    for (i = 0; i < 4; i++) {
-        v[i].pos[0] = px[i];
-        v[i].pos[1] = py[i];
-        v[i].pos[2] = 0.5f;
-        v[i].pos[3] = 1.0f;
-        v[i].tc[0] = tu[i];
-        v[i].tc[1] = tv[i];
-    }
     set_surface(GCM_SURFACE_X8R8G8B8, disp_off[b], disp_pitch, disp_depth_off, disp_pitch, disp_w, disp_h);
     rsxSetViewport(ctx, 0, 0, (u16) disp_w, (u16) disp_h, 0.0f, 1.0f, scale, offset);
     rsxSetScissor(ctx, 0, 0, (u16) disp_w, (u16) disp_h);
@@ -682,17 +754,17 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
     t.levels = 1;
     t.wrap_s = t.wrap_t = DEV_WRAP_CLAMP;
     t.min_filter = t.mag_filter = DEV_FILTER_LINEAR;
-    dev_texture(0, &t);
     // PSL1GHT drops draws after a flip unless the program, attributes and textures are bound again.
     for (i = 0; i < 16; i++) {
         dev_attrib(i, 0, 0, 0, GCM_VERTEX_DATA_TYPE_F32);
     }
-    dev_attrib(0, io, sizeof(Vertex), 4, GCM_VERTEX_DATA_TYPE_F32);
-    dev_attrib(8, io + 16, sizeof(Vertex), 2, GCM_VERTEX_DATA_TYPE_F32);
     dev_vertex_program((const u32(*)[4]) present_vp, present_vp_n, DEV_VP_SLOTS, present_vp_in, present_vp_out,
                        1);
     dev_fragment_program(present_fp_off, present_fp_regs, present_fp_tc, 0);
-    dev_draw(GCM_TYPE_QUADS, 4);
+    if (!present_quad(left, (float) disp_w - left, top, (float) disp_h - top, &t)) {
+        return;
+    }
+    present_overlay(overlay);
     // No gcmSetWaitFlip: it would hold the GX draws until the vblank. A buffer with a flip pending is not drawn.
     gcmSetFlip(ctx, (u8) b);
     // The flip runs gcm's state reset.

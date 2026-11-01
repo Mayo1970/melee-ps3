@@ -315,11 +315,65 @@ s32 ps3_dat_motion_keep(u8* src, u32 size, const char* name, FigaTree** tree)
     return motion(src, size, name, tree, true);
 }
 
+// In a rollback session the in-place parses are kept by buffer, bytes and name: frames that run again parse the
+// same motions into the same buffer, and a restored state may still use the natives an older parse would free.
+typedef struct InPlace {
+    struct InPlace* next;
+    const u8* src;
+    uint64_t hash;
+    u32 size;
+    DatArchive* native;
+    FigaTree* tree;
+    char name[];
+} InPlace;
+
+static InPlace* in_place;
+
+static s32 parse_kept(u8* src, u32 size, const char* name, FigaTree** tree)
+{
+    uint64_t hash = hash_words(src, size);
+    size_t len = strlen(name) + 1;
+    HSD_Archive archive;
+    InPlace* e;
+
+    for (e = in_place; e != NULL; e = e->next) {
+        if (e->src == src && e->size == size && e->hash == hash && strcmp(e->name, name) == 0) {
+            ps3_mem_written(src, size);
+            *tree = e->tree;
+            return 0;
+        }
+    }
+    if (__real_HSD_ArchiveParse(&archive, src, size) != 0) {
+        return -1;
+    }
+    free_tables(&archive);
+    e = malloc(sizeof(*e) + len);
+    if (e == NULL) {
+        dat_close(archive.native_data);
+        return -1;
+    }
+    e->src = src;
+    e->hash = hash;
+    e->size = size;
+    e->native = archive.native_data;
+    e->tree = lookup(archive.native_data, name);
+    memcpy(e->name, name, len);
+    e->next = in_place;
+    in_place = e;
+    ps3_mem_written(src, size);
+    *tree = e->tree;
+    return 0;
+}
+
 s32 ps3_dat_motion_parse(u8* src, u32 size, const char* name, FigaTree** tree)
 {
     HSD_Archive archive;
-    s32 r = HSD_ArchiveParse(&archive, src, size);
+    s32 r;
 
+    if (ps3_rb_session() && name != NULL) {
+        return parse_kept(src, size, name, tree);
+    }
+    r = HSD_ArchiveParse(&archive, src, size);
     *tree = HSD_ArchiveGetPublicAs(FigaTree, &archive, name);
     return r;
 }
@@ -328,6 +382,14 @@ void ps3_dat_motion_scene(void)
 {
     u32 dropped = 0;
 
+    // The last scene's fighters are gone, and with them the buffers the kept in-place parses point into.
+    while (in_place != NULL) {
+        InPlace* e = in_place;
+
+        in_place = e->next;
+        dat_close(e->native);
+        free(e);
+    }
     while (oldest != NULL && nbytes > SCENE_BYTES) {
         drop(oldest);
         dropped++;

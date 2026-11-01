@@ -25,6 +25,8 @@
 #include <melee/ft/ftlib.h>
 #include <melee/if/ifmagnify.h>
 #include <ps3_intr.h>
+#include <sysdolphin/baselib/psdisp.h>
+#include <ps3_options.h>
 #include <ps3_rollback.h>
 #endif
 
@@ -325,11 +327,12 @@ static bool gm_RunLogicFrame(void* arg)
         temp_r25->unk_10.pre_gobj_proc();
     }
     HSD_GObj_RunProcs();
-    // The render sets the off-screen state that the next frame's logic reads; a frame that runs again has no render
-    // before it, so in a rollback session the logic sets that state.
+    // The render sets the off-screen state and sorts the particle lists, and the next frame's logic reads both; a
+    // frame that runs again has no render before it, so in a rollback session the logic does that work.
     if (ps3_rb_session()) {
         ftLib_UpdateScreenVisibilityAll();
         ifMagnify_UpdateState();
+        psSortParticles();
     }
     if (temp_r25->unk_0 != -2) {
         temp_r25->unk_0++;
@@ -483,6 +486,7 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
     }
 #ifdef TARGET_PS3
     ps3_rb_scene_end();
+    ps3_menu_match(false);
 #endif
     HSD_VIWaitXFBFlush();
 }

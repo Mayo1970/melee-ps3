@@ -150,6 +150,26 @@ void* ps_heap_alloc(PsHeap* heap, size_t size)
     return (char*) cell + HEADER;
 }
 
+void* ps_heap_alloc_high(PsHeap* heap, size_t size)
+{
+    long need = (long) round_up(size + HEADER);
+    PsHeapCell* last = NULL;
+    PsHeapCell* cell;
+
+    // The free list is in address order: the last cell is the highest.
+    for (cell = heap->free; cell != NULL; cell = cell->next) {
+        last = cell;
+    }
+    if (last == NULL || last->size - need < MIN_CELL) {
+        return NULL;
+    }
+    last->size -= need;
+    cell = (PsHeapCell*) ((char*) last + last->size);
+    cell->size = need;
+    heap->allocated = add_front(heap->allocated, cell);
+    return (char*) cell + HEADER;
+}
+
 void ps_heap_free(PsHeap* heap, void* ptr)
 {
     PsHeapCell* cell = (PsHeapCell*) ((char*) ptr - HEADER);

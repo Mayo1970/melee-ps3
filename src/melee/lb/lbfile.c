@@ -12,6 +12,7 @@
 #include <sysdolphin/baselib/devcom.h>
 #ifdef TARGET_PS3
 #include <dolphin/ar.h>
+#include <ps3_rollback.h>
 #endif
 
 static bool cancel;
@@ -137,6 +138,21 @@ void lbFile_800164A4(int file, uintptr_t dst, size_t* size, int pri,
                       args);
 }
 
+#ifdef TARGET_PS3
+static HSD_DevComCallback sync_callback;
+static uintptr_t sync_args;
+static volatile bool sync_done;
+
+static void lbFile_SyncDone(int dcreq, uintptr_t args, void* buf,
+                            bool cancelflag)
+{
+    if (sync_callback != NULL) {
+        sync_callback(dcreq, sync_args, buf, cancelflag);
+    }
+    sync_done = true;
+}
+#endif
+
 void lbFile_80016580(const char* basename, void* dst, size_t* size,
                      HSD_DevComCallback callback, uintptr_t args)
 {
@@ -147,6 +163,21 @@ void lbFile_80016580(const char* basename, void* dst, size_t* size,
     HSD_ASSERTREPORT(0x11A, entry_num != -1, "file isn't exist %s = %d\n",
                      filename, entry_num);
 
+#ifdef TARGET_PS3
+    // In a rollback session the load and its callback end in this frame:
+    // every console and every re-run sees them at the same frame.
+    if (ps3_rb_session()) {
+        sync_callback = callback;
+        sync_args = args;
+        sync_done = false;
+        lbFile_800164A4(entry_num, (uintptr_t) dst, size, 1, lbFile_SyncDone,
+                        0);
+        while (!sync_done) {
+            lb_800195D0();
+        }
+        return;
+    }
+#endif
     lbFile_800164A4(entry_num, (uintptr_t) dst, size, 1, callback, args);
 }
 

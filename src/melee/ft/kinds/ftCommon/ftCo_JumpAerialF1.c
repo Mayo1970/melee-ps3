@@ -66,6 +66,11 @@ bool ftCo_800D730C(Fighter_GObj* gobj, bool arg1)
         {
             r4 = 0;
         }
+#ifdef TARGET_PS3
+        if (!ftCo_TapJumpOn(fp) && !(fp->input.held_buttons[0] & 0xC00)) {
+            r4 = 0;
+        }
+#endif
         if (canJump && r29 && r4) {
             result = 1;
         } else {

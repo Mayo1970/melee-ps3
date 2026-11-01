@@ -69,6 +69,11 @@ bool ftCo_AttackS4_CheckInput(Fighter_GObj* gobj)
         stick_x_sign = fp->input.lstick[0].x >= 0 ? (float) +1 : -1;
         stick_angle = ftCo_GetLStickAngle(fp);
     } else if (ftCo_800DF1C8(fp)) {
+#ifdef TARGET_PS3
+        if (ftCo_CStickTiltsOn(fp)) {
+            return ftCo_CStickTilt(gobj, ftCo_AttackS3_CheckInput, true);
+        }
+#endif
         stick_x_sign = fp->input.cstick[0].x >= 0 ? (float) +1 : -1;
         stick_angle = ftCo_GetCStickAngle(fp);
     } else {
@@ -102,6 +107,12 @@ bool ftCo_AttackS4_8008C114(Fighter_GObj* gobj)
         stick_x_sign = fp->facing_dir;
         stick_angle = ftCo_GetLStickAngle(fp);
     } else if (ftCo_800DF1C8(fp)) {
+#ifdef TARGET_PS3
+        // A dash has no tilts.
+        if (ftCo_CStickTiltsOn(fp)) {
+            return false;
+        }
+#endif
         stick_x_sign = fp->input.cstick[0].x >= 0 ? (float) +1 : -1;
         stick_angle = ftCo_GetCStickAngle(fp);
     } else {

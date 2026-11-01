@@ -151,8 +151,17 @@ void dev_finish(void);
 // The present pass's programs: position and texcoord 0 as they are, the texel as it is (the backend builds them).
 void dev_set_present_programs(const uint32_t (*vp)[4], uint32_t vp_n, uint32_t vp_inputs, uint32_t vp_outputs,
                               uint32_t fp_offset, uint32_t fp_regs, uint16_t fp_texcoords);
-// Shows the A8R8G8B8 rectangle at local src (w x h, pitch bytes) on the screen at 4:3, and flips.
-void dev_present(uint32_t src_offset, uint32_t src_pitch, uint32_t w, uint32_t h);
+// A picture over the presented one, centred at a whole scale: A8R8G8B8 pixels in main memory, w a multiple of 16.
+// The device copies them to its own memory when serial changes.
+typedef struct DevOverlay {
+    const uint32_t* pixels;
+    uint16_t w, h;
+    uint32_t serial;
+} DevOverlay;
+// Shows the A8R8G8B8 rectangle at local src (w x h, pitch bytes) on the screen at 4:3 (16:9 when wide), with
+// overlay over it (NULL or no pixels: none), and flips.
+void dev_present(uint32_t src_offset, uint32_t src_pitch, uint32_t w, uint32_t h, bool wide,
+                 const DevOverlay* overlay);
 // fn runs on each vertical blank of the display, on a system thread. Call after dev_init.
 void dev_set_vblank(void (*fn)(void));
 // The flips, the RSX's GET and PUT and the fence labels, as text (step 3 diagnostics).

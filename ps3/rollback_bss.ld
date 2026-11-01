@@ -5,6 +5,7 @@
 */game/src/sysdolphin/baselib/tev.o(.bss.current_tev .bss.num_tex_gens .bss.prev_num_chans .bss.prev_mat_invalid)
 */game/src/sysdolphin/baselib/tev.o(.bss.prev_amb_invalid)
 */game/src/sysdolphin/baselib/pobj.o(.bss.prev_vtxdesclist_array .bss.prev_vtxdesc)
+*/game/src/melee/gr/granime.o(.bss.grAnime_8049EE40)
 */game/src/melee/lb/lbaudio_ax.o(.bss.lbl_80433C64.* .bss.lbl_80441064.*)
 */game/src/sysdolphin/baselib/synth.o(.bss .bss.*)
 */game/src/sysdolphin/baselib/axdriver.o(.bss .bss.*)
@@ -20,6 +21,8 @@
 */game/src/melee/lb/lbarq.o(.bss .bss.*)
 */game/src/sysdolphin/baselib/controller.o(.bss.HSD_PadLibData)
 */game/src/melee/gm/gmmain.o(.bss.gmMain_8046B108 .bss.gmMain_8046B1F8)
+. = ALIGN(128);
 __rb_bss_start = .;
 */game/src/*(.bss .bss.*)
+. = ALIGN(128);
 __rb_bss_end = .;

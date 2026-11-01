@@ -1,5 +1,5 @@
-// Saved game states and logic frames run again (ps3_rollback.h). A state is the game's statics (rollback_data.ld,
-// rollback_bss.ld), the OS heap table and the HSD heap up to its high-water mark.
+// Saved game states and logic frames run again (ps3_rollback.h): the statics, the heap table and the HSD heap. The
+// store is a shadow of the latest state plus, per older frame, the old contents of the 4 KB chunks that changed.
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -10,7 +10,6 @@
 #include <melee/pl/player.h>
 #include <sysdolphin/baselib/gobj.h>
 #include <sysdolphin/baselib/initialize.h>
-#include <sysdolphin/baselib/generator.h>
 #include <sysdolphin/baselib/pobj.h>
 #include <sysdolphin/baselib/random.h>
 #include <sysdolphin/baselib/state.h>
@@ -23,19 +22,30 @@
 #include "../os/mem.h"
 #include "../os/prof.h"
 #include "../os/sys.h"
+#include "rb_shared.h"
 
 extern char __rb_data_start[], __rb_data_end[], __rb_bss_start[], __rb_bss_end[];
-// The particle lists by link (particle.c), for the host's render diagnostic.
-extern HSD_Particle* hsd_804D0908[16];
 
-#define PAGE 4096u
-// Frames whose pad channels are kept, more than the deepest re-run.
+// The SPU program's start (rbjob_cell.c, tests/rbspu_host.c).
+bool rb_start(RbShared* shared) __attribute__((weak));
+
+#define CHUNK 4096u
+// Frames whose pad channels and gameplay values are kept, more than the deepest re-run.
 #define INPUTS 64
 #define MAX_DEPTH 8
-#define NRANGES 4
+#define NRANGES 5
+// The HSD heap is the last range: the scan stops at its top.
+#define R_HEAP (NRANGES - 1)
 #define MAX_KEPT 64
-// Difference runs logged per frame, and frames logged per session.
-#define DIFF_LINES 24
+// Frame starts kept in the undo log, and the most frames it holds.
+#define RING 64
+#define MAX_SPAN 16
+// The heap may grow this much during the match; a match whose heap grows more ends the session (host: 3 MB at most).
+#define HEAP_ROOM (8u << 20)
+// The undo log's room, in chunks.
+#define POOL_CHUNKS 2048
+// Differing chunks logged per frame, and frames logged per session.
+#define DIFF_CHUNKS 24
 #define DIFF_FRAMES 16
 // The survey hashes every page at these session frames and logs what changed between them.
 #define SURVEY_FIRST 120
@@ -49,15 +59,7 @@ typedef struct Range {
     size_t n;
 } Range;
 
-static const char* const range_names[NRANGES] = { "data", "bss", "heap table", "heap" };
-
-// The ranges where the memory was when the state was saved: the heap's end moves.
-typedef struct State {
-    u8* buf;
-    size_t cap;
-    Range ranges[NRANGES];
-    s32 frame;
-} State;
+static const char* const range_names[NRANGES] = { "data", "bss", "heap table", "buffer", "heap" };
 
 typedef struct Input {
     PADStatus stat[4];
@@ -65,8 +67,8 @@ typedef struct Input {
 } Input;
 
 typedef struct Stats {
-    u32 saves, restores, reruns, differ, pages, play_differ;
-    uint64_t save_ticks, restore_ticks, rerun_ticks;
+    u32 saves, restores, reruns, differ, play_differ, chunks, chunks_max, applied;
+    uint64_t save_ticks, restore_ticks, rerun_ticks, hash_ticks;
 } Stats;
 
 // What a match's outcome rests on, per fighter: a frame that runs again must leave the same. The render between
@@ -83,31 +85,52 @@ typedef struct Gameplay {
     FighterView f[12];
 } Gameplay;
 
-static int mode = -1;
-// Sync test: the frames run again after each checked frame, and every how many frames a check comes.
-static int depth = 1, every = 1;
-static bool armed, active, rerunning, ended_log, in_frame;
-// Host only (MELEE_HOST_RB_RENDERDIFF): at the first gameplay difference, what the render had changed before it.
-static bool render_diag;
-// Host only (MELEE_HOST_RB_FIRST): after each check the match goes on from the first run's state.
-static bool first_timeline;
-// Host only (MELEE_HOST_RB_HASHAT): the frame whose first run and re-run start get the survey's page hashes.
-static s32 hash_at = -1;
-static s32 frame, rerun_frame;
-static Input inputs[INPUTS];
-static Gameplay plays[INPUTS];
-static u32 play_frames;
-static State pre[MAX_DEPTH], post[MAX_DEPTH];
-static PsHeap* hsd_heap;
-static uintptr_t heap_end;
-static size_t state_bytes;
-static u32 diff_frames;
-static Stats st, last;
-
 typedef struct Kept {
     OSAlarm* at;
     OSAlarm bytes;
 } Kept;
+
+static int mode = -1;
+// Sync test: the frames run again after each checked frame, and every how many frames a check comes.
+static int depth = 1, every = 1;
+static bool armed, active, rerunning, ended_log, in_frame;
+static s32 frame, rerun_frame;
+static Input inputs[INPUTS];
+static Gameplay plays[INPUTS];
+static u32 play_frames, diff_frames;
+static Stats st, last;
+static PsHeap* hsd_heap;
+static uintptr_t heap_end;
+
+// The store, in one block from the high end of the HSD heap: the game does not use that memory in a match.
+static u8* block;
+static Range ranges[NRANGES];
+static u32 range_first[NRANGES + 1];
+static Range cover;
+static u32 nchunks;
+// Each chunk's memory and its own CHUNK-sized, 128-byte aligned slot in the shadow.
+static RbChunk* chunks;
+static u8* shadow;
+static size_t shadow_size;
+static u8* pool;
+static u32* log_chunk;
+// The SPU job's output, a restore's list of slots to put back, and the restore count per chunk that dedups it.
+static u32* out_buf;
+static RbApply* apply_buf;
+static u32* stamp;
+static u32 epoch;
+static RbShared rb_sh __attribute__((aligned(128)));
+// -1 not tried, 0 the PPE does the work, 1 the SPU program.
+static int spu_state = -1;
+// Entries [tail, head) live; frame k's undo is [frame_start[k], frame_start[k + 1]) for oldest <= k < shadow_frame.
+static u32 head, tail;
+static u32 frame_start[RING];
+static s32 oldest, shadow_frame;
+// Sync test: the chunk hashes after the last run of a frame from the state the store holds for it, and a scratch row.
+static u32* ref_hashes;
+static u32 ref_count[MAX_DEPTH];
+static s32 ref_frame[MAX_DEPTH];
+static u32* now_hashes;
 
 // What a restore leaves as it is: the queued alarms, and the shape blend buffers that the GP may still read.
 static Kept kept[MAX_KEPT];
@@ -122,13 +145,13 @@ static void read_mode(void)
 
 #ifdef __linux__
     s = getenv("MELEE_HOST_RB");
-    render_diag = getenv("MELEE_HOST_RB_RENDERDIFF") != NULL;
-    first_timeline = getenv("MELEE_HOST_RB_FIRST") != NULL;
-    hash_at = getenv("MELEE_HOST_RB_HASHAT") != NULL ? atoi(getenv("MELEE_HOST_RB_HASHAT")) : -1;
 #elif defined(PS3_RB_SYNC)
+#ifndef PS3_RB_EVERY
+#define PS3_RB_EVERY 1
+#endif
     static char buf[32];
 
-    snprintf(buf, sizeof(buf), "sync:%d:1", PS3_RB_SYNC);
+    snprintf(buf, sizeof(buf), "sync:%d:%d", PS3_RB_SYNC, PS3_RB_EVERY);
     s = buf;
 #elif defined(PS3_RB_SURVEY)
     s = "survey";
@@ -149,74 +172,6 @@ static u32 us(uint64_t ticks)
     u32 mhz = (u32) (ps3_sys_timebase_freq() / 1000000);
 
     return mhz != 0 ? (u32) (ticks / mhz) : 0;
-}
-
-static void state_ranges(Range* r)
-{
-    int count;
-    PsHeap* table = ps3_heap_table(&count);
-
-    r[0].p = (u8*) __rb_data_start;
-    r[0].n = (size_t) (__rb_data_end - __rb_data_start);
-    r[1].p = (u8*) __rb_bss_start;
-    r[1].n = (size_t) (__rb_bss_end - __rb_bss_start);
-    r[2].p = (u8*) table;
-    r[2].n = (size_t) count * sizeof(PsHeap);
-    r[3].p = (u8*) hsd_heap->start;
-    r[3].n = hsd_heap->top - hsd_heap->start;
-}
-
-static bool save(State* s, s32 f)
-{
-    Range r[NRANGES];
-    size_t total = 0;
-    u8* out = s->buf;
-    int i;
-
-    state_ranges(r);
-    for (i = 0; i < NRANGES; i++) {
-        total += r[i].n;
-    }
-    if (total > s->cap) {
-        OSReport("rollback: a state of %u KB does not fit in %u KB\n", (u32) (total >> 10), (u32) (s->cap >> 10));
-        return false;
-    }
-    for (i = 0; i < NRANGES; i++) {
-        memcpy(out, r[i].p, r[i].n);
-        out += r[i].n;
-        s->ranges[i] = r[i];
-    }
-    s->frame = f;
-    state_bytes = total;
-    st.saves++;
-    return true;
-}
-
-// Writes only the pages that differ, and tells the GP's caches about them.
-static void copy_back(u8* dst, const u8* src, size_t n)
-{
-    size_t off = 0, run = 0, run_len = 0;
-
-    while (off < n) {
-        size_t chunk = PAGE - ((uintptr_t) (dst + off) & (PAGE - 1));
-
-        chunk = chunk > n - off ? n - off : chunk;
-        if (memcmp(dst + off, src + off, chunk) != 0) {
-            memcpy(dst + off, src + off, chunk);
-            if (run_len == 0) {
-                run = off;
-            }
-            run_len = off + chunk - run;
-            st.pages++;
-        } else if (run_len != 0) {
-            ps3_mem_written(dst + run, (u32) run_len);
-            run_len = 0;
-        }
-        off += chunk;
-    }
-    if (run_len != 0) {
-        ps3_mem_written(dst + run, (u32) run_len);
-    }
 }
 
 static void keep_alarm(OSAlarm* alarm, void* arg)
@@ -262,218 +217,304 @@ static void put_back(void)
     }
 }
 
-static bool in_kept(const u8* p);
+#define MEM(c) ((u8*) (uintptr_t) chunks[c].mem_ea)
+#define SHADOW(c) ((u8*) (uintptr_t) chunks[c].shadow_ea)
+#define LEN(c) (chunks[c].len)
 
-// Host diagnostic: the bytes that differ from the state, kept ones aside.
-static size_t differ_bytes(const State* s)
+// The chunks to scan: all statics and the heap table, and the heap up to its top (above it the heap holds zeros, as
+// the session cleared it, until the top moves past).
+static u32 scan_end(void)
 {
-    const u8* then = s->buf;
-    size_t differ = 0, off;
-    int i;
+    uintptr_t used = hsd_heap->top - hsd_heap->start;
 
-    for (i = 0; i < NRANGES; then += s->ranges[i].n, i++) {
-        for (off = 0; off < s->ranges[i].n; off++) {
-            differ += s->ranges[i].p[off] != then[off] && !in_kept(s->ranges[i].p + off);
+    return range_first[R_HEAP] + (u32) ((used + CHUNK - 1) / CHUNK);
+}
+
+static void evict(void)
+{
+    oldest++;
+    tail = frame_start[oldest % RING];
+}
+
+// Runs one job on the SPU program while this thread waits at low SMT priority, so the GP thread gets the core.
+static u32 run_job(u32 op, u32 n, u32 napply)
+{
+    u32 seq = rb_sh.seq + 1;
+    u64 spins = 0;
+
+    rb_sh.op = op;
+    rb_sh.chunks_ea = (u32) (uintptr_t) chunks;
+    rb_sh.nchunks = n;
+    rb_sh.pool_ea = (u32) (uintptr_t) pool;
+    rb_sh.pool_slots = POOL_CHUNKS;
+    rb_sh.head = head;
+    rb_sh.out_ea = (u32) (uintptr_t) out_buf;
+    rb_sh.apply_ea = (u32) (uintptr_t) apply_buf;
+    rb_sh.napply = napply;
+    __atomic_store_n(&rb_sh.seq, seq, __ATOMIC_RELEASE);
+    while (__atomic_load_n(&rb_sh.done, __ATOMIC_ACQUIRE) != seq) {
+        __asm__ volatile("or 1,1,1\n\tor 2,2,2");
+        if (++spins == 200000000ull) {
+            OSReport("rollback: the SPU program has not finished job %u (op %u)\n", seq, op);
         }
     }
-    return differ;
+    return rb_sh.count;
 }
 
-static void restore_step(const State* s, bool trace, const char* name)
+// Keeps chunk c's shadow, the state of frame shadow_frame, in the undo log (the PPE's way).
+static bool push(u32 c)
 {
-    if (trace) {
-        OSReport("rollback: restore, after %s: %u bytes differ\n", name, (u32) differ_bytes(s));
+    u32 slot;
+
+    if (head - tail == POOL_CHUNKS) {
+        if (oldest >= shadow_frame) {
+            OSReport("rollback: one frame changed more than the undo log's %u chunks\n", POOL_CHUNKS);
+            return false;
+        }
+        evict();
     }
+    slot = head % POOL_CHUNKS;
+    memcpy(pool + (size_t) slot * CHUNK, SHADOW(c), LEN(c));
+    log_chunk[slot] = c;
+    head++;
+    return true;
 }
 
-static void restore(const State* s, bool trace)
+// The SPU's save filled slots from head on, over the oldest when the log was full: those frames go.
+static bool save_spu(u32 end, u32* changed)
 {
-    // The heap's top before its table goes back: blocks above the saved top are newer than the state.
-    uintptr_t top = hsd_heap->top;
-    const u8* in = s->buf;
-    BOOL enabled = OSDisableInterrupts();
-    int i;
+    u32 i;
 
+    *changed = run_job(RB_SAVE, end, 0);
+    if (*changed > POOL_CHUNKS) {
+        OSReport("rollback: one frame changed %u chunks, more than the undo log's %u\n", *changed, POOL_CHUNKS);
+        return false;
+    }
+    for (i = 0; i < *changed; i++) {
+        log_chunk[(head + i) % POOL_CHUNKS] = out_buf[i];
+    }
+    head += *changed;
+    while (head - tail > POOL_CHUNKS) {
+        if (oldest >= shadow_frame) {
+            OSReport("rollback: one frame changed more than the undo log's %u chunks\n", POOL_CHUNKS);
+            return false;
+        }
+        evict();
+    }
+    return true;
+}
+
+// Before frame f runs. The shadow holds frame f - 1's state, or f's after a restore to it.
+static bool save(s32 f)
+{
+    u32 c, end, changed = 0;
+
+    if (hsd_heap->top > (uintptr_t) (ranges[R_HEAP].p + ranges[R_HEAP].n)) {
+        OSReport("rollback: the HSD heap grew %u KB, more than the store's %u KB\n",
+                 (u32) ((hsd_heap->top - hsd_heap->start) >> 10), (u32) (ranges[R_HEAP].n >> 10));
+        return false;
+    }
+    if (f == shadow_frame) {
+        st.saves++;
+        return true;
+    }
+    if (f != shadow_frame + 1) {
+        OSReport("rollback: frame %d saved after frame %d\n", f, shadow_frame);
+        return false;
+    }
+    end = scan_end();
+    if (spu_state == 1) {
+        if (!save_spu(end, &changed)) {
+            return false;
+        }
+    } else {
+        for (c = 0; c < end; c++) {
+            if (memcmp(MEM(c), SHADOW(c), LEN(c)) != 0) {
+                if (!push(c)) {
+                    return false;
+                }
+                memcpy(SHADOW(c), MEM(c), LEN(c));
+                changed++;
+            }
+        }
+    }
+    shadow_frame = f;
+    frame_start[f % RING] = head;
+    while (shadow_frame - oldest > MAX_SPAN) {
+        evict();
+    }
+    st.saves++;
+    st.chunks += changed;
+    st.chunks_max = changed > st.chunks_max ? changed : st.chunks_max;
+    return true;
+}
+
+// Each chunk the frames f to shadow_frame - 1 changed, once, with its oldest saved contents.
+static u32 apply_list(s32 f)
+{
+    u32 n = 0;
+    s32 k;
+
+    epoch++;
+    for (k = f; k < shadow_frame; k++) {
+        u32 b = frame_start[k % RING], e = frame_start[(k + 1) % RING];
+
+        for (; b != e; b++) {
+            u32 slot = b % POOL_CHUNKS, c = log_chunk[slot];
+
+            if (stamp[c] != epoch) {
+                stamp[c] = epoch;
+                apply_buf[n].src_ea = (u32) (uintptr_t) (pool + (size_t) slot * CHUNK);
+                apply_buf[n].mem_ea = chunks[c].mem_ea;
+                apply_buf[n].shadow_ea = chunks[c].shadow_ea;
+                apply_buf[n].len = chunks[c].len;
+                n++;
+            }
+        }
+    }
+    return n;
+}
+
+// The state before frame f: memory back to the shadow, then each changed chunk's oldest saved contents. The GP's
+// caches hear of each chunk written.
+static bool restore(s32 f)
+{
+    BOOL enabled;
+    u32 c, end, napply, i;
+
+    if (f < oldest || f > shadow_frame) {
+        OSReport("rollback: frame %d is not in the store (%d to %d)\n", f, oldest, shadow_frame);
+        return false;
+    }
+    enabled = OSDisableInterrupts();
     keep();
-    for (i = 0; i < NRANGES; i++) {
-        copy_back(s->ranges[i].p, in, s->ranges[i].n);
-        in += s->ranges[i].n;
+    // The top before the table goes back: chunks the frames since the save took lie below it.
+    end = scan_end();
+    napply = apply_list(f);
+    if (spu_state == 1) {
+        u32 n = run_job(RB_RESTORE, end, napply);
+
+        for (i = 0; i < n; i++) {
+            ps3_mem_written(MEM(out_buf[i]), LEN(out_buf[i]));
+        }
+        st.applied += n;
+    } else {
+        for (c = 0; c < end; c++) {
+            if (memcmp(MEM(c), SHADOW(c), LEN(c)) != 0) {
+                memcpy(MEM(c), SHADOW(c), LEN(c));
+                ps3_mem_written(MEM(c), LEN(c));
+                st.applied++;
+            }
+        }
+        for (i = 0; i < napply; i++) {
+            const void* src = (const void*) (uintptr_t) apply_buf[i].src_ea;
+
+            memcpy((void*) (uintptr_t) apply_buf[i].mem_ea, src, apply_buf[i].len);
+            memcpy((void*) (uintptr_t) apply_buf[i].shadow_ea, src, apply_buf[i].len);
+        }
     }
-    // The session cleared the heap above its top, so newer blocks go back to zeros.
-    if (top > hsd_heap->top) {
-        memset((void*) hsd_heap->top, 0, top - hsd_heap->top);
-        ps3_mem_written((void*) hsd_heap->top, (u32) (top - hsd_heap->top));
+    for (i = 0; i < napply; i++) {
+        ps3_mem_written((void*) (uintptr_t) apply_buf[i].mem_ea, apply_buf[i].len);
     }
-    restore_step(s, trace, "the copy");
+    st.applied += napply;
+    head = frame_start[f % RING];
+    shadow_frame = f;
     put_back();
-    restore_step(s, trace, "put_back");
     OSRestoreInterrupts(enabled);
-    restore_step(s, trace, "interrupts on");
     // The restored render caches name GX state of an older frame.
     HSD_StateInvalidate(-1);
-    restore_step(s, trace, "HSD_StateInvalidate");
     st.restores++;
+    return true;
 }
 
-static u32 word_at(const u8* p, size_t off, size_t n)
+// Zeros the bytes of [p, p + n) that lie in [at, at + size).
+static void mask(u8* copy, const u8* p, size_t n, const void* at, size_t size)
 {
-    u32 w = 0;
-    size_t i;
+    const u8* a = at;
+    const u8* lo = a > p ? a : p;
+    const u8* hi = a + size < p + n ? a + size : p + n;
 
-    for (i = 0; i < 4 && off + i < n; i++) {
-        w = w << 8 | p[off + i];
+    if (lo < hi) {
+        memset(copy + (lo - p), 0, (size_t) (hi - lo));
     }
-    return w;
 }
 
-// Bytes that keep() keeps move with the alarm thread or the render, not with the game's logic.
-static bool in_kept(const u8* p)
+// Each scanned chunk's rb_hash, the bytes keep() keeps aside: they move with the alarm thread or the render.
+static u32 hash_state(u32* out)
 {
+    static u8 copy[CHUNK];
+    u32 c, end = scan_end();
     int i;
 
-    for (i = 0; i < nkept; i++) {
-        if (p >= (const u8*) kept[i].at && p < (const u8*) (kept[i].at + 1)) {
-            return true;
-        }
-    }
-    for (i = 0; i < 2; i++) {
-        if (shape_at[i] != NULL && p >= (const u8*) shape_at[i] && p < (const u8*) shape_at[i] + shape_size[i]) {
-            return true;
-        }
-    }
-    return false;
-}
-
-// The runs of a compare that does not log: the host's render diagnostic prints them at the first gameplay difference.
-typedef struct DiffRun {
-    const u8* at;
-    u32 len, now0, now1, then0, then1;
-    int range;
-} DiffRun;
-
-static DiffRun pending[1024];
-static int npending;
-
-// Fighters by address, for heap runs.
-// The live fighter, particle or generator that holds p, or false.
-static bool owner_of(const u8* p, char* where, size_t size)
-{
-    const HSD_Particle* pp;
-    const HSD_Generator* gp;
-    int i, k;
-
-    for (i = 0; i < 6; i++) {
-        for (k = 0; k < 2; k++) {
-            HSD_GObj* gobj = Player_GetEntityAtIndex(i, k);
-            const u8* fp = gobj != NULL ? gobj->user_data : NULL;
-
-            if (fp != NULL && p >= fp && p < fp + sizeof(Fighter)) {
-                snprintf(where, size, "fighter %d.%d +%#x", i, k, (u32) (p - fp));
-                return true;
-            }
-        }
-    }
-    for (i = 0; i < 16; i++) {
-        for (pp = hsd_804D0908[i]; pp != NULL; pp = pp->next) {
-            if (p >= (const u8*) pp && p < (const u8*) (pp + 1)) {
-                snprintf(where, size, "particle (link %d, kind %#x) +%#x", i, pp->kind, (u32) (p - (const u8*) pp));
-                return true;
-            }
-        }
-    }
-    for (gp = hsd_804D78FC; gp != NULL; gp = gp->next) {
-        if (p >= (const u8*) gp && p < (const u8*) (gp + 1)) {
-            snprintf(where, size, "generator (kind %#x, type %#x) +%#x", gp->kind, gp->type, (u32) (p - (const u8*) gp));
-            return true;
-        }
-    }
-    return false;
-}
-
-// Only the runs in fighters, particles and generators: allocators and caches differ after any render.
-static void print_pending(s32 f)
-{
-    int i, others = 0;
-
-    OSReport("rollback: frame %d: before it ran again, memory differed from its first run in %d runs:\n", f, npending);
-    for (i = 0; i < npending; i++) {
-        const DiffRun* r = &pending[i];
-        char where[96];
-
-        if (!owner_of(r->at, where, sizeof(where))) {
-            others++;
-            continue;
-        }
-        OSReport("rollback:   %p (%s), %u bytes: now %08x %08x, first run %08x %08x\n", r->at, where, r->len, r->now0,
-                 r->now1, r->then0, r->then1);
-    }
-    OSReport("rollback:   and %d runs elsewhere\n", others);
-}
-
-// Logs where the memory differs from the state saved after the frame's first run. The number of bytes that differ.
-// Without log, keeps the runs in pending instead and counts nothing.
-static size_t compare(const State* s, s32 f, bool log)
-{
-    const u8* then = s->buf;
-    size_t differ = 0;
-    int lines = 0, i;
-
-    npending = 0;
-
     keep();
-    for (i = 0; i < NRANGES; then += s->ranges[i].n, i++) {
-        const u8* now = s->ranges[i].p;
-        size_t n = s->ranges[i].n, off = 0;
+    if (spu_state == 1) {
+        run_job(RB_HASH, end, 0);
+        memcpy(out, out_buf, (size_t) end * sizeof(u32));
+    }
+    for (c = 0; c < end; c++) {
+        const u8* p = MEM(c);
+        size_t n = LEN(c);
+        bool masked = false;
 
-        if (memcmp(now, then, n) == 0) {
-            continue;
+        for (i = 0; i < nkept && !masked; i++) {
+            masked = (const u8*) kept[i].at < p + n && (const u8*) (kept[i].at + 1) > p;
         }
-        while (off < n) {
-            size_t start, end, gap;
-
-            if (now[off] == then[off] || in_kept(now + off)) {
-                off++;
-                continue;
+        for (i = 0; i < 2 && !masked; i++) {
+            masked = shape_at[i] != NULL && (const u8*) shape_at[i] < p + n &&
+                     (const u8*) shape_at[i] + shape_size[i] > p;
+        }
+        if (masked) {
+            memcpy(copy, p, n);
+            for (i = 0; i < nkept; i++) {
+                mask(copy, p, n, kept[i].at, sizeof(OSAlarm));
             }
-            // A run ends after 16 equal bytes.
-            start = off;
-            for (end = off, gap = 0; end < n && gap < 16; end++) {
-                if (now[end] != then[end] && !in_kept(now + end)) {
-                    differ++;
-                    gap = 0;
-                } else {
-                    gap++;
+            for (i = 0; i < 2; i++) {
+                if (shape_at[i] != NULL) {
+                    mask(copy, p, n, shape_at[i], shape_size[i]);
                 }
             }
-            end -= gap;
-            if (!log && npending < (int) (sizeof(pending) / sizeof(pending[0]))) {
-                DiffRun* r = &pending[npending++];
-
-                r->at = now + start;
-                r->len = (u32) (end - start);
-                r->range = i;
-                r->now0 = word_at(now, start & ~3, n);
-                r->now1 = word_at(now, (start & ~3) + 4, n);
-                r->then0 = word_at(then, start & ~3, n);
-                r->then1 = word_at(then, (start & ~3) + 4, n);
-            } else if (log && lines < DIFF_LINES && diff_frames < DIFF_FRAMES) {
-                OSReport("rollback: frame %d: %s +%#x (%p), %u bytes: now %08x %08x, first run %08x %08x\n", f,
-                         range_names[i], (u32) start, now + start, (u32) (end - start), word_at(now, start & ~3, n),
-                         word_at(now, (start & ~3) + 4, n), word_at(then, start & ~3, n),
-                         word_at(then, (start & ~3) + 4, n));
-            }
-            lines++;
-            off = end;
+            out[c] = rb_hash(copy, (u32) n);
+        } else if (spu_state != 1) {
+            out[c] = rb_hash(p, (u32) n);
         }
     }
-    if (differ != 0 && log) {
-        if (diff_frames < DIFF_FRAMES) {
-            OSReport("rollback: frame %d: %u bytes differ in %d runs after it ran again\n", f, (u32) differ, lines);
+    return end;
+}
+
+static int range_of(u32 c)
+{
+    int i = 0;
+
+    while (i + 1 < NRANGES && c >= range_first[i + 1]) {
+        i++;
+    }
+    return i;
+}
+
+// The first re-run frame against its first run's chunk hashes; logs the chunks that differ.
+static void compare_state(s32 f, const u32* then, u32 then_n)
+{
+    u32 n = hash_state(now_hashes), c, differ = 0;
+    u32 common = n < then_n ? n : then_n;
+
+    for (c = 0; c < common; c++) {
+        if (now_hashes[c] != then[c]) {
+            int r = range_of(c);
+
+            if (differ < DIFF_CHUNKS && diff_frames < DIFF_FRAMES) {
+                OSReport("rollback: frame %d: %s +%#x (%p) differs from its first run\n", f, range_names[r],
+                         (c - range_first[r]) * CHUNK, MEM(c));
+            }
+            differ++;
         }
+    }
+    if (n != then_n && diff_frames < DIFF_FRAMES) {
+        OSReport("rollback: frame %d: the heap's top differs from its first run (%u and %u chunks)\n", f, n, then_n);
+    }
+    if (differ != 0 || n != then_n) {
         diff_frames++;
         st.differ++;
     }
-    return differ;
 }
 
 static void view_gameplay(Gameplay* g)
@@ -559,24 +600,29 @@ static bool compare_gameplay(const Gameplay* then, s32 f, int nth)
 }
 
 static void stop(void);
-static void survey(void);
 
-// The sync test: each frame is saved before and after it runs; then the last depth frames run again from the
-// oldest saved state. The first must leave all memory as its first run did, each the same gameplay values.
+static void hash_ref(s32 j)
+{
+    uint64_t t = ps3_prof_now();
+
+    ref_count[j % MAX_DEPTH] = hash_state(ref_hashes + (size_t) (j % MAX_DEPTH) * nchunks);
+    ref_frame[j % MAX_DEPTH] = j;
+    st.hash_ticks += ps3_prof_now() - t;
+}
+
+// Sync test: the last depth frames run again (saving again, as rollback does) and must give their first runs' gameplay
+// values; the first must also match all memory of the last run from its saved state (depth > 1: the last check's).
 static bool sync_frame(Ps3RbFrame run, void* arg)
 {
     s32 f = frame, from, j;
-    uint64_t t = ps3_prof_now(), t0;
+    uint64_t t = ps3_prof_now();
     bool ended;
 
-    if (!save(&pre[f % depth], f)) {
+    if (!save(f)) {
         stop();
         return run(arg);
     }
     st.save_ticks += ps3_prof_now() - t;
-    if (f == hash_at) {
-        survey();
-    }
     in_frame = true;
     ended = run(arg);
     in_frame = false;
@@ -585,56 +631,51 @@ static bool sync_frame(Ps3RbFrame run, void* arg)
         return true;
     }
     view_gameplay(&plays[f % INPUTS]);
-    t = ps3_prof_now();
-    if (!save(&post[f % depth], f)) {
-        stop();
-        return false;
+    if (depth == 1) {
+        hash_ref(f);
     }
-    st.save_ticks += ps3_prof_now() - t;
     from = f - depth + 1;
     if (from < 0 || f % every != 0) {
         return false;
     }
     t = ps3_prof_now();
-    restore(&pre[from % depth], from == hash_at);
-    t0 = ps3_prof_now();
-    st.restore_ticks += t0 - t;
-    // The pages that differ from the start of that frame's first run, and the restore against its state.
-    if (from == hash_at) {
-        survey();
-        diff_frames = 0;
-        compare(&pre[from % depth], from, true);
+    if (!restore(from)) {
+        stop();
+        return false;
     }
+    st.restore_ticks += ps3_prof_now() - t;
     rerunning = true;
     for (j = from; j <= f; j++) {
-        // What the first run of j started from that this run does not: the render in between, and older re-runs.
-        if (render_diag && j > from) {
-            compare(&pre[j % depth], j, false);
+        t = ps3_prof_now();
+        if (!save(j)) {
+            rerunning = false;
+            stop();
+            return false;
         }
+        st.save_ticks += ps3_prof_now() - t;
         rerun_frame = j;
         in_frame = true;
+        t = ps3_prof_now();
         ended = run(arg);
+        st.rerun_ticks += ps3_prof_now() - t;
         in_frame = false;
         st.reruns++;
         if (ended) {
             OSReport("rollback: frame %d ended the scene when it ran again\n", j);
             break;
         }
-        t = ps3_prof_now();
-        if (j == from) {
-            compare(&post[j % depth], j, true);
+        if (j == from && ref_frame[j % MAX_DEPTH] == j) {
+            t = ps3_prof_now();
+            compare_state(j, ref_hashes + (size_t) (j % MAX_DEPTH) * nchunks, ref_count[j % MAX_DEPTH]);
+            st.hash_ticks += ps3_prof_now() - t;
         }
-        if (compare_gameplay(&plays[j % INPUTS], j, j - from) && render_diag && j > from && play_frames == 1) {
-            print_pending(j);
+        // The next check starts from this frame's re-saved state.
+        if (depth > 1 && j == f - depth + 2) {
+            hash_ref(j);
         }
-        t0 += ps3_prof_now() - t;
+        compare_gameplay(&plays[j % INPUTS], j, j - from);
     }
     rerunning = false;
-    st.rerun_ticks += ps3_prof_now() - t0;
-    // Host diagnostic: back on the first run's timeline, so a difference does not carry into the next checks.
-    if (first_timeline && !ended) {
-        restore(&post[f % depth], false);
-    }
     return ended;
 }
 
@@ -646,20 +687,6 @@ typedef struct Region {
 
 static uint32_t* hashes;
 static size_t nhashes;
-
-static uint32_t hash_page(const u8* p, size_t n)
-{
-    uint64_t h = 0xCBF29CE484222325ull;
-    size_t i;
-
-    for (i = 0; i + 8 <= n; i += 8) {
-        uint64_t w;
-
-        memcpy(&w, p + i, 8);
-        h = (h ^ w) * 0x100000001B3ull;
-    }
-    return (uint32_t) (h ^ h >> 32);
-}
 
 // What part of the state, if any, holds an arena address.
 static const char* arena_part(uintptr_t a)
@@ -687,8 +714,8 @@ static const char* arena_part(uintptr_t a)
 static void log_run(const Region* region, size_t from, size_t to, const char* part, int* lines)
 {
     if (part != NULL && (*lines)++ < 40) {
-        OSReport("rollback: survey: %s +%#x..+%#x (%u KB) changed: %s\n", region->name, (u32) (from * PAGE),
-                 (u32) (to * PAGE), (u32) ((to - from) * PAGE >> 10), part);
+        OSReport("rollback: survey: %s +%#x..+%#x (%u KB) changed: %s\n", region->name, (u32) (from * CHUNK),
+                 (u32) (to * CHUNK), (u32) ((to - from) * CHUNK >> 10), part);
     }
 }
 
@@ -698,7 +725,7 @@ static void survey(void)
 {
     Region regions[4];
     unsigned int arena_size;
-    void* pool;
+    void* dat_pool;
     size_t k = 0;
     bool first = hashes == NULL;
     int r;
@@ -707,8 +734,8 @@ static void survey(void)
     ps3_os_arena(&regions[0].p, &arena_size);
     regions[0].n = arena_size;
     regions[1].name = ".dat pool";
-    ps3_dat_pool_range(&pool, &regions[1].n);
-    regions[1].p = pool;
+    ps3_dat_pool_range(&dat_pool, &regions[1].n);
+    regions[1].p = dat_pool;
     regions[2].name = "data";
     regions[2].p = (u8*) __rb_data_start;
     regions[2].n = (size_t) (__rb_data_end - __rb_data_start);
@@ -717,7 +744,7 @@ static void survey(void)
     regions[3].n = (size_t) (__rb_bss_end - __rb_bss_start);
     if (first) {
         for (r = 0; r < 4; r++) {
-            nhashes += (regions[r].n + PAGE - 1) / PAGE;
+            nhashes += (regions[r].n + CHUNK - 1) / CHUNK;
         }
         hashes = malloc(nhashes * sizeof(*hashes));
         if (hashes == NULL) {
@@ -728,14 +755,14 @@ static void survey(void)
     OSReport("rollback: survey at frame %d: HSD heap %p, top +%u KB of %u KB\n", frame, (void*) hsd_heap->start,
              (u32) ((hsd_heap->top - hsd_heap->start) >> 10), (u32) ((heap_end - hsd_heap->start) >> 10));
     for (r = 0; r < 4; r++) {
-        size_t pages = (regions[r].n + PAGE - 1) / PAGE, i, changed = 0, run_start = 0;
+        size_t pages = (regions[r].n + CHUNK - 1) / CHUNK, i, changed = 0, run_start = 0;
         const char* run_part = NULL;
         int lines = 0;
 
         for (i = 0; i < pages; i++, k++) {
-            const u8* p = regions[r].p + i * PAGE;
-            size_t len = regions[r].n - i * PAGE < PAGE ? regions[r].n - i * PAGE : PAGE;
-            uint32_t h = hash_page(p, len);
+            const u8* p = regions[r].p + i * CHUNK;
+            size_t len = regions[r].n - i * CHUNK < CHUNK ? regions[r].n - i * CHUNK : CHUNK;
+            uint32_t h = rb_hash(p, (u32) len);
             const char* part = NULL;
 
             if (!first && hashes[k] != h) {
@@ -756,11 +783,53 @@ static void survey(void)
     }
 }
 
+// Lays the store out in the block, each part 128-byte aligned for the SPU's DMA: the tables, the hash rows, the undo
+// log, and the shadow with a CHUNK slot per chunk.
+static size_t layout(u8* base)
+{
+    size_t off = 0, need;
+    u32 c = 0;
+    int i;
+
+#define TAKE(ptr, type, count)                                                                                      \
+    need = ((size_t) (count) * sizeof(type) + 127) & ~(size_t) 127;                                                  \
+    if (base != NULL) {                                                                                              \
+        ptr = (type*) (base + off);                                                                                  \
+    }                                                                                                                \
+    off += need
+    TAKE(chunks, RbChunk, nchunks);
+    TAKE(stamp, u32, nchunks);
+    TAKE(out_buf, u32, nchunks + 4);
+    TAKE(apply_buf, RbApply, POOL_CHUNKS);
+    TAKE(log_chunk, u32, POOL_CHUNKS);
+    TAKE(ref_hashes, u32, (size_t) MAX_DEPTH * nchunks);
+    TAKE(now_hashes, u32, nchunks);
+    TAKE(pool, u8, (size_t) POOL_CHUNKS * CHUNK);
+    TAKE(shadow, u8, shadow_size);
+#undef TAKE
+    if (base != NULL) {
+        for (i = 0; i < NRANGES; i++) {
+            size_t o;
+
+            for (o = 0; o < ranges[i].n; o += CHUNK, c++) {
+                chunks[c].mem_ea = (u32) (uintptr_t) (ranges[i].p + o);
+                chunks[c].shadow_ea = (u32) (uintptr_t) (shadow + (size_t) c * CHUNK);
+                chunks[c].len = (u32) (ranges[i].n - o < CHUNK ? ranges[i].n - o : CHUNK);
+                chunks[c].pad = 0;
+                stamp[c] = 0;
+            }
+        }
+    }
+    return off;
+}
+
 static void start(void)
 {
     int count, h = HSD_GetHeap(), i;
     PsHeap* table = ps3_heap_table(&count);
-    size_t cap;
+    uintptr_t limit;
+    size_t size;
+    u32 c;
 
     armed = false;
     if (h < 0 || h >= count || table[h].size < 0) {
@@ -772,28 +841,50 @@ static void start(void)
     // Never allocated in this scene: zeros, so a restore can give blocks above the saved top back as they were.
     memset((void*) hsd_heap->top, 0, heap_end - hsd_heap->top);
     ps3_mem_written((void*) hsd_heap->top, (u32) (heap_end - hsd_heap->top));
-    cap = (size_t) (__rb_data_end - __rb_data_start) + (size_t) (__rb_bss_end - __rb_bss_start) +
-          (size_t) count * sizeof(PsHeap) + (hsd_heap->top - hsd_heap->start);
-    // Room for the heap to grow during the match: it grew about 230 KB in host matches.
-    cap += (heap_end - hsd_heap->top) < (2u << 20) ? heap_end - hsd_heap->top : 2u << 20;
     if (mode == MODE_SYNC) {
-        // On the PS3 an allocation over the free memory can hang lv2 instead of failing.
-        unsigned need_mb = (unsigned) ((2 * (size_t) depth * cap) >> 20) + 1, free_mb = ps3_sys_free_mb();
-
-        if (need_mb + 16 > free_mb) {
-            OSReport("rollback: %d states of %u KB need %u MB, %u MB free\n", 2 * depth, (u32) (cap >> 10), need_mb,
-                     free_mb);
+        if (spu_state < 0) {
+            spu_state = rb_start != NULL && rb_start(&rb_sh) ? 1 : 0;
+        }
+        limit = hsd_heap->top + HEAP_ROOM < heap_end ? hsd_heap->top + HEAP_ROOM : heap_end;
+        // DMA sizes are multiples of 16: the statics' ends are 128-byte aligned, the table is followed by padding.
+        ranges[0].p = (u8*) __rb_data_start;
+        ranges[0].n = (size_t) (__rb_data_end - __rb_data_start);
+        ranges[1].p = (u8*) __rb_bss_start;
+        ranges[1].n = (size_t) (__rb_bss_end - __rb_bss_start);
+        ranges[2].p = (u8*) table;
+        ranges[2].n = ((size_t) count * sizeof(PsHeap) + 15) & ~(size_t) 15;
+        ranges[3] = cover;
+        ranges[R_HEAP].p = (u8*) hsd_heap->start;
+        ranges[R_HEAP].n = (limit - hsd_heap->start) & ~(uintptr_t) 15;
+        nchunks = 0;
+        for (i = 0; i < NRANGES; i++) {
+            range_first[i] = nchunks;
+            nchunks += (u32) ((ranges[i].n + CHUNK - 1) / CHUNK);
+        }
+        range_first[NRANGES] = nchunks;
+        shadow_size = (size_t) nchunks * CHUNK;
+        size = layout(NULL);
+        block = ps_heap_alloc_high(hsd_heap, size);
+        if (block == NULL || (uintptr_t) block < limit) {
+            OSReport("rollback: no room for a %u KB store above the HSD heap's %u KB and %u KB to grow\n",
+                     (u32) (size >> 10), (u32) ((hsd_heap->top - hsd_heap->start) >> 10), HEAP_ROOM >> 10);
+            if (block != NULL) {
+                ps_heap_free(hsd_heap, block);
+                block = NULL;
+            }
             return;
         }
-        for (i = 0; i < depth; i++) {
-            pre[i].buf = malloc(cap);
-            post[i].buf = malloc(cap);
-            pre[i].cap = post[i].cap = cap;
-            if (pre[i].buf == NULL || post[i].buf == NULL) {
-                OSReport("rollback: no memory for %d states of %u KB\n", 2 * depth, (u32) (cap >> 10));
-                stop();
-                return;
-            }
+        layout(block);
+        // The reservation changed the heap's free list: the shadow copies the state after it.
+        for (c = 0; c < nchunks; c++) {
+            memcpy(SHADOW(c), MEM(c), LEN(c));
+        }
+        head = tail = 0;
+        epoch = 0;
+        oldest = shadow_frame = 0;
+        frame_start[0] = 0;
+        for (i = 0; i < MAX_DEPTH; i++) {
+            ref_frame[i] = -1;
         }
     }
     ps3_dat_pool_defer(true);
@@ -803,21 +894,22 @@ static void start(void)
     diff_frames = play_frames = 0;
     memset(&st, 0, sizeof(st));
     memset(&last, 0, sizeof(last));
-    OSReport("rollback: session, %s: data %u KB, bss %u KB, heap table %u bytes, HSD heap %u KB used of %u KB; "
-             "%u KB a state\n",
-             mode == MODE_SYNC ? "sync test" : "survey", (u32) ((__rb_data_end - __rb_data_start) >> 10),
-             (u32) ((__rb_bss_end - __rb_bss_start) >> 10), (u32) (count * sizeof(PsHeap)),
-             (u32) ((hsd_heap->top - hsd_heap->start) >> 10), (u32) ((heap_end - hsd_heap->start) >> 10),
-             (u32) (cap >> 10));
     if (mode == MODE_SYNC) {
-        OSReport("rollback: sync test: %d frames run again every %d frames\n", depth, every);
+        OSReport("rollback: session, sync test (%d frames run again every %d) on the %s: data %u KB, bss %u KB, "
+                 "buffer %u KB, HSD heap %u KB used of %u KB; store %u KB in the HSD heap (shadow %u KB, undo log %u "
+                 "KB), %u MB free\n",
+                 depth, every, spu_state == 1 ? "SPU" : "PPE", (u32) (ranges[0].n >> 10), (u32) (ranges[1].n >> 10),
+                 (u32) (ranges[3].n >> 10), (u32) ((hsd_heap->top - hsd_heap->start) >> 10),
+                 (u32) ((heap_end - hsd_heap->start) >> 10),
+                 (u32) (size >> 10), (u32) (shadow_size >> 10), (POOL_CHUNKS * CHUNK) >> 10, ps3_sys_free_mb());
+    } else {
+        OSReport("rollback: session, survey: HSD heap %u KB used of %u KB\n",
+                 (u32) ((hsd_heap->top - hsd_heap->start) >> 10), (u32) ((heap_end - hsd_heap->start) >> 10));
     }
 }
 
 static void stop(void)
 {
-    int i;
-
     if (active) {
         OSReport("rollback: session end at frame %d: %u saves, %u restores, %u frames run again; memory differed %u "
                  "times, gameplay %u times\n",
@@ -825,14 +917,15 @@ static void stop(void)
         ps3_dat_pool_defer(false);
         ended_log = true;
     }
-    for (i = 0; i < MAX_DEPTH; i++) {
-        free(pre[i].buf);
-        free(post[i].buf);
-        pre[i].buf = post[i].buf = NULL;
+    if (block != NULL) {
+        ps_heap_free(hsd_heap, block);
+        block = NULL;
     }
     free(hashes);
     hashes = NULL;
     nhashes = 0;
+    cover.p = NULL;
+    cover.n = 0;
     active = armed = rerunning = false;
 }
 
@@ -902,6 +995,16 @@ bool ps3_rb_session(void)
     return active;
 }
 
+void ps3_rb_cover(void* p, size_t n)
+{
+    if (((uintptr_t) p & 15) != 0) {
+        OSReport("rollback: buffer %p is not 16-byte aligned; not saved\n", p);
+        return;
+    }
+    cover.p = p;
+    cover.n = n & ~(size_t) 15;
+}
+
 void ps3_rb_trace_state(int* f, bool* rerun, bool* inside, unsigned* pass)
 {
     *f = rerunning ? rerun_frame : frame;
@@ -922,15 +1025,22 @@ void ps3_rb_log(unsigned n)
     d.reruns = st.reruns - last.reruns;
     d.differ = st.differ - last.differ;
     d.play_differ = st.play_differ - last.play_differ;
-    d.pages = st.pages - last.pages;
+    d.chunks = st.chunks - last.chunks;
+    d.applied = st.applied - last.applied;
     d.save_ticks = st.save_ticks - last.save_ticks;
     d.restore_ticks = st.restore_ticks - last.restore_ticks;
     d.rerun_ticks = st.rerun_ticks - last.rerun_ticks;
+    d.hash_ticks = st.hash_ticks - last.hash_ticks;
+    d.chunks_max = st.chunks_max;
+    st.chunks_max = 0;
     last = st;
     ended_log = false;
-    OSReport("heartbeat %u: rollback: frame %d; %u saves (%u us each), %u restores (%u us each, %u pages), %u frames "
-             "run again (%u us each); differed: memory %u, gameplay %u; a state %u KB\n",
-             n, frame, d.saves, d.saves != 0 ? us(d.save_ticks) / d.saves : 0, d.restores,
-             d.restores != 0 ? us(d.restore_ticks) / d.restores : 0, d.pages, d.reruns,
-             d.reruns != 0 ? us(d.rerun_ticks) / d.reruns : 0, d.differ, d.play_differ, (u32) (state_bytes >> 10));
+    OSReport("heartbeat %u: rollback: frame %d; %u saves (%u us, %u chunks each, at most %u), %u restores (%u us, "
+             "%u chunks each), %u frames run again (%u us each), hashes %u us a second; differed: memory %u, gameplay "
+             "%u; undo log %u of %u chunks, heap top +%u KB\n",
+             n, frame, d.saves, d.saves != 0 ? us(d.save_ticks) / d.saves : 0, d.saves != 0 ? d.chunks / d.saves : 0,
+             d.chunks_max, d.restores, d.restores != 0 ? us(d.restore_ticks) / d.restores : 0,
+             d.restores != 0 ? d.applied / d.restores : 0, d.reruns, d.reruns != 0 ? us(d.rerun_ticks) / d.reruns : 0,
+             us(d.hash_ticks), d.differ, d.play_differ, block != NULL ? head - tail : 0, POOL_CHUNKS,
+             hsd_heap != NULL ? (u32) ((hsd_heap->top - hsd_heap->start) >> 10) : 0);
 }

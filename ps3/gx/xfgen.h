@@ -55,9 +55,14 @@ typedef struct XfKey {
 void xf_make_key(const GpState* s, u16 attrs, bool pos3, u16 tev_consts, XfKey* key);
 // Returns the instruction count, or -1.
 int xf_gen(const XfKey* key, VpProg* p);
-// The XF registers the constants read: 0x0A-0x0D and 0x18-0x19 in xf_reg_dirty[0], 0x20-0x26 in xf_reg_dirty[1].
-#define XF_CONST_REGS_0 0x03003C00u
+// The XF registers the constants read: 0x0A-0x0D, 0x18-0x19 and the viewport 0x1A-0x1F in xf_reg_dirty[0],
+// 0x20-0x26 in xf_reg_dirty[1].
+#define XF_VIEWPORT_REGS 0xFC000000u
+#define XF_CONST_REGS_0 (0x03003C00u | XF_VIEWPORT_REGS)
 #define XF_CONST_REGS_1 0x0000007Fu
+
+// Perspective projections into the whole EFB width show 16:9 in its 640 pixels, which the present widens.
+extern bool xf_widescreen;
 
 // The XF part of the constants (C_MTX to C_MISC) as GpState's dirty bits mem_dirty and reg_dirty mark, or all of it
 // when they are NULL. Rows that differ are written as float bits and marked in changed; C_DQ and C_TEV stay.

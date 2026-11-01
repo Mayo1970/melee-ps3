@@ -19,6 +19,11 @@
 
 bool ftPe_Float_CheckContinueInput(Fighter* fp)
 {
+#ifdef TARGET_PS3
+    if (!ftCo_TapJumpOn(fp)) {
+        return (fp->input.held_buttons[0] & HSD_PAD_XY) != 0;
+    }
+#endif
     return fp->input.lstick[0].y >= p_ftCommonData->tap_jump_threshold ||
            fp->input.held_buttons[0] & HSD_PAD_XY;
 }
@@ -98,6 +103,9 @@ void ftPe_Float_IASA(HSD_GObj* gobj)
         bool float_input =
             fp->input.lstick[0].y >= p_ftCommonData->tap_jump_threshold ||
             fp->input.held_buttons[0] & HSD_PAD_XY;
+#ifdef TARGET_PS3
+        float_input = ftPe_Float_CheckContinueInput(fp);
+#endif
         if (!float_input) {
             ftPe_UpdateFloatDir(gobj);
         }

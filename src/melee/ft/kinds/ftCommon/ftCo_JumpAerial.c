@@ -45,6 +45,13 @@ void ft_800CB6EC(Fighter* fp, s32 arg1)
 
 bool ft_did_jump(Fighter* fp, bool arg1)
 {
+#ifdef TARGET_PS3
+    if (!ftCo_TapJumpOn(fp)) {
+        return fp->x1968_jumpsUsed < fp->co_attrs.max_jumps &&
+               (fp->input.pressed_buttons & HSD_PAD_XY) &&
+               !(arg1 && (fp->x68A < p_ftCommonData->x1C));
+    }
+#endif
     if (fp->x1968_jumpsUsed < fp->co_attrs.max_jumps &&
         ((fp->input.lstick[0].y >= p_ftCommonData->tap_jump_threshold &&
           fp->active_timer.lstick.y < p_ftCommonData->tap_jump_window) ||

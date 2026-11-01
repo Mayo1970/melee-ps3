@@ -17,6 +17,11 @@
 #include <melee/ft/kinds/ftNess/ftnessattackhi4.h>
 #include <melee/ft/types.h>
 
+#ifdef TARGET_PS3
+#include "ftCo_AttackHi3.h"
+#include <melee/ft/ftcommon.h>
+#endif
+
 /* 08CA38 */ void doEnter(Fighter_GObj* gobj);
 
 static bool checkLStick(Fighter* fp)
@@ -34,6 +39,11 @@ static bool checkLStick(Fighter* fp)
 bool ftCo_AttackHi4_CheckInput(Fighter_GObj* gobj)
 {
     Fighter* fp = GET_FIGHTER(gobj);
+#ifdef TARGET_PS3
+    if (!checkLStick(fp) && ftCo_800DF2D8(fp) && ftCo_CStickTiltsOn(fp)) {
+        return ftCo_CStickTilt(gobj, ftCo_AttackHi3_CheckInput, false);
+    }
+#endif
     if (checkLStick(fp) || ftCo_800DF2D8(fp)) {
         if (fp->item_gobj != NULL && (ftCo_80094E54(fp) || ftCo_800DF30C(fp)))
         {
@@ -67,6 +77,12 @@ static bool checkLStickNoD0(Fighter* fp)
 bool ftCo_AttackHi4_CheckInputNoD0(HSD_GObj* gobj)
 {
     Fighter* fp = GET_FIGHTER(gobj);
+#ifdef TARGET_PS3
+    // The jump squat has no tilts.
+    if (!checkLStickNoD0(fp) && ftCo_800DF2D8(fp) && ftCo_CStickTiltsOn(fp)) {
+        return false;
+    }
+#endif
     if (checkLStickNoD0(fp) || ftCo_800DF2D8(fp)) {
         if (fp->item_gobj != NULL && (ftCo_80094E54(fp) || ftCo_800DF30C(fp)))
         {

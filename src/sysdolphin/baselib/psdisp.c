@@ -502,6 +502,21 @@ HSD_Particle* particleSort(s32 linkNo, u8 arg1, HSD_Particle** texEdge,
     return var_r3;
 }
 
+#ifdef TARGET_PS3
+// The sort is stable by bucket, so the display's own sort of the same frame changes nothing after this one.
+void psSortParticles(void)
+{
+    HSD_Particle* tex_edge;
+    HSD_Particle* xlu;
+    s32 link;
+
+    for (link = 0; link < PS_NUM_LINK; link++) {
+        HSD_PSDisp_8040C360[link] = psFrameNum ^ 0x80;
+        particleSort(link, psFrameNum, &tex_edge, &xlu);
+    }
+}
+#endif
+
 static inline HSD_Particle* psDispSubPoint(HSD_Particle* pp)
 {
     Vec3 buf[16];

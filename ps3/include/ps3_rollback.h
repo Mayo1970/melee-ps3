@@ -2,6 +2,8 @@
 #ifndef PS3_ROLLBACK_H
 #define PS3_ROLLBACK_H
 
+#include <stddef.h>
+
 #include <dolphin/pad.h>
 
 // One logic frame of the scene loop (gmscene.c); true when the scene ends.
@@ -22,6 +24,8 @@ bool ps3_rb_rerun(void);
 
 // The port: true from the first saved frame to the scene's end.
 bool ps3_rb_session(void);
+// A buffer outside the HSD heap that the logic writes (16-byte aligned): the store saves it until the scene ends.
+void ps3_rb_cover(void* p, size_t n);
 // For traces: the frame running, whether it runs again, whether a logic frame runs now (not the render), and the
 // number of restores so far.
 void ps3_rb_trace_state(int* frame, bool* rerun, bool* inside, unsigned* pass);

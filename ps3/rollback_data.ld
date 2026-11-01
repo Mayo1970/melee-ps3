@@ -15,6 +15,8 @@
 */game/src/melee/lb/lbsnap.o(.data .data.*)
 */game/src/melee/lb/lbmthp.o(.data .data.*)
 */game/src/melee/lb/lbarq.o(.data .data.*)
+. = ALIGN(128);
 __rb_data_start = .;
 */game/src/*(.data .data.*)
+. = ALIGN(128);
 __rb_data_end = .;

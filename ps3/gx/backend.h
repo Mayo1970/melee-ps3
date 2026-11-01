@@ -4,6 +4,7 @@
 #define PS3_GX_BACKEND_H
 
 #include "gp.h"
+#include "rsxdev.h"
 
 // The EFB as the RSX holds it.
 #define EFB_WIDTH 640
@@ -17,6 +18,14 @@ bool gx_rsx_init(void);
 void gx_rsx_present(u32 xfb);
 // Whether the system draws over the game (the XMB). Any thread; the presents read it.
 void gx_rsx_set_overlay(bool on);
+
+// What the presents show besides the game: the picture at 16:9, and a picture over it (pixels NULL: none).
+typedef struct GxRsxScreen {
+    bool wide;
+    DevOverlay overlay;
+} GxRsxScreen;
+// fn fills a GxRsxScreen at each present, on the GP thread.
+void gx_rsx_set_screen(void (*fn)(GxRsxScreen* out));
 
 typedef struct GxRsxStats {
     u32 draws, vertices, dropped_draws, rsx_draws;

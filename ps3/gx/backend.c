@@ -143,6 +143,7 @@ static u32 vp_slot_next;
 #define OVERLAY_TAIL 30
 static volatile bool overlay_on;
 static u32 overlay_presents;
+static void (*screen_fn)(GxRsxScreen* out);
 
 static VtxLayout layouts[LAYOUTS];
 static int nlayouts, layout_next;
@@ -3358,9 +3359,15 @@ bool gx_rsx_init(void)
 void gx_rsx_present(u32 xfb)
 {
     uint64_t t = ps3_prof_now();
+    GxRsxScreen screen = { false, { NULL, 0, 0, 0 } };
     int i;
 
     batch_flush();
+    if (screen_fn != NULL) {
+        screen_fn(&screen);
+    }
+    // From the next frame on: a present uploads all constants again (vc_valid).
+    xf_widescreen = screen.wide;
     for (i = 0; i < XFBS; i++) {
         if (xfbs[i].mem != NULL && xfbs[i].addr == xfb) {
             dev_barrier();
@@ -3369,7 +3376,7 @@ void gx_rsx_present(u32 xfb)
                 dev_debug_dump("xfb", stats.presents + 1, xfbs[i].mem, EFB_PITCH, xfbs[i].width, xfbs[i].height);
             }
 #endif
-            dev_present(xfbs[i].offset, EFB_PITCH, xfbs[i].width, xfbs[i].height);
+            dev_present(xfbs[i].offset, EFB_PITCH, xfbs[i].width, xfbs[i].height, screen.wide, &screen.overlay);
             if (ps3_diag.gx_ab & 512) {
                 dev_finish();
             }
@@ -3405,6 +3412,11 @@ void gx_rsx_present(u32 xfb)
 void gx_rsx_set_overlay(bool on)
 {
     overlay_on = on;
+}
+
+void gx_rsx_set_screen(void (*fn)(GxRsxScreen* out))
+{
+    screen_fn = fn;
 }
 
 void gx_rsx_get_stats(GxRsxStats* out)

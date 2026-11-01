@@ -8,6 +8,7 @@
 
 #include "../os/diag.h"
 #include "gcadapter.h"
+#include "menu.h"
 #include "pad_cell.h"
 
 // L and R also click at the end of their travel.
@@ -121,6 +122,7 @@ BOOL PADInit(void)
         done = true;
         ps3_pad_init();
         ps3_gcadapter_init();
+        ps3_menu_init();
     }
     return TRUE;
 }
@@ -173,38 +175,15 @@ u32 PADRead(PADStatus* status)
         connected |= PAD_CHAN0_BIT >> chan;
     }
     {
-        // As built; SPU off; the black flicker's tests (old bindings, old depth, detector, runs 46-52, no specular);
-        // then the GP's attribute binds a librsx call each, and the GP thread below the main thread.
-        static const unsigned modes[] = { 0,       33554432, 16777216, 4194304, 2097152, 1048576, 524288, 262144,
-                                          131072,  65536,    16,       4096,    8192,    16384,   32768,  2048,
-                                          67108864, 134217728 };
-        static const char* const names[] = { "as built",
-                                             "vertex conversion on the PPE (no SPU jobs)",
-                                             "the old texture bindings after a present (the black flicker)",
-                                             "the old depth output (z + w)",
-                                             "flicker detector: one-frame setup changes go to the log",
-                                             "later draws win depth ties (depth offset)",
-                                             "the old alpha test (two-compare tests off)",
-                                             "fighter shadows sample white",
-                                             "shadow copies read back (slow)",
-                                             "no texture unit holds an EFB copy's destination",
-                                             "an RSX barrier after each draw",
-                                             "an RSX barrier after cached list draws",
-                                             "an RSX barrier after ring draws",
-                                             "an RSX barrier before fragment program changes",
-                                             "an RSX barrier before vertex format changes",
-                                             "specular lights off",
-                                             "the attributes bound a librsx call per slot",
-                                             "the GP thread at priority 1200, below the main thread" };
-        static unsigned held, mode;
+        static bool held;
+        bool select = false;
 
-        // Select is no GameCube button: each press moves the backend to the next A/B mode.
-        if ((pads[0].buttons & PS3_PAD_SELECT) && !held) {
-            mode = (mode + 1) % (sizeof(modes) / sizeof(modes[0]));
-            ps3_diag.gx_ab = modes[mode];
-            OSReport("gx A/B: mode %u: %s\n", mode, names[mode]);
+        // Select is no GameCube button: it opens the PS3 menu.
+        for (k = 0; k < PAD_MAX_CONTROLLERS; k++) {
+            select |= pads[k].connected && (pads[k].buttons & PS3_PAD_SELECT);
         }
-        held = pads[0].buttons & PS3_PAD_SELECT;
+        ps3_menu_pad(status, select && !held);
+        held = select;
     }
     {
         static unsigned held;

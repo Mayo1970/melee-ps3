@@ -182,7 +182,7 @@ $(EBOOT_DIR)/gx_test.pkg: $(EBOOT_DIR)/gx_test.elf
 SPU_CC := $(PS3DEV)/spu/bin/spu-gcc
 SPU_CFLAGS := -O2 -Wall -ffunction-sections -fdata-sections -I$(PS3DEV)/spu/include
 SPU_SRCS := $(ROOT)/ps3/audio/ax_spu.c $(ROOT)/ps3/audio/spu_io_cell.c
-spu: $(BUILD)/spu/ax_spu.elf $(BUILD)/spu/vx_spu.elf
+spu: $(BUILD)/spu/ax_spu.elf $(BUILD)/spu/vx_spu.elf $(BUILD)/spu/rb_spu.elf
 $(BUILD)/spu/ax_spu.elf: $(SPU_SRCS) $(wildcard $(ROOT)/ps3/audio/*.h)
 	@mkdir -p $(dir $@)
 	$(SPU_CC) $(SPU_CFLAGS) -Wl,--gc-sections -s $(SPU_SRCS) -L$(PS3DEV)/spu/lib -lsputhread -o $@
@@ -192,6 +192,12 @@ VX_SPU_SRCS := $(ROOT)/ps3/gx/vxspu.c $(ROOT)/ps3/gx/vxspu_cell.c
 $(BUILD)/spu/vx_spu.elf: $(VX_SPU_SRCS) $(ROOT)/ps3/gx/vx_shared.h $(ROOT)/ps3/gx/vtx_step.h $(ROOT)/ps3/gx/vxspu_io.h
 	@mkdir -p $(dir $@)
 	$(SPU_CC) $(SPU_CFLAGS) -Wl,--gc-sections -s $(VX_SPU_SRCS) -L$(PS3DEV)/spu/lib -lsputhread -o $@
+	@$(PS3DEV)/spu/bin/spu-size $@
+# The rollback's program for the SPU (net/rb_shared.h), with the same source the host builds run on a thread.
+RB_SPU_SRCS := $(ROOT)/ps3/net/rbspu.c $(ROOT)/ps3/net/rbspu_cell.c
+$(BUILD)/spu/rb_spu.elf: $(RB_SPU_SRCS) $(ROOT)/ps3/net/rb_shared.h $(ROOT)/ps3/net/rbspu_io.h
+	@mkdir -p $(dir $@)
+	$(SPU_CC) $(SPU_CFLAGS) -Wl,--gc-sections -s $(RB_SPU_SRCS) -L$(PS3DEV)/spu/lib -lsputhread -o $@
 	@$(PS3DEV)/spu/bin/spu-size $@
 
 # Melee as an EBOOT (ppu toolchain): the game, the SDK libraries the port builds, the port, the SPU program and
@@ -206,12 +212,13 @@ GAME_SDK_SRCS := $(SDK_AUDIO_SRCS) $(SDK_GX_SRCS) libs/dolphin/src/dolphin/os/OS
                  $(addprefix libs/dolphin/src/dolphin/axfx/,axfx.c chorus.c delay.c reverb_hi.c reverb_std.c)
 GAME_PORT_SRCS := $(addprefix ps3/,dvd/dvd.c os/intr.c os/globals.c os/os.c os/ostime.c os/heap.c \
                   os/alarm.c os/thread.c os/mem.c os/ppcarch.c audio/sdk_audio.c gx/fifo.c gx/gp.c sdk/mtx.c \
-                  sdk/trig.c sdk/card.c sdk/stubs.c sdk/thp.c pad/pad.c vi/vi.c dat/pool.c dat/trace.c os/calltrace.c \
+                  sdk/trig.c sdk/card.c sdk/stubs.c sdk/thp.c pad/pad.c pad/menu.c vi/vi.c dat/pool.c dat/trace.c \
+                  os/calltrace.c \
                   os/mainprof.c net/rollback.c) $(GX_RSX_SRCS) \
                   $(EXTRA_SRCS)
 # The PSL1GHT side, which no SDK header meets.
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_cell.c os/sys_cell.c os/udplog_cell.c audio/audio_cell.c \
-                  gx/rsxdev_cell.c gx/vxjob_cell.c pad/pad_cell.c pad/gcadapter_cell.c)
+                  gx/rsxdev_cell.c gx/vxjob_cell.c pad/pad_cell.c pad/gcadapter_cell.c net/rbjob_cell.c)
 DAT_SRCS := $(addprefix tools/dat-cli/native/src/,archive.c reader.c hsd.c) ps3/dat/lookup.c ps3/dat/motion.c \
             $(sort $(shell cd $(ROOT) && find $(DAT_SCHEMA) -name '*.c' 2> /dev/null))
 # Their allocations come from the .dat pool; GeoTypes.h stands in for Aurora's.
@@ -222,13 +229,13 @@ DAT_FLAGS := -include $(ROOT)/ps3/dat/redirect.h -I$(ROOT)/tools/dat-cli/native/
 ifeq ($(TOOLCHAIN),linux)
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_host.c tests/sys_host.c tests/udplog_host.c tests/audio_host.c \
                   audio/ax_spu.c tests/rsxdev_soft.c tests/rsx_interp.c tests/pad_host.c tests/host_start.c \
-                  tests/vxspu_host.c gx/vxspu.c)
+                  tests/vxspu_host.c gx/vxspu.c tests/rbspu_host.c net/rbspu.c)
 HOST_WRAP := -Wl,--wrap=gm_ChangeGameModeAfterCurrentScene,--wrap=gm_LoadAnnouncer
 endif
 GAME_OBJ = $(patsubst %.c,$(GAME_DIR)/%.o,$(1))
 GAME_OBJS := $(call GAME_OBJ,$(GAME_SRCS) $(GAME_SDK_SRCS) $(GAME_PORT_SRCS) $(GAME_CELL_SRCS) $(DAT_SRCS))
 ifneq ($(TOOLCHAIN),linux)
-GAME_OBJS += $(GAME_DIR)/ps3/os/setjmp.o $(GAME_DIR)/ax_spu_elf.o $(GAME_DIR)/vx_spu_elf.o
+GAME_OBJS += $(GAME_DIR)/ps3/os/setjmp.o $(GAME_DIR)/ax_spu_elf.o $(GAME_DIR)/vx_spu_elf.o $(GAME_DIR)/rb_spu_elf.o
 endif
 # Untyped lookups become typed ones, parses free the native data of the buffers they reuse (ps3/dat/lookup.c);
 # the trace logs typed lookups (step 3). The scene loop's logic, render and XFB calls are timed (os/mainprof.c).
@@ -249,6 +256,7 @@ ifeq ($(TOOLCHAIN),linux)
 $(call GAME_OBJ,ps3/dvd/dvd.c): GAME_FLAGS := -DPS3_APP_DIR=\"$(DVD_APP_DIR)\"
 # The disc folder is read-only there: the memory card lives in the build tree.
 $(call GAME_OBJ,ps3/sdk/card.c): GAME_FLAGS := -DPS3_CARD_DIR=\"build/card\"
+$(call GAME_OBJ,ps3/pad/menu.c): GAME_FLAGS := -DPS3_OPTIONS_PATH=\"build/options.txt\"
 $(call GAME_OBJ,ps3/tests/audio_host.c): GAME_FLAGS := -DHOST_AUDIO_REALTIME
 endif
 
@@ -270,6 +278,10 @@ $(GAME_DIR)/vx_spu_elf.o: $(BUILD)/spu/vx_spu.elf
 	@mkdir -p $(GAME_DIR)
 	cd $(dir $<) && bin2s -a 128 vx_spu.elf > $(CURDIR)/$(GAME_DIR)/vx_spu_elf.S
 	$(CC) $(ARCH) -x assembler-with-cpp -c $(GAME_DIR)/vx_spu_elf.S -o $@
+$(GAME_DIR)/rb_spu_elf.o: $(BUILD)/spu/rb_spu.elf
+	@mkdir -p $(GAME_DIR)
+	cd $(dir $<) && bin2s -a 128 rb_spu.elf > $(CURDIR)/$(GAME_DIR)/rb_spu_elf.S
+	$(CC) $(ARCH) -x assembler-with-cpp -c $(GAME_DIR)/rb_spu_elf.S -o $@
 
 # The two fonts the game reads from its DOL's data, as the matching build extracts them (config.yml).
 $(GAME_DIR)/include/sysdolphin/baselib/debug_font.inc: $(DOL)

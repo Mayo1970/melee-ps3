@@ -146,4 +146,13 @@ ftCommon_SetSelfMovementFromGroundedMovement_NoFriction(Fighter_GObj*);
 
 /* 0804FC */ void ftCommon_800804FC(Fighter*);
 
+#ifdef TARGET_PS3
+// The PS3 menu's options of the human at fp's port (ps3_options.h); CPUs keep the game's controls.
+bool ftCo_TapJumpOn(Fighter* fp);
+bool ftCo_CStickTiltsOn(Fighter* fp);
+// A smash check's C-stick input as a tilt: check runs with the C-stick as the control stick and A pressed.
+// face: fp faces the C-stick first, as a forward smash does. True when the tilt started.
+bool ftCo_CStickTilt(Fighter_GObj* gobj, bool (*check)(Fighter_GObj*), bool face);
+#endif
+
 #endif

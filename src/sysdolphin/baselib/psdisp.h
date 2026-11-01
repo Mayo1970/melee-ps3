@@ -10,5 +10,9 @@
 void psDispParticles(u32 target_link, u32 sw);
 HSD_Particle* particleSort(s32, u8, HSD_Particle**, HSD_Particle**);
 void setVtxDesc(s32);
+#ifdef TARGET_PS3
+// Sorts every link's particles as the display does: the particle update walks them in that order.
+void psSortParticles(void);
+#endif
 
 #endif

@@ -445,6 +445,8 @@ static u32 small_bits(u32 k)
 _Static_assert(C_MTX % 32 == 0 && C_NRM % 32 == 0 && C_POST % 32 == 0 && C_LIGHT % 32 == 0, "rows by word");
 _Static_assert(C_MISC < C_LIGHT + 64, "C_LIGHT to C_MISC fit a u64");
 
+bool xf_widescreen;
+
 void xf_constants(const GpState* s, const u32* mem_dirty, const u32* reg_dirty, float c[C_COUNT][4], u32* changed)
 {
     // The dirty words of position and texture matrices (XF 0x000-0x0FF) and of post-transform matrices
@@ -518,7 +520,7 @@ void xf_constants(const GpState* s, const u32* mem_dirty, const u32* reg_dirty, 
         hi |= (u64) row_words(c, C_LIGHT + r + 3, l[10], l[11], l[12], F_ONE) << (r + 3);
         hi |= (u64) row_words(c, C_LIGHT + r + 4, l[13], l[14], l[15], 0) << (r + 4);
     }
-    if (regs1 & XF_CONST_REGS_1) {
+    if ((regs1 & XF_CONST_REGS_1) || (regs0 & XF_VIEWPORT_REGS)) {
         const u32* p = &x[0x20];
 
         // GX_ORTHOGRAPHIC in bit 0 of 0x26.
@@ -526,6 +528,20 @@ void xf_constants(const GpState* s, const u32* mem_dirty, const u32* reg_dirty, 
             hi |= (u64) row_words(c, C_PROJ, p[0], 0, 0, p[1]) << (C_PROJ - C_LIGHT);
             hi |= (u64) row_words(c, C_PROJ + 1, 0, p[2], 0, p[3]) << (C_PROJ + 1 - C_LIGHT);
             hi |= (u64) row_words(c, C_PROJ + 3, 0, 0, 0, F_ONE) << (C_PROJ + 3 - C_LIGHT);
+        } else if (xf_widescreen && x[0x1A] == 0x43A00000u) {
+            // A viewport 320 pixels wide on each side of its centre: the EFB's, not a render to a texture.
+            float sx, ox;
+            u32 wx, wo;
+
+            memcpy(&sx, &p[0], 4);
+            memcpy(&ox, &p[1], 4);
+            sx *= 0.75f;
+            ox *= 0.75f;
+            memcpy(&wx, &sx, 4);
+            memcpy(&wo, &ox, 4);
+            hi |= (u64) row_words(c, C_PROJ, wx, 0, wo, 0) << (C_PROJ - C_LIGHT);
+            hi |= (u64) row_words(c, C_PROJ + 1, 0, p[2], p[3], 0) << (C_PROJ + 1 - C_LIGHT);
+            hi |= (u64) row_words(c, C_PROJ + 3, 0, 0, F_MINUS_ONE, 0) << (C_PROJ + 3 - C_LIGHT);
         } else {
             hi |= (u64) row_words(c, C_PROJ, p[0], 0, p[1], 0) << (C_PROJ - C_LIGHT);
             hi |= (u64) row_words(c, C_PROJ + 1, 0, p[2], p[3], 0) << (C_PROJ + 1 - C_LIGHT);

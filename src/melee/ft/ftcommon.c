@@ -46,6 +46,11 @@
 #include <sysdolphin/baselib/jobj.h>
 #include <sysdolphin/baselib/rumble.h>
 
+#ifdef TARGET_PS3
+#include "kinds/ftCommon/ftCo_0A01.h"
+#include <ps3_options.h>
+#endif
+
 const Vec3 ftCo_803B74A0 = { 0 };
 
 void ftCommon_CalcGroundAccel_Deaccel(Fighter* fp, float friction)
@@ -1811,3 +1816,39 @@ void ftCommon_800804FC(Fighter* fp)
         fp->dmg.x18C8 = -1;
     }
 }
+
+#ifdef TARGET_PS3
+bool ftCo_TapJumpOn(Fighter* fp)
+{
+    return fp->pad_port >= 4 || ftCo_IsCpuControlled(fp) || ps3_options.tap_jump[fp->pad_port];
+}
+
+bool ftCo_CStickTiltsOn(Fighter* fp)
+{
+    return fp->pad_port < 4 && !ftCo_IsCpuControlled(fp) && ps3_options.cstick_tilts[fp->pad_port];
+}
+
+bool ftCo_CStickTilt(Fighter_GObj* gobj, bool (*check)(Fighter_GObj*), bool face)
+{
+    Fighter* fp = GET_FIGHTER(gobj);
+    float x = fp->input.lstick[0].x, y = fp->input.lstick[0].y, facing = fp->facing_dir;
+    HSD_Pad pressed = fp->input.pressed_buttons;
+    bool started;
+
+    fp->input.lstick[0].x = fp->input.cstick[0].x;
+    fp->input.lstick[0].y = fp->input.cstick[0].y;
+    fp->input.pressed_buttons |= HSD_PAD_A;
+    if (face) {
+        fp->facing_dir = fp->input.cstick[0].x >= 0 ? +1.0F : -1.0F;
+    }
+    started = check(gobj);
+    if (!started) {
+        fp->facing_dir = facing;
+    }
+    // The tilt reads the real control stick from its first frame on.
+    fp->input.lstick[0].x = x;
+    fp->input.lstick[0].y = y;
+    fp->input.pressed_buttons = pressed;
+    return started;
+}
+#endif

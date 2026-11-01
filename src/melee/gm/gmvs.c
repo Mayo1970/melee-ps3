@@ -47,6 +47,7 @@
 #include <sysdolphin/baselib/controller.h>
 #include <sysdolphin/baselib/gobjproc.h>
 #ifdef TARGET_PS3
+#include <ps3_options.h>
 #include <ps3_rollback.h>
 #endif
 
@@ -2052,6 +2053,7 @@ void fn_8016E730(StartMeleeData* arg0)
         Stage_80225074(fn_8016E5C0(arg0));
     }
 #ifdef TARGET_PS3
+    ps3_menu_match(true);
     ps3_rb_match_start();
 #endif
 }

@@ -30,6 +30,12 @@
 ftCo_JumpInput ftCo_Jump_GetInput(Fighter_GObj* gobj)
 {
     Fighter* fp = GET_FIGHTER(gobj);
+#ifdef TARGET_PS3
+    if (!ftCo_TapJumpOn(fp)) {
+        return (fp->input.pressed_buttons & HSD_PAD_XY) ? JumpInput_XY
+                                                        : JumpInput_None;
+    }
+#endif
     if ((fp->input.lstick[0].y >= p_ftCommonData->tap_jump_threshold) &&
         (fp->active_timer.lstick.y < p_ftCommonData->tap_jump_window))
     {
@@ -67,9 +73,15 @@ bool fn_800CAF78(Fighter_GObj* gobj)
         return ftCo_800C5A50(gobj);
     }
 
+#ifdef TARGET_PS3
+    if (ftCo_TapJumpOn(fp) &&
+        fp->input.lstick[0].y >= p_ftCommonData->relaxed_tap_jump_threshold &&
+        fp->active_timer.lstick.y < p_ftCommonData->tap_jump_window)
+#else
     if ((fp->input.lstick[0].y >=
          p_ftCommonData->relaxed_tap_jump_threshold) &&
         (fp->active_timer.lstick.y < p_ftCommonData->tap_jump_window))
+#endif
     {
         ftCo_KneeBend_Enter(gobj, JumpInput_LStick);
         return true;

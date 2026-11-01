@@ -783,7 +783,7 @@ void dev_set_present_programs(const u32 (*vp)[4], u32 vp_n, u32 vp_inputs, u32 v
 {
 }
 
-void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
+void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h, bool wide, const DevOverlay* overlay)
 {
     char path[300];
     FILE* f;

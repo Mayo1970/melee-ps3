@@ -52,6 +52,11 @@ bool ftCo_800C1D38(Fighter_GObj* gobj)
 
 bool ftCo_800C1E0C(Fighter* fp)
 {
+#ifdef TARGET_PS3
+    if (!ftCo_TapJumpOn(fp)) {
+        return fp->x67E < p_ftCommonData->x250;
+    }
+#endif
     if (fp->x67E < p_ftCommonData->x250 ||
         fp->input.lstick[0].y >= p_ftCommonData->tap_jump_threshold)
     {
