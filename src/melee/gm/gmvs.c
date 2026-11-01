@@ -47,6 +47,7 @@
 #include <sysdolphin/baselib/controller.h>
 #include <sysdolphin/baselib/gobjproc.h>
 #ifdef TARGET_PS3
+#include <ps3_netplay.h>
 #include <ps3_options.h>
 #include <ps3_rollback.h>
 #endif
@@ -2000,6 +2001,9 @@ void fn_8016E730(StartMeleeData* arg0)
     HSD_GObj* temp_r30;
     VsSceneController* r30;
 
+#ifdef TARGET_PS3
+    ps3_net_match_begin();
+#endif
     db_Setup();
     gm_SetDbPauseInputHandlers(gm_AnyControllerPressedStart,
                                gm_AnyControllerPressedZ);

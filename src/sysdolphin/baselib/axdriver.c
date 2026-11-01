@@ -9,6 +9,9 @@
 #include <dolphin/axfx.h>
 #include <dolphin/dvd.h>
 #include <dolphin/os.h>
+#ifdef TARGET_PS3
+#include <ps3_rollback.h>
+#endif
 
 static HSD_SM AXDriver_804C45A0[0x60];
 static HSD_SM* AXDriver_804C5920[0x40];
@@ -586,6 +589,12 @@ int HSD_AudioSFXStartParam(int sound_id, u8 volume, u8 pan, int track,
     int bank_mem;
     bool enabled;
 
+#ifdef TARGET_PS3
+    // A logic frame that runs again (ps3_rollback.h) takes its last run's voice instead of a new one.
+    if (ps3_rb_rerun()) {
+        return ps3_rb_sound_rerun(sound_id);
+    }
+#endif
     bank_idx = sound_id / 10000;
     bank_mem = sound_id % 10000;
 
@@ -659,6 +668,9 @@ int HSD_AudioSFXStartParam(int sound_id, u8 volume, u8 pan, int track,
     AXDriverLink(v, &AXDriver_804D7794);
     AXDriver_804D77D0++;
     OSRestoreInterrupts(enabled);
+#ifdef TARGET_PS3
+    ps3_rb_sound_started(sound_id, v->unk);
+#endif
 
     return v->unk;
 }

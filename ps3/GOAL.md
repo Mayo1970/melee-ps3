@@ -1270,15 +1270,99 @@ Step 1 (2026-11-01, `ps3/net/rollback.c`, `include/ps3_rollback.h`):
   stream's 5 each 1.75 s) at about frames 1,900 and 3,900: two transformations, so a return to normal between them.
 - Step 1 done.
 
-Status (2026-11-01): step 2 is next and not started; it starts when the user says so (the user works on another task
-too). The user does not have two PS3s on the LAN, so step 2's network test needs another setup (open decision).
+Step 2 (2026-11-01). The user's decisions: the test is over the internet with a friend's PS3; the matchmaker (8-digit
+code, LAN broadcast and a UDP server) comes into this step; player 1 sets up each match in the normal VS menus (port 2
+as a CPU for the friend's fighter), player 2 starts any VS match and takes player 1's setup; input delay is a setting,
+default 2 frames (Slippi's), with rollback for the rest.
+- `net/netplay.c`, `include/ps3_netplay.h`: one UDP socket (port 51000, `net/link.h`: `net/link_cell.c` on PSL1GHT,
+  `tests/link_host.c` on the host), a thread that receives and resends, the main thread sends each frame's inputs.
+- The PS3 menu (`pad/menu.c`, 400x256 now) has INPUT DELAY (0-7 frames, `netplay_delay` in `options.txt`) and
+  NETPLAY (the code, the pairing's state, a status line).
+- Pairing: the PS3 menu's NETPLAY row takes 8 digits. The console broadcasts the code on the LAN and
+  registers it with the matchmaker (`tools/matchmaker.py`, UDP 51001, Python 3 without packages): the first console
+  on a code is player 1. The matchmaker answers both with the other's public and LAN address; both send HELLOs to
+  both until each hears the other (hole punching). A different EBOOT (a hash of `.text`) refuses the pairing. Paired
+  consoles keep alive every 500 ms; 15 s of silence ends the pairing. The matchmaker's address: `NET_SERVER=host:port`
+  at build, or `netplay_server=` in `USRDIR/options.txt`.
+- Handshake at the end of `gmVsMelee_EnterVs` and `gmVsMelee_EnterSuddenDeath` (`gmvsmelee.c`): player 1 sends its
+  start data (rules up to their callbacks, the six players), ports 1 and 2 as humans, an RNG seed and its tap jump and
+  C-stick options; player 2 replaces its own, then its preload cache, sound banks and announcer follow it (as the CSS
+  and SSS exits do), and answers with its options. Callbacks that differ (another VS mode) refuse it. B or 120 s ends
+  the wait; the match is then local. `fn_8016E730` sets the seed and each port's options (`ps3_net_match_begin`).
+- Session (`rollback.c`, netplay mode): each tick takes the inputs that arrived; if a frame ran with a remote input
+  other than the real one, the state goes back to it and the frames run again; then the tick's frame runs with the
+  remote input predicted (the last one held). The local input of a tick is for frame + delay. Frames whose remote
+  input is known are not saved (`save` keeps only the newest state after such a gap). At most 7 frames run on
+  predictions; past that, and at frame 0 until the other console's packets come, ticks run no frame (their pad
+  entries dropped, `HSD_PadDropQueueEntry`). Time sync: each console sends its frame advantage; the one ahead by more
+  than a frame skips a tick, at most every 30 frames. A scene end in a frame with a predicted input waits for the real
+  one; if it was wrong, the frames run again and the match may go on.
+- Desync check: every 30th frame's gameplay values (RNG seed, stocks, fighters' motion, position, velocity, percent,
+  shield...) hashed when final, sent and compared. A desync logs both consoles' values (the other console sends its
+  own), so one log shows both sides.
+- Re-run sounds: a frame's re-run takes the voices its last run started for the same sounds, and starts no new ones;
+  the voices it does not take again stop (`HSD_AudioSFXStartParam`, `axdriver.c`). The sync test uses it too.
+- Rumble: the other console's port does not rumble, ours rumbles the local pad (`PADControlMotor`).
+- The heartbeat's netplay line: frame, confirmed frame, the other console's frame, round trip, advantages,
+  rollbacks, stalls, packets, desyncs.
+- Host test (`tools/hostnet.sh`): two host instances in one container, the matchmaker on the PC
+  (`host.docker.internal`), a generated pad script each; `MELEE_HOST_NET_LAG=ms:jitter:loss` delays or drops what
+  arrives (`tests/link_host.c`), `MELEE_HOST_NET_DELAY` sets the input delay, `MELEE_HOST_NET_NOLAN` turns the LAN
+  broadcast off. Docker's proxy shows the matchmaker 127.0.0.1, so the instances connect by their LAN addresses.
+- Host results (Fox and Peach on Battlefield, items off):
+  - Run 1: pairing by LAN broadcast; one side became paired from a HELLO without answering it, the other timed out.
+    Fixed: every HELLO gets an answer.
+  - Run 2 (matchmaker, delay 2, no lag): 8,446 frames, 0 rollbacks (each remote input came before its frame),
+    0 desyncs.
+  - Run 3 (delay 0, 40 ms lag, 10 ms jitter, 2% loss): 7,650 frames, 279 and 261 rollbacks, 0 desyncs, no fault.
+    qemu runs it at about 30 frames a second: a save there takes about 30 ms (1 ms on the console, run 64).
+  - Run 4 (delay 1, 30 ms lag, 10 ms jitter, 2% loss): 283 and 252 rollbacks, 144 and 145 checks compared, 0 desyncs.
+  - Not run on the host: player 2's path through the VS menus (the host starts the debug VS mode), a desync (the
+    log and the exchange of values), real routers (hole punching), the console's sockets.
+- Matchmaker: a 1 s socket timeout, as Python on Windows does not stop a blocked `recvfrom` for Ctrl+C or a signal.
+- Package: `.got` 0x5908, 0 `r2off` stubs, about 24.8 MB in loaded segments (`build/ppu/game/melee.pkg`), with the
+  user's icon (`ps3/ICON0.PNG`, 320x176). It has no matchmaker address (`NET_SERVER` empty): without
+  `netplay_server=` in `options.txt`, only the LAN broadcast pairs.
+- `tools/hostnet.sh` ends the matchmaker by its Windows PID: devkitPro's MSYS2 Python does not get Git Bash's signals.
+- Risks known before the hardware test: Corneria's stage logic reads whether a sound still plays
+  (`Ground_801C54DC`, `grcorneria.c` 2572), which the audio thread decides; player 2's heap history differs from
+  player 1's (its own menus), so a read of memory never written would differ; the desync check names the frame.
+
+Hardware test (the user and a friend, over the internet):
+1. The matchmaker runs where both consoles reach UDP 51001: `python tools/matchmaker.py` on a machine with a public
+   IP, or on a PC whose router forwards UDP 51001 to it (and whose firewall lets Python receive on it).
+2. Both consoles install the same package, built with `NET_SERVER=<address>` (or `netplay_server=<address>` in
+   `USRDIR/options.txt` on each).
+3. Both: Select, NETPLAY, A, the same 8 digits, A. The row shows PLAYER 1 or PLAYER 2.
+4. Player 1: VS mode, own fighter in port 1, the friend's in port 2 (as a CPU), the stage. Player 2: VS mode, any
+   fighter and any CPU, any stage. Both start.
+5. The UDP log of the user's console has the netplay lines; a desync logs both consoles' values there.
+
+- Netplay run 1 (2026-11-01, internet, `build/run65_udp.txt`, the matchmaker on the user's PC, 94.35.119.59): the
+  user's console (player 1, behind a router that keeps ports) and the friend's (84.221.251.196, a router that gives
+  each destination its own port). Found on the way:
+  - Hole punching failed: each console sent to the port the matchmaker saw, which the friend's router keeps for the
+    matchmaker only. Fix on the user's side: the router forwards UDP 51000 to the PS3; the friend's HELLOs come
+    in from their own port, and the console answers to it.
+  - The matchmaker kept a waiting console 120 s: the friend paired with a console that had quit. Now 5 s without a
+    registration (consoles register each second). A second search from the same address paired with itself: now it
+    replaces the first.
+  - The friend's console left a pairing once, most likely by A on the NETPLAY row (A stops a pairing).
+  - One handshake waited 120 s for player 2's answer while the pair stayed up: player 2 did not start in time.
+  - Then match 1: Bowser and Peach on Fountain of Dreams, input delay 2. 7,705 frames (2 min 8 s) to the match's
+    end and the results screen; round trip 36 ms on average (83 at most); 154 rollbacks (188 frames run again,
+    6 at most, 17 in one second at most); 4 time sync stalls, 0 waits; 0 desyncs in 257 checks. Saves 1.4 ms,
+    restores 1.5 ms, a frame run again 2.4 ms; logic about 1 ms and render about 4 ms a frame, 60 frames a second.
+  - Hardware test SUCCESS (2026-11-01, the user). Step 2 done. The user's setup: `netplay_server=94.35.119.59:51001`
+    in `options.txt` on both consoles; the router forwards UDP 51001 to the PC (192.168.178.99, with a firewall rule)
+    and UDP 51000 to the PS3.
 
 ## Goal: the PS3 menu (2026-11-01)
 
 Set by the user, before netplay step 2: Select opens a menu of extra features; netplay becomes an entry of it later.
 The user's decisions: tap jump and the C-stick mode are per port; the menu opens only outside matches.
 
-Done (not yet tested on hardware):
+Done; hardware test SUCCESS (2026-11-01, the user):
 - `pad/menu.c`, `include/ps3_options.h`: Select on any DS3 pad, or Up with Z held on any pad, opens it; B, Start or
   Select close it. While open, and until the closing buttons are up, the game gets the pads at rest. A match start
   (`fn_8016E730`, so demos too) closes it; `ps3_menu_match` in `gmvs.c` and `gmscene.c`. The GX A/B modes on Select
@@ -1497,8 +1581,6 @@ The user's list of what is left to address. Details of each are in the run entri
   `datgen.sh` forces `ps3/tools/datgen/gx_wg.h` into the DWARF build.
 - `OSSleepThread`, `OSWakeupThread` and `OSInitThreadQueue` in `ps3/os/intr.c` are minimal (one condition for
   all queues); `GXWaitDrawDone` and `VIWaitForRetrace` use them.
-- Netplay step 2: the first network test needs two consoles, and the user has only one PS3 on the LAN. The test
-  setup is not chosen yet.
 
 ## Findings
 

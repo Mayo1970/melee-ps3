@@ -21,6 +21,11 @@ bool ps3_rb_frame(Ps3RbFrame frame, void* arg);
 bool ps3_rb_pad(PADStatus stat[4], bool have);
 // True while a logic frame runs again: the pad queue and the sound stay as they are.
 bool ps3_rb_rerun(void);
+// HSD_AudioSFXStartParam in a frame that runs again: the voice the frame's last run started for the same sound, or
+// -1 (no new sound). The voices a re-run does not take again stop.
+int ps3_rb_sound_rerun(int id);
+// HSD_AudioSFXStartParam started voice vid for sound id: the frame's re-runs take it again.
+void ps3_rb_sound_started(int id, int vid);
 
 // The port: true from the first saved frame to the scene's end.
 bool ps3_rb_session(void);
@@ -31,5 +36,7 @@ void ps3_rb_cover(void* p, size_t n);
 void ps3_rb_trace_state(int* frame, bool* rerun, bool* inside, unsigned* pass);
 // The heartbeat's rollback line (vi.c), while a session runs or after one ended.
 void ps3_rb_log(unsigned n);
+// Logs a frame's gameplay values, as the netplay's desync check sends them (ps3_net_frame_done).
+void ps3_rb_log_view(const char* whose, int frame, const void* data, int size);
 
 #endif

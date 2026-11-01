@@ -5,6 +5,7 @@
 #include <dolphin/os.h>
 #include <dolphin/pad.h>
 #include <dolphin/vi.h>
+#include <ps3_netplay.h>
 
 #include "../os/diag.h"
 #include "gcadapter.h"
@@ -42,6 +43,9 @@ static struct {
 
 // The DS3 pad index each channel got from the last read, -1 for none or an adapter pad.
 static int chan_ds3[PAD_MAX_CONTROLLERS] = { -1, -1, -1, -1 };
+// For the netplay: the first channel with a pad and the buttons held, at the last read.
+static volatile int first_chan = -1;
+static volatile unsigned held_buttons;
 
 static s8 axis(unsigned char v, bool flip)
 {
@@ -175,6 +179,19 @@ u32 PADRead(PADStatus* status)
         connected |= PAD_CHAN0_BIT >> chan;
     }
     {
+        unsigned b = 0;
+        int first = -1;
+
+        for (chan = PAD_MAX_CONTROLLERS - 1; chan >= 0; chan--) {
+            if (status[chan].err == PAD_ERR_NONE) {
+                first = chan;
+                b |= status[chan].button;
+            }
+        }
+        first_chan = first;
+        held_buttons = b;
+    }
+    {
         static bool held;
         bool select = false;
 
@@ -223,8 +240,20 @@ void PADSetSpec(u32 spec) {}
 // Reads happen when the game asks, so there is no sampling rate to set.
 void PADSetSamplingRate(unsigned long msec) {}
 
+int ps3_pad_first_channel(void)
+{
+    return first_chan;
+}
+
+unsigned ps3_pad_buttons(void)
+{
+    return held_buttons;
+}
+
 void PADControlMotor(s32 chan, u32 command)
 {
+    // In a netplay match the other console's port does not rumble, and ours rumbles our pad.
+    chan = ps3_net_motor_channel(chan);
     if (chan < 0 || chan >= PAD_MAX_CONTROLLERS) {
         return;
     }

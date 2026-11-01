@@ -18,6 +18,12 @@
 #include <melee/lb/lbdvd.h>
 #include <melee/lb/lbtime.h>
 #include <melee/mn/types.h>
+#ifdef TARGET_PS3
+#include <melee/ft/forward.h>
+#include <melee/lb/types.h>
+
+#include <ps3_netplay.h>
+#endif
 
 /* 1A5360 */ static u8 findSmallestLoser(MatchEnd*);
 /* 4807B0 */ CSSData gmVsMelee_CssData;
@@ -168,6 +174,40 @@ void gmVsMelee_ExitSss(GameModeState* state, VsModeData* vs,
     }
 }
 
+#ifdef TARGET_PS3
+// A netplay match (ps3_netplay.h): player 1's start data replaces player 2's, whose preloads, sound banks and
+// announcer then follow it, as the CSS and SSS exits set them up.
+static void gmVsMelee_NetplayStart(StartMeleeData* start)
+{
+    struct GameCache* cache = &lbDvd_GetPreloadCacheScene()->game_cache;
+    u64 mask = 0;
+    bool taken;
+    ssize_t i;
+
+    if (!ps3_net_handshake(start, &taken) || !taken) {
+        return;
+    }
+    for (i = 0; i < 4; i++) {
+        u8 slot_type = start->players[i].slot_type;
+
+        cache->entries[i].char_id = slot_type == Gm_PKind_Human || slot_type == Gm_PKind_Cpu
+                                        ? start->players[i].ckind
+                                        : ChKind_None;
+        cache->entries[i].color = start->players[i].color;
+    }
+    cache->stkind = start->rules.stkind;
+    lbDvd_80018254();
+    for (i = 0; i < GM_MAX_PLAYERS; i++) {
+        mask |= lbAudioAx_80026E84(start->players[i].ckind);
+    }
+    lbAudioAx_80026F2C(28);
+    lbAudioAx_8002702C(4, mask);
+    lbAudioAx_8002702C(8, lbAudioAx_80026EBC(start->rules.stkind));
+    lbAudioAx_80027168();
+    gm_LoadAnnouncer();
+}
+#endif
+
 void gmVsMelee_EnterVs(GameModeState* state, VsModeData* vs,
                        gm_StartMeleeCallback start_cb,
                        gm_PlayerInitCallback player_cb)
@@ -202,6 +242,9 @@ void gmVsMelee_EnterVs(GameModeState* state, VsModeData* vs,
     gm_SetupSubColors(start);
     gm_LoadRumbleEnabled(start);
     gm_LoadAnnouncer();
+#ifdef TARGET_PS3
+    gmVsMelee_NetplayStart(start);
+#endif
 }
 
 /// @param id0 Next state id if one or zero winners
@@ -259,6 +302,9 @@ void gmVsMelee_EnterSuddenDeath(GameModeState* state, VsModeData* vs,
     gm_SetupSubColors(start);
     gm_LoadRumbleEnabled(start);
     gm_SetupSuddenDeath(start, &gmVsMelee_VsExitInfo.match_end);
+#ifdef TARGET_PS3
+    gmVsMelee_NetplayStart(start);
+#endif
 }
 
 void gmVsMelee_ExitSuddenDeath(GameModeState* state)

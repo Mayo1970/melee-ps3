@@ -6,6 +6,7 @@
 
 #include <dolphin/os.h>
 #include <dolphin/vi.h>
+#include <ps3_netplay.h>
 #include <ps3_rollback.h>
 
 #include "../gx/backend.h"
@@ -294,6 +295,7 @@ static void heartbeat_main(void* arg)
         log_audio(n);
         log_main(n);
         ps3_rb_log(n);
+        ps3_net_log(n);
         if (ps3_diag.main_calls != 0) {
             log_calltrace(n);
         }

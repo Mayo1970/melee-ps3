@@ -128,6 +128,9 @@ void HSD_PadRenewGameStatus(void);
 void HSD_PadRenewStatus(void);
 void HSD_PadReset(void);
 void HSD_PadInit(u8, HSD_PadData*, u16, HSD_PadRumbleListData*);
+#ifdef TARGET_PS3
+void HSD_PadDropQueueEntry(void);
+#endif
 extern PadLibData HSD_PadLibData;
 
 #endif

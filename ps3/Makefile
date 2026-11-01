@@ -214,11 +214,12 @@ GAME_PORT_SRCS := $(addprefix ps3/,dvd/dvd.c os/intr.c os/globals.c os/os.c os/o
                   os/alarm.c os/thread.c os/mem.c os/ppcarch.c audio/sdk_audio.c gx/fifo.c gx/gp.c sdk/mtx.c \
                   sdk/trig.c sdk/card.c sdk/stubs.c sdk/thp.c pad/pad.c pad/menu.c vi/vi.c dat/pool.c dat/trace.c \
                   os/calltrace.c \
-                  os/mainprof.c net/rollback.c) $(GX_RSX_SRCS) \
+                  os/mainprof.c net/rollback.c net/netplay.c) $(GX_RSX_SRCS) \
                   $(EXTRA_SRCS)
 # The PSL1GHT side, which no SDK header meets.
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_cell.c os/sys_cell.c os/udplog_cell.c audio/audio_cell.c \
-                  gx/rsxdev_cell.c gx/vxjob_cell.c pad/pad_cell.c pad/gcadapter_cell.c net/rbjob_cell.c)
+                  gx/rsxdev_cell.c gx/vxjob_cell.c pad/pad_cell.c pad/gcadapter_cell.c net/rbjob_cell.c \
+                  net/link_cell.c)
 DAT_SRCS := $(addprefix tools/dat-cli/native/src/,archive.c reader.c hsd.c) ps3/dat/lookup.c ps3/dat/motion.c \
             $(sort $(shell cd $(ROOT) && find $(DAT_SCHEMA) -name '*.c' 2> /dev/null))
 # Their allocations come from the .dat pool; GeoTypes.h stands in for Aurora's.
@@ -229,7 +230,7 @@ DAT_FLAGS := -include $(ROOT)/ps3/dat/redirect.h -I$(ROOT)/tools/dat-cli/native/
 ifeq ($(TOOLCHAIN),linux)
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_host.c tests/sys_host.c tests/udplog_host.c tests/audio_host.c \
                   audio/ax_spu.c tests/rsxdev_soft.c tests/rsx_interp.c tests/pad_host.c tests/host_start.c \
-                  tests/vxspu_host.c gx/vxspu.c tests/rbspu_host.c net/rbspu.c)
+                  tests/vxspu_host.c gx/vxspu.c tests/rbspu_host.c net/rbspu.c tests/link_host.c)
 HOST_WRAP := -Wl,--wrap=gm_ChangeGameModeAfterCurrentScene,--wrap=gm_LoadAnnouncer
 endif
 GAME_OBJ = $(patsubst %.c,$(GAME_DIR)/%.o,$(1))
@@ -242,7 +243,7 @@ endif
 GAME_WRAP := -Wl,--wrap=HSD_ArchiveParse,--wrap=HSD_ArchiveGetPublicAddress,--wrap=HSD_ArchiveGetPublicTyped \
              -Wl,--wrap=HSD_ArchiveReleaseNative \
              -Wl,--wrap=HSD_GObj_RunProcs,--wrap=HSD_GObj_80390FC0,--wrap=HSD_VICopyXFBAsync
-GAME_LIBS := -L$(PS3DEV)/ppu/lib -lrsx -lgcm_sys -lio -lusb -laudio -lsysutil -lsysmodule -lnet -llv2 -lrt -lm
+GAME_LIBS := -L$(PS3DEV)/ppu/lib -lrsx -lgcm_sys -lio -lusb -laudio -lsysutil -lsysmodule -lnetctl -lnet -llv2 -lrt -lm
 FONT_INCS := $(addprefix $(GAME_DIR)/include/sysdolphin/baselib/,debug_font.inc sislib_font.inc)
 
 # MSL's math where it differs from libm; string literals in Shift-JIS, as sjiswrap gives the MWCC build (CP932
@@ -302,6 +303,14 @@ $(GAME_DIR)/rb_flags.txt: FORCE
 $(call GAME_OBJ,ps3/net/rollback.c): GAME_FLAGS := $(RB_FLAGS)
 $(call GAME_OBJ,ps3/net/rollback.c): $(GAME_DIR)/rb_flags.txt
 
+# The netplay's matchmaker when options.txt names none, e.g. NET_SERVER=example.org:51001 (ps3/net/netplay.c).
+NET_SERVER ?=
+$(GAME_DIR)/net_server.txt: FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(NET_SERVER)' | cmp -s - $@ || echo '$(NET_SERVER)' > $@
+$(call GAME_OBJ,ps3/net/netplay.c): GAME_FLAGS := -DPS3_NET_SERVER=\"$(NET_SERVER)\"
+$(call GAME_OBJ,ps3/net/netplay.c): $(GAME_DIR)/net_server.txt
+
 -include $(GAME_OBJS:.o=.d)
 
 game: $(GAME_DIR)/melee.pkg
@@ -312,12 +321,12 @@ $(GAME_DIR)/melee.elf: $(GAME_OBJS) melee.ld rollback_data.ld rollback_bss.ld
 	@$(PREFIX)readelf -SW $@ | grep -E ' \.(got|toc|text|rodata|data|bss) '
 	@$(PREFIX)readelf -lW $@ | grep LOAD
 
-$(GAME_DIR)/melee.pkg: $(GAME_DIR)/melee.elf
+$(GAME_DIR)/melee.pkg: $(GAME_DIR)/melee.elf $(ROOT)/ps3/ICON0.PNG
 	$(PREFIX)strip $< -o $(GAME_DIR)/melee.strip.elf
 	sprxlinker $(GAME_DIR)/melee.strip.elf
 	fself $(GAME_DIR)/melee.strip.elf $(GAME_DIR)/EBOOT.BIN
 	@mkdir -p $(GAME_DIR)/pkg/USRDIR
-	cp $(PS3DEV)/bin/ICON0.PNG $(GAME_DIR)/pkg/ICON0.PNG
+	cp $(ROOT)/ps3/ICON0.PNG $(GAME_DIR)/pkg/ICON0.PNG
 	make_self_npdrm $(GAME_DIR)/melee.strip.elf $(GAME_DIR)/pkg/USRDIR/EBOOT.BIN $(EBOOT_CONTENTID) > /dev/null
 	sfo --title "$(GAME_TITLE)" --appid "$(EBOOT_APPID)" -f $(PS3DEV)/bin/sfo.xml $(GAME_DIR)/pkg/PARAM.SFO
 	pkg --contentid $(EBOOT_CONTENTID) $(GAME_DIR)/pkg/ $@ > /dev/null

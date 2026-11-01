@@ -8,12 +8,15 @@
 #include <dolphin/os.h>
 #include <melee/ft/types.h>
 #include <melee/pl/player.h>
+#include <sysdolphin/baselib/axdriver.h>
+#include <sysdolphin/baselib/controller.h>
 #include <sysdolphin/baselib/gobj.h>
 #include <sysdolphin/baselib/initialize.h>
 #include <sysdolphin/baselib/pobj.h>
 #include <sysdolphin/baselib/random.h>
 #include <sysdolphin/baselib/state.h>
 
+#include <ps3_netplay.h>
 #include <ps3_rollback.h>
 
 #include "../dat/pool.h"
@@ -51,6 +54,8 @@ bool rb_start(RbShared* shared) __attribute__((weak));
 #define SURVEY_FIRST 120
 #define SURVEY_STEP 60
 #define SURVEY_LAST 480
+// Sounds kept per frame for its re-runs.
+#define FRAME_SOUNDS 16
 
 enum { MODE_OFF, MODE_SYNC, MODE_SURVEY };
 
@@ -90,13 +95,26 @@ typedef struct Kept {
     OSAlarm bytes;
 } Kept;
 
+// The voices a frame's last run started: its re-runs take them again instead of starting new ones.
+typedef struct FrameSounds {
+    s32 frame;
+    int n;
+    struct {
+        s32 id, vid;
+        bool claimed;
+    } s[FRAME_SOUNDS];
+} FrameSounds;
+
 static int mode = -1;
+// The session plays a netplay match (ps3_netplay.h).
+static bool net;
 // Sync test: the frames run again after each checked frame, and every how many frames a check comes.
 static int depth = 1, every = 1;
 static bool armed, active, rerunning, ended_log, in_frame;
 static s32 frame, rerun_frame;
 static Input inputs[INPUTS];
 static Gameplay plays[INPUTS];
+static FrameSounds sounds[INPUTS];
 static u32 play_frames, diff_frames;
 static Stats st, last;
 static PsHeap* hsd_heap;
@@ -217,6 +235,42 @@ static void put_back(void)
     }
 }
 
+// A frame's first run: no voices yet.
+static void sounds_first(s32 f)
+{
+    sounds[f % INPUTS].frame = f;
+    sounds[f % INPUTS].n = 0;
+}
+
+static void sounds_rerun(s32 f)
+{
+    FrameSounds* fs = &sounds[f % INPUTS];
+    int i;
+
+    if (fs->frame != f) {
+        sounds_first(f);
+    }
+    for (i = 0; i < fs->n; i++) {
+        fs->s[i].claimed = false;
+    }
+}
+
+// The voices the re-run did not take again belong to inputs that turned out wrong: they stop.
+static void sounds_rerun_end(s32 f)
+{
+    FrameSounds* fs = &sounds[f % INPUTS];
+    int i, n = 0;
+
+    for (i = 0; i < fs->n; i++) {
+        if (fs->s[i].claimed) {
+            fs->s[n++] = fs->s[i];
+        } else {
+            HSD_AudioSFXKeyOff(fs->s[i].vid);
+        }
+    }
+    fs->n = n;
+}
+
 #define MEM(c) ((u8*) (uintptr_t) chunks[c].mem_ea)
 #define SHADOW(c) ((u8*) (uintptr_t) chunks[c].shadow_ea)
 #define LEN(c) (chunks[c].len)
@@ -304,10 +358,12 @@ static bool save_spu(u32 end, u32* changed)
     return true;
 }
 
-// Before frame f runs. The shadow holds frame f - 1's state, or f's after a restore to it.
+// Before frame f runs. The shadow holds frame f - 1's state, or f's after a restore to it. Netplay skips the saves
+// of frames whose inputs are known: then only f's state stays, as no older frame runs again.
 static bool save(s32 f)
 {
     u32 c, end, changed = 0;
+    bool gap = f > shadow_frame + 1;
 
     if (hsd_heap->top > (uintptr_t) (ranges[R_HEAP].p + ranges[R_HEAP].n)) {
         OSReport("rollback: the HSD heap grew %u KB, more than the store's %u KB\n",
@@ -318,9 +374,13 @@ static bool save(s32 f)
         st.saves++;
         return true;
     }
-    if (f != shadow_frame + 1) {
+    if (f < shadow_frame || (gap && !net)) {
         OSReport("rollback: frame %d saved after frame %d\n", f, shadow_frame);
         return false;
+    }
+    if (gap) {
+        oldest = shadow_frame;
+        tail = head;
     }
     end = scan_end();
     if (spu_state == 1) {
@@ -340,6 +400,10 @@ static bool save(s32 f)
     }
     shadow_frame = f;
     frame_start[f % RING] = head;
+    if (gap) {
+        oldest = f;
+        tail = head;
+    }
     while (shadow_frame - oldest > MAX_SPAN) {
         evict();
     }
@@ -623,6 +687,7 @@ static bool sync_frame(Ps3RbFrame run, void* arg)
         return run(arg);
     }
     st.save_ticks += ps3_prof_now() - t;
+    sounds_first(f);
     in_frame = true;
     ended = run(arg);
     in_frame = false;
@@ -654,11 +719,13 @@ static bool sync_frame(Ps3RbFrame run, void* arg)
         }
         st.save_ticks += ps3_prof_now() - t;
         rerun_frame = j;
+        sounds_rerun(j);
         in_frame = true;
         t = ps3_prof_now();
         ended = run(arg);
         st.rerun_ticks += ps3_prof_now() - t;
         in_frame = false;
+        sounds_rerun_end(j);
         st.reruns++;
         if (ended) {
             OSReport("rollback: frame %d ended the scene when it ran again\n", j);
@@ -677,6 +744,186 @@ static bool sync_frame(Ps3RbFrame run, void* arg)
     }
     rerunning = false;
     return ended;
+}
+
+// After each run of frame f: its gameplay values go to the netplay's desync check.
+static void frame_done(s32 f)
+{
+    Gameplay g;
+
+    view_gameplay(&g);
+    g.frame = f;
+    ps3_net_frame_done(f, rb_hash((const u8*) &g, sizeof(g)), &g, sizeof(g));
+}
+
+// The rollback cannot go on (no store, a frame no longer in it): the match goes on without the other console.
+static void net_fail(void)
+{
+    OSReport("rollback: the netplay session cannot go on at frame %d; the pairing ends\n", frame);
+    ps3_net_cancel();
+    stop();
+}
+
+// Frames from..to - 1 run again from the state before from, with the inputs known now. 1 when one of them ends the
+// scene (*end), -1 when the store fails.
+static int net_rerun(s32 from, s32 to, s32 confirmed, Ps3RbFrame run, void* arg, s32* end)
+{
+    uint64_t t = ps3_prof_now();
+    s32 j;
+    bool ended;
+
+    if (!restore(from)) {
+        return -1;
+    }
+    st.restore_ticks += ps3_prof_now() - t;
+    rerunning = true;
+    for (j = from; j < to; j++) {
+        // A frame whose remote input is known never runs again: its state need not be kept.
+        t = ps3_prof_now();
+        if (j > confirmed && !save(j)) {
+            rerunning = false;
+            return -1;
+        }
+        st.save_ticks += ps3_prof_now() - t;
+        rerun_frame = j;
+        sounds_rerun(j);
+        in_frame = true;
+        t = ps3_prof_now();
+        ended = run(arg);
+        st.rerun_ticks += ps3_prof_now() - t;
+        in_frame = false;
+        sounds_rerun_end(j);
+        st.reruns++;
+        frame_done(j);
+        if (ended) {
+            *end = j;
+            rerunning = false;
+            return 1;
+        }
+    }
+    rerunning = false;
+    return 0;
+}
+
+// The scene ended in frame f. It ends once f's remote input is known and the end stands; when a prediction was
+// wrong, the frames run again and the scene may go on.
+static bool settle(s32 f, Ps3RbFrame run, void* arg)
+{
+    Ps3NetTick t;
+    s32 end;
+    int r;
+
+    for (;;) {
+        if (!ps3_net_wait(f, &t) || t.rollback_from > f) {
+            return true;
+        }
+        r = net_rerun(t.rollback_from, f + 1, t.confirmed, run, arg, &end);
+        if (r < 0) {
+            net_fail();
+            return true;
+        }
+        if (r == 0) {
+            OSReport("rollback: the scene end at frame %d came from a wrong prediction; the match goes on\n", f);
+            frame = f + 1;
+            return false;
+        }
+        f = end;
+        frame = end + 1;
+    }
+}
+
+// Netplay: the remote input of a frame may be a prediction; when the real one differs, the frames from there run
+// again. A tick that runs no frame (time sync, waits) drops its pad queue entry.
+static bool net_frame(Ps3RbFrame run, void* arg)
+{
+    Ps3NetTick t;
+    uint64_t t0;
+    s32 end;
+    bool ended;
+    int r;
+
+    ps3_net_tick(frame, &t);
+    if (t.stall) {
+        HSD_PadDropQueueEntry();
+        return false;
+    }
+    if (t.rollback_from < frame) {
+        r = net_rerun(t.rollback_from, frame, t.confirmed, run, arg, &end);
+        if (r < 0) {
+            net_fail();
+            return run(arg);
+        }
+        if (r > 0) {
+            HSD_PadDropQueueEntry();
+            frame = end + 1;
+            return settle(end, run, arg);
+        }
+    }
+    t0 = ps3_prof_now();
+    if (frame > t.confirmed && !save(frame)) {
+        net_fail();
+        return run(arg);
+    }
+    st.save_ticks += ps3_prof_now() - t0;
+    sounds_first(frame);
+    in_frame = true;
+    ended = run(arg);
+    in_frame = false;
+    frame_done(frame);
+    frame++;
+    return ended && settle(frame - 1, run, arg);
+}
+
+void ps3_rb_log_view(const char* whose, int f, const void* data, int size)
+{
+    static const char* const grounds[] = { "ground", "air" };
+    Gameplay g;
+    int i;
+
+    if (size != (int) sizeof(g)) {
+        OSReport("rollback: %s's gameplay values have %d bytes, not %u\n", whose, size, (u32) sizeof(g));
+        return;
+    }
+    memcpy(&g, data, sizeof(g));
+    OSReport("rollback: %s, frame %d: RNG seed %08x, stocks %d %d %d %d\n", whose, f, g.seed, g.stocks[0],
+             g.stocks[1], g.stocks[2], g.stocks[3]);
+    for (i = 0; i < 12; i++) {
+        const FighterView* v = &g.f[i];
+
+        if (v->present) {
+            OSReport("rollback: %s, frame %d: fighter %d.%d motion %u %s, x %g y %g, velocity %g %g, facing %g, "
+                     "animation frame %g, percent %g, hitlag %g, shield %g\n",
+                     whose, f, i / 2, i % 2, v->motion, grounds[v->ground & 1], (double) v->pos[0],
+                     (double) v->pos[1], (double) v->vel[0], (double) v->vel[1], (double) v->facing,
+                     (double) v->anim, (double) v->percent, (double) v->hitlag, (double) v->shield);
+        }
+    }
+}
+
+int ps3_rb_sound_rerun(int id)
+{
+    FrameSounds* fs = &sounds[rerun_frame % INPUTS];
+    int i;
+
+    for (i = 0; i < fs->n; i++) {
+        if (!fs->s[i].claimed && fs->s[i].id == id) {
+            fs->s[i].claimed = true;
+            return fs->s[i].vid;
+        }
+    }
+    return -1;
+}
+
+void ps3_rb_sound_started(int id, int vid)
+{
+    FrameSounds* fs = &sounds[frame % INPUTS];
+
+    if (active && in_frame && !rerunning && vid >= 0 && fs->frame == frame && fs->n < FRAME_SOUNDS) {
+        fs->s[fs->n].id = id;
+        fs->s[fs->n].vid = vid;
+        fs->s[fs->n].claimed = false;
+        fs->n++;
+    }
 }
 
 typedef struct Region {
@@ -841,7 +1088,7 @@ static void start(void)
     // Never allocated in this scene: zeros, so a restore can give blocks above the saved top back as they were.
     memset((void*) hsd_heap->top, 0, heap_end - hsd_heap->top);
     ps3_mem_written((void*) hsd_heap->top, (u32) (heap_end - hsd_heap->top));
-    if (mode == MODE_SYNC) {
+    if (mode == MODE_SYNC || net) {
         if (spu_state < 0) {
             spu_state = rb_start != NULL && rb_start(&rb_sh) ? 1 : 0;
         }
@@ -872,6 +1119,11 @@ static void start(void)
                 ps_heap_free(hsd_heap, block);
                 block = NULL;
             }
+            if (net) {
+                OSReport("rollback: no netplay without the store; the pairing ends\n");
+                ps3_net_cancel();
+                net = false;
+            }
             return;
         }
         layout(block);
@@ -894,7 +1146,13 @@ static void start(void)
     diff_frames = play_frames = 0;
     memset(&st, 0, sizeof(st));
     memset(&last, 0, sizeof(last));
-    if (mode == MODE_SYNC) {
+    if (net) {
+        ps3_net_session_begin();
+        OSReport("rollback: netplay session on the %s: HSD heap %u KB used of %u KB; store %u KB in the HSD heap, %u "
+                 "MB free\n",
+                 spu_state == 1 ? "SPU" : "PPE", (u32) ((hsd_heap->top - hsd_heap->start) >> 10),
+                 (u32) ((heap_end - hsd_heap->start) >> 10), (u32) (size >> 10), ps3_sys_free_mb());
+    } else if (mode == MODE_SYNC) {
         OSReport("rollback: session, sync test (%d frames run again every %d) on the %s: data %u KB, bss %u KB, "
                  "buffer %u KB, HSD heap %u KB used of %u KB; store %u KB in the HSD heap (shadow %u KB, undo log %u "
                  "KB), %u MB free\n",
@@ -917,6 +1175,10 @@ static void stop(void)
         ps3_dat_pool_defer(false);
         ended_log = true;
     }
+    if (net) {
+        ps3_net_session_end(frame);
+        net = false;
+    }
     if (block != NULL) {
         ps_heap_free(hsd_heap, block);
         block = NULL;
@@ -934,7 +1196,8 @@ void ps3_rb_match_start(void)
     if (mode < 0) {
         read_mode();
     }
-    armed = mode != MODE_OFF;
+    net = ps3_net_session();
+    armed = net || mode != MODE_OFF;
 }
 
 void ps3_rb_scene_end(void)
@@ -951,6 +1214,9 @@ bool ps3_rb_frame(Ps3RbFrame run, void* arg)
     }
     if (!active) {
         return run(arg);
+    }
+    if (net) {
+        return net_frame(run, arg);
     }
     if (mode == MODE_SYNC) {
         return sync_frame(run, arg);
@@ -969,6 +1235,10 @@ bool ps3_rb_pad(PADStatus stat[4], bool have)
 
     if (!active) {
         return have;
+    }
+    if (net) {
+        ps3_net_frame_inputs(rerunning ? rerun_frame : frame, !rerunning && have, stat);
+        return true;
     }
     if (rerunning) {
         in = &inputs[rerun_frame % INPUTS];

@@ -373,6 +373,19 @@ void HSD_PadRenewMasterStatus(void)
     }
 }
 
+// A netplay tick that runs no logic frame (ps3_rollback.h) drops its entry.
+void HSD_PadDropQueueEntry(void)
+{
+    PadLibData* p = &HSD_PadLibData;
+    bool intr = OSDisableInterrupts();
+
+    if (p->qcount != 0) {
+        HSD_PadRawQueueShift(p->qnum, &p->qread);
+        p->qcount -= 1;
+    }
+    OSRestoreInterrupts(intr);
+}
+
 static void HSD_PadApplyMaster(PADStatus* qread)
 {
     int iVar1;
