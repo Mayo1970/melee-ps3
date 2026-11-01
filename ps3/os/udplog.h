@@ -5,5 +5,7 @@
 
 void ps3_log_init(void);
 void ps3_log(const char* fmt, ...) __attribute__((format(printf, 1, 2)));
+// A line already formatted, sent as it is.
+void ps3_log_text(const char* text, int len);
 
 #endif

@@ -149,6 +149,97 @@
         regAddr = addr;                                                       \
     } while (0)
 
+#if defined(TARGET_PS3) && !DEBUG
+#include <gx_pipe.h>
+#undef GX_WRITE_XF_REG
+#undef GX_WRITE_RAS_REG
+#undef GX_WRITE_SOME_REG2
+#undef GX_WRITE_SOME_REG3
+#undef GX_WRITE_SOME_REG4
+// The same bytes, one pipe reservation per command (gx_pipe.h). Arguments are
+// read once, before the stores, so no shadow is loaded again after them.
+#define GX_WRITE_XF_REG(addr, value)                                          \
+    do {                                                                      \
+        u32 xfv_ = (value);                                                   \
+        u8* xfp_ = __GXPipeBegin();                                           \
+        __GXPipeSt8(xfp_, 0x10);                                              \
+        __GXPipeSt32(xfp_ + 1, 0x1000 + (addr));                              \
+        __GXPipeSt32(xfp_ + 5, xfv_);                                         \
+        __GXPipeEnd(xfp_ + 9);                                                \
+    } while (0)
+#define GX_WRITE_RAS_REG(value)                                               \
+    do {                                                                      \
+        u32 rasv_ = (value);                                                  \
+        u8* rasp_ = __GXPipeBegin();                                          \
+        __GXPipeSt8(rasp_, 0x61);                                             \
+        __GXPipeSt32(rasp_ + 1, rasv_);                                       \
+        __GXPipeEnd(rasp_ + 5);                                               \
+    } while (0)
+#define GX_WRITE_CP_REG_(a, b, c)                                             \
+    do {                                                                      \
+        u32 cpv_ = (c);                                                       \
+        u8* cpp_ = __GXPipeBegin();                                           \
+        __GXPipeSt8(cpp_, (a));                                               \
+        __GXPipeSt8(cpp_ + 1, (b));                                           \
+        __GXPipeSt32(cpp_ + 2, cpv_);                                         \
+        __GXPipeEnd(cpp_ + 6);                                                \
+    } while (0)
+#define GX_WRITE_SOME_REG2(a, b, c, addr)                                     \
+    do {                                                                      \
+        u32 indexv_ = (c);                                                    \
+        long regAddr = (addr);                                                \
+        if (regAddr >= 0 && regAddr < 4) {                                    \
+            gx->indexBase[regAddr] = indexv_;                                 \
+        }                                                                     \
+        GX_WRITE_CP_REG_(a, b, indexv_);                                      \
+    } while (0)
+#define GX_WRITE_SOME_REG3(a, b, c, addr)                                     \
+    do {                                                                      \
+        u32 indexv_ = (c);                                                    \
+        long regAddr = (addr);                                                \
+        if (regAddr >= 0 && regAddr < 4) {                                    \
+            gx->indexStride[regAddr] = indexv_;                               \
+        }                                                                     \
+        GX_WRITE_CP_REG_(a, b, indexv_);                                      \
+    } while (0)
+#define GX_WRITE_SOME_REG4(a, b, c, addr) GX_WRITE_CP_REG_(a, b, c)
+// Two or three BP writes in one reservation.
+#define GX_WRITE_RAS_REG2(v0, v1)                                             \
+    do {                                                                      \
+        u32 rasv0_ = (v0), rasv1_ = (v1);                                     \
+        u8* rasp_ = __GXPipeBegin();                                          \
+        __GXPipeSt8(rasp_, 0x61);                                             \
+        __GXPipeSt32(rasp_ + 1, rasv0_);                                      \
+        __GXPipeSt8(rasp_ + 5, 0x61);                                         \
+        __GXPipeSt32(rasp_ + 6, rasv1_);                                      \
+        __GXPipeEnd(rasp_ + 10);                                              \
+    } while (0)
+#define GX_WRITE_RAS_REG3(v0, v1, v2)                                         \
+    do {                                                                      \
+        u32 rasv0_ = (v0), rasv1_ = (v1), rasv2_ = (v2);                      \
+        u8* rasp_ = __GXPipeBegin();                                          \
+        __GXPipeSt8(rasp_, 0x61);                                             \
+        __GXPipeSt32(rasp_ + 1, rasv0_);                                      \
+        __GXPipeSt8(rasp_ + 5, 0x61);                                         \
+        __GXPipeSt32(rasp_ + 6, rasv1_);                                      \
+        __GXPipeSt8(rasp_ + 10, 0x61);                                        \
+        __GXPipeSt32(rasp_ + 11, rasv2_);                                     \
+        __GXPipeEnd(rasp_ + 15);                                              \
+    } while (0)
+#elif defined(TARGET_PS3)
+#define GX_WRITE_RAS_REG2(v0, v1)                                             \
+    do {                                                                      \
+        GX_WRITE_RAS_REG(v0);                                                 \
+        GX_WRITE_RAS_REG(v1);                                                 \
+    } while (0)
+#define GX_WRITE_RAS_REG3(v0, v1, v2)                                         \
+    do {                                                                      \
+        GX_WRITE_RAS_REG(v0);                                                 \
+        GX_WRITE_RAS_REG(v1);                                                 \
+        GX_WRITE_RAS_REG(v2);                                                 \
+    } while (0)
+#endif
+
 #define GET_REG_FIELD(reg, size, shift)                                       \
     ((int) ((reg) >> (shift)) & ((1 << (size)) - 1))
 
@@ -285,7 +376,14 @@ struct __GXData_struct {
     u32 dirtyState;              // offset 0x4F0, size 0x4
 }; // size = 0x4F4
 
+#ifdef TARGET_PS3
+// An object, not a pointer: its address is a constant, so stores that may
+// alias it do not make the compiler load it again.
+extern struct __GXData_struct __GXData;
+#define gx (&__GXData)
+#else
 extern struct __GXData_struct* gx;
+#endif
 extern u16* __memReg;
 extern u16* __peReg;
 extern u16* __cpReg;

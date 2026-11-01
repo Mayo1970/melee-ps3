@@ -9,7 +9,9 @@
 #include <sysdolphin/baselib/archive.h>
 
 #include "../os/mem.h"
+#include "../os/prof.h"
 #include "../os/sync.h"
+#include "lookup.h"
 #include "pool.h"
 
 void* __real_HSD_ArchiveGetPublicAddress(HSD_Archive* archive, const char* name);
@@ -139,14 +141,17 @@ void* __wrap_HSD_ArchiveGetPublicAddress(HSD_Archive* archive, const char* name)
     if (t == NULL || t->kind == DAT_KIND_VOID || (!t->has_pointers && t->native_size == t->size)) {
         void* raw = __real_HSD_ArchiveGetPublicAddress(archive, name);
 
-        // Step 3 diagnostics, as the two lines below.
-        OSReport("dat: public %s, serialized -> %p\n", name, raw);
+        if (DAT_TRACE || raw == NULL) {
+            OSReport("dat: public %s, serialized -> %p\n", name, raw);
+        }
         return raw;
     }
     {
         void* native = dat_public(archive->native_data, name, type);
 
-        OSReport("dat: public %s as %s -> %p\n", name, t->name, native);
+        if (DAT_TRACE || native == NULL) {
+            OSReport("dat: public %s as %s -> %p\n", name, t->name, native);
+        }
         return native;
     }
 }
@@ -210,11 +215,10 @@ static void release(const Span* sp)
 s32 __real_HSD_ArchiveParse(HSD_Archive* archive, u8* src, size_t size);
 void __real_HSD_ArchiveReleaseNative(HSD_Archive* archive);
 
-s32 __wrap_HSD_ArchiveParse(HSD_Archive* archive, u8* src, size_t size)
+void ps3_dat_release_spans(const void* at, size_t size)
 {
-    uintptr_t start = (uintptr_t) src, end = start + size;
+    uintptr_t start = (uintptr_t) at, end = start + size;
     unsigned i, k = 0;
-    s32 r;
 
     ps_mutex_lock(&spans_lock);
     for (i = 0; i < nspans; i++) {
@@ -226,11 +230,23 @@ s32 __wrap_HSD_ArchiveParse(HSD_Archive* archive, u8* src, size_t size)
     }
     nspans = k;
     ps_mutex_unlock(&spans_lock);
-    // Step 3 diagnostics, as the line below.
-    OSReport("dat: parse %p, %u bytes\n", src, (u32) size);
+}
+
+static s32 parse(HSD_Archive* archive, u8* src, size_t size, bool keep)
+{
+    uintptr_t start = (uintptr_t) src, end = start + size;
+    s32 r;
+
+    if (!keep) {
+        ps3_dat_release_spans(src, size);
+    }
+    if (DAT_TRACE) {
+        OSReport("dat: parse %p, %u bytes\n", src, (u32) size);
+    }
     r = __real_HSD_ArchiveParse(archive, src, size);
     ps3_mem_written(src, (u32) size);
-    {
+    ps3_prof.dat_parses++;
+    if (DAT_TRACE || r != 0) {
         size_t now, most;
 
         ps3_dat_pool_usage(&now, &most);
@@ -250,6 +266,16 @@ s32 __wrap_HSD_ArchiveParse(HSD_Archive* archive, u8* src, size_t size)
         ps_mutex_unlock(&spans_lock);
     }
     return r;
+}
+
+s32 __wrap_HSD_ArchiveParse(HSD_Archive* archive, u8* src, size_t size)
+{
+    return parse(archive, src, size, false);
+}
+
+s32 ps3_dat_parse_keep(HSD_Archive* archive, u8* src, size_t size)
+{
+    return parse(archive, src, size, true);
 }
 
 void __wrap_HSD_ArchiveReleaseNative(HSD_Archive* archive)

@@ -7,9 +7,14 @@
 
 void __GXSetDirtyState(void)
 {
+#ifdef TARGET_PS3
+    // The GP thread never reads the SU texcoord registers (BP 0x30-0x3F):
+    // restore this once it does.
+#else
     if (gx->dirtyState & 1) {
         __GXSetSUTexRegs();
     }
+#endif
     if (gx->dirtyState & 2) {
         __GXUpdateBPMask();
     }
@@ -43,8 +48,18 @@ void GXBegin(GXPrimitive type, GXVtxFmt vtxfmt, u16 nverts)
     if (*(u32*) &gx->unk == 0) { // checks both unk and bpSent
         __GXSendFlushPrim();
     }
+#if defined(TARGET_PS3) && !DEBUG
+    {
+        u8* p = __GXPipeBegin();
+
+        __GXPipeSt8(p, vtxfmt | type);
+        __GXPipeSt16(p + 1, nverts);
+        __GXPipeEnd(p + 3);
+    }
+#else
     GX_WRITE_U8(vtxfmt | type);
     GX_WRITE_U16(nverts);
+#endif
 }
 
 void __GXSendFlushPrim(void)

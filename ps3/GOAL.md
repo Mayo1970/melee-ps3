@@ -391,6 +391,7 @@ SPU's timing, speed. Under qemu a match runs at 20-35 presents a second.
 
 Waiting for the user:
 
+- A test of the GC adapter with the run 61 package (the user will do it another time).
 - The title ID. The code uses the placeholder `MELE00001` (`PS3_APP_DIR` in `ps3/dvd/dvd.c`, `EBOOT_APPID` in
   `ps3/Makefile`).
 - Run 29: the call trace package, Peach and DK on Yoshi's Story until the stop, and what was on the screen at
@@ -1048,8 +1049,79 @@ Part 2 step 4, vertex conversion on an SPU (2026-10-31):
   panicked 12 s into the results, about where the stats page starts, so the arena fix holds. Mode 1 was not tried.
 - Where the frame rate stands with 4 players: Fountain of Dreams about 50, Mute City about 51. On both the main thread
   (the game logic) is the limit; the GP waits for data 14% (Fountain of Dreams) and 27% (Mute City) of the time.
-- The user on run 60: "Perfect". Not committed: the command decode, the SPU vertex conversion, the text arena fix and
-  the audio diagnostic line.
+- The user on run 60: "Perfect". The command decode, the SPU vertex conversion, the text arena fix and the audio
+  diagnostic line are committed (8bcfa54).
+
+### Stable 60 with 4 players (2026-10-31)
+
+The user: "Let's do our best to get stable 60 FPS." Done when 4-player matches stay at 60 presents a second.
+- Host profile, 4 players on Fountain of Dreams (qemu instruction counts; a plugin per translation block and thread,
+  and one that names the callers of a function): main thread 15% in the per-motion `.dat` parse and lookups (strcmp
+  4.7%: `dat_public` scanned 12,060 schema roots, 9,312 strcmp a lookup; `dat_wrap` 8,532 a parse), GX API 24%, HSD
+  render and matrices about 25%. GP: 68% of the FIFO draws and a third of the RSX draws were GX's XF flush primitives
+  (8 zero vertices after each BP write, `GXSetMisc(1, 8)` in `gmmain.c`). GP busy 822 per mille at 50 presents is
+  about 987 at 60, so both threads needed cuts.
+- PPE costs from the PS3 disassembly: `GX_PIPE_PUT` reloaded `__GXPipeWp` after each store (`-fno-strict-aliasing`),
+  a load-hit-store per word; newlib mathfp `sinf`/`cosf` about 186 instructions with 6 calls and 3 GPR/FPR moves
+  through memory, 6 calls per joint in `HSD_MtxSRT`; `PSMTXConcat`'s stack temp and `memcpy`; `parseFloat` 3 moves
+  and an `fdivs`; librsx reloads `ctx->current` per call, 16 attribute calls per RSX draw.
+- Five packages, each host-checked and reviewed in its own worktree, then merged:
+  - GX front end: one reservation per command (`gx_pipe.h`, `__gx.h`, `GXVert.h`, `WriteMTXCmd`), `gx` as an
+    object, no XF flush primitive (`GXSetMisc`), no SU texcoord registers (the GP never reads BP 0x30-0x3F), BG
+    written once, no `peCtrl` re-send, one call per TEV stage (`GXSetTevStagePS3`), a 4-way `GXTexObj` memo in
+    `HSD_TObjSetup`, no envelope-blend counter. The ring bytes of unchanged commands hash the same (gx_test, scene,
+    the new `streamtest`).
+  - Math: `PSMTXConcat` without the temp, `HSD_MtxInverseTranspose` and `HSD_MtxScaledAdd` load first,
+    `fabsf_bitwise` as fabs; `parseFloat` by tables, `fterm_f` in `HSD_FObj`'s tail padding; `sinf`/`cosf` as an
+    exact newlib mathfp replica (`sdk/trig.c`, asm labels in `ps3_trig.h`). Bit-exact (`mathobjs`/`mathtest`; all
+    2^32 floats for sin and cos).
+  - `.dat`: a name index for `dat_public` (chains in schema order), `_index`/`_command` once per schema, the
+    per-parse lines only with `-DPS3_DAT_TRACE`, `OSReport` formats once (`ps3_log_text`), and a cache of parsed
+    fighter motions (`dat/motion.c`: 8 MB, keyed by bytes and name, trimmed to 4 MB at a scene change). Nana's main
+    motions parse in place: `ftData_80085E50`'s copy branch rewrites her x59C under her live FObjs, which then read
+    the new bytes as on the GameCube; that branch keeps x59C's old archive (`ps3_dat_motion_keep`), so x590 stays
+    valid (HEAD freed it there).
+  - GP: one shadowed attribute write per RSX draw (`dev_attribs`), constant runs by bit scan, `apply_state` skipped
+    when its 18 source words are equal, VAT-masked vertex cache keys in a compact array, `xf_constants` rows once with
+    a colour table, texture rebinds only when the used units' register words change (a free after `bind_textures`'
+    last pass leaves the units unbound), no `isync` in address translation, pointer copies in the XF decode, a vertex
+    program memo.
+  - Threads: the pad-queue wait sleeps up to 1 ms until the pad alarm has run, instead of spinning (`PROF_MAIN_PAD`);
+    `HandleReverb` runs the 3 channels in one loop, output bit-identical (`reverbtest`).
+- New A/B modes (appended): 2^26 the attributes bound by a librsx call each (the old path); 2^27 the GP thread at
+  priority 1200, below main (the sampler idles then).
+- Heartbeat: a main line (logic, render, XFB and pad wait per mille; logic frames, render passes, µs per frame and the
+  longest; GP busy per mille), a dat line (parses; motions from the cache, added, parsed in place; cache entries and
+  KB), and every 10 s the sampler (`os/mainprof.c`, 250 Hz): phase shares and the busiest GObj callbacks as `.opd`
+  addresses (`ppu-nm melee.elf`).
+- Host checks, merged tree: scenetest frames identical; gxtest, progtest 3000/3000, audiotest, reverbtest, alarmtest,
+  streamtest, tevfusetest PASS; math_test mtx (1,000,000) and fobj 0 mismatches, trig 1.34 G inputs 0 mismatches. A
+  check build with all nine checks (attrib, state, tev, vcache, vx, tcache, tobj memo, dat index, dat motion) over 4
+  boots and 4-player matches on Fountain of Dreams, Mute City and Ice Climbers dittos: 0 differences, but vx 2 of
+  about 900,000 draws in one Fountain of Dreams run (not in 5 more; the reference converts at submit, the SPU reads
+  indexed arrays later, so a game write in between differs). 45 host matches exit 0; 8,2/26 never starts (ground.c
+  2310, stage param of stkind 26 not found, then a while(true); the same in the Oct 28 logs).
+- Host profile after the merge, same match: main thread per rendered frame 8.58 to 5.19 M instructions (-39%), GP per
+  rendered frame 8.01 to 6.36 M (-21%); RSX draws per present 1,391 to 939, vertex jobs 681 to 219; `HandleReverb`
+  0.55 of its cost. Instruction counts only: the console decides.
+- Open: the motion cache fills its 8 MB in about 90 s of a 4-player match (about 42 KB an entry, mostly the reader's
+  maps); then about 9% of the motions parse in place. Host only, from before: 13,14,5,12 on Castle panics "Not Found
+  Item_Struct" (`item.c` 1997).
+- Run 61 package (2026-11-01, not committed): `.got` 0x4d28, 0 `r2off` stubs, 24.6 MB in loaded segments. The
+  worktrees of the packages are in `E:\Users\Matteo\Desktop\Repo\melee-wt` (detached, deletable).
+- Melee run 61 (2026-11-01, `build/run61_udp.txt`, DS3, mode 0), Fountain of Dreams with Peach, Ganondorf, Bowser and
+  the Ice Climbers (5 fighters), heartbeats 41-103: 60 presents every second but 2 at 59 (run 60, 4 players: 41-58,
+  mean 50.3). About 290,000 GX draws in 64,000 RSX draws and 14,000 vertex jobs a second. Main thread per frame:
+  logic 3.4-4.8 ms, render 8.0-10.7 ms (longest 15.4 ms), and 9-36% of its time in the XFB wait (ahead of the GP and
+  the retrace). GP busy 58-88%. Sampler: fighter drawing 31-39% of the main thread (`ftDrawCommon_80080E18`,
+  `80080C28`), the stage 12% (`grIzumi_801CD220`, `grDisplay_801C5DB0`), `Fighter_procAnim` 5-8%. The results
+  screen after it: 54-60 presents, GP busy 85-97%.
+- Run 61, Mute City with the same 5 fighters, heartbeats 116-178: 60 presents every second but 1 at 59 (run 60: 35-58,
+  mean 50.7). About 170,000 GX draws in 47,000 RSX draws a second. Main thread per frame: logic 4.0-5.5 ms, render
+  7.6-9.5 ms (longest 13.5 ms), 15-40% in the XFB wait. GP busy 51-67%. Sampler: the stage (`grDisplay_801C5DB0`)
+  22-24%, fighter drawing (`ftDrawCommon_80080E18`) 21-25%, `Fighter_procAnim` 8%. Its results screen: 54-60.
+- Melee run 61: the user reports SUCCESS (2026-11-01). The goal "60 frames a second in matches" is done with 4 players
+  (5 fighters). The GC adapter was not used in this run.
 
 Other findings of 2026-10-29:
 - C stick: the right stick is the C stick (`pad.c`). Host check (`MELEE_HOST_PAD` now takes `CL CR CU CD`): C stick
@@ -1214,3 +1286,4 @@ The user's list of what is left to address. Details of each are in the run entri
 - Host profiling: `ppc64-qemu-plugins:1` has qemu 8.2.2 built with plugins (`/opt/qemu-8.2.2/build/qemu-ppc64`).
   A plugin that counts instructions per translation block and thread, with the `.text.<name>` sections of
   `melee_host.map` for the names, splits a run by function and thread.
+                                                                                                                                                                                                                                                                           

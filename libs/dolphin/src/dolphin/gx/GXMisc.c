@@ -15,6 +15,11 @@ void GXSetMisc(GXMiscToken token, u32 val)
 {
     switch (token) {
     case GX_MT_XF_FLUSH:
+#ifdef TARGET_PS3
+        // The GP thread runs XF and BP writes in order: no zero-area strip has
+        // to follow BP writes.
+        val = 0;
+#endif
         gx->vNum = val;
         gx->unk = !gx->vNum;
         gx->bpSent = 1;
@@ -140,7 +145,12 @@ void GXDrawDone(void)
 void GXPixModeSync(void)
 {
     CHECK_GXBEGIN(0x20D, "GXPixModeSync");
+#ifdef TARGET_PS3
+    // Every change of peCtrl is written already, and the GP thread needs no
+    // pixel pipeline sync.
+#else
     GX_WRITE_RAS_REG(gx->peCtrl);
+#endif
     gx->bpSent = 0;
 }
 

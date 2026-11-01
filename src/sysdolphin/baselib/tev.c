@@ -5,6 +5,29 @@
 #include "debug.h"
 #include <dolphin/gx.h>
 
+#ifdef TARGET_PS3
+#include <stddef.h>
+
+// HSD_SetupTevStage hands the conf to GXSetTevStagePS3 as its own struct.
+#define TEV_CONF_SAME(f)                                                      \
+    (offsetof(HSD_TevConf, f) == offsetof(GXTevStagePS3, f))
+_Static_assert(sizeof(HSD_TevConf) == sizeof(GXTevStagePS3) &&
+                   TEV_CONF_SAME(clr_op) && TEV_CONF_SAME(clr_a) &&
+                   TEV_CONF_SAME(clr_b) && TEV_CONF_SAME(clr_c) &&
+                   TEV_CONF_SAME(clr_d) && TEV_CONF_SAME(clr_scale) &&
+                   TEV_CONF_SAME(clr_bias) && TEV_CONF_SAME(clr_clamp) &&
+                   TEV_CONF_SAME(clr_out_reg) && TEV_CONF_SAME(alpha_op) &&
+                   TEV_CONF_SAME(alpha_a) && TEV_CONF_SAME(alpha_b) &&
+                   TEV_CONF_SAME(alpha_c) && TEV_CONF_SAME(alpha_d) &&
+                   TEV_CONF_SAME(alpha_scale) && TEV_CONF_SAME(alpha_bias) &&
+                   TEV_CONF_SAME(alpha_clamp) &&
+                   TEV_CONF_SAME(alpha_out_reg) && TEV_CONF_SAME(ras_swap) &&
+                   TEV_CONF_SAME(tex_swap) && TEV_CONF_SAME(kcsel) &&
+                   TEV_CONF_SAME(kasel),
+               "HSD_TevConf and GXTevStagePS3 differ");
+#undef TEV_CONF_SAME
+#endif
+
 static struct TevReg_t {
     GXColorS10 a;
     int c;
@@ -221,6 +244,9 @@ void HSD_SetupTevStage(HSD_TevDesc* desc)
         GXSetTevSwapMode(desc->stage, GX_TEV_SWAP0, GX_TEV_SWAP0);
         return;
     }
+#ifdef TARGET_PS3
+    GXSetTevStagePS3(desc->stage, (const GXTevStagePS3*) &desc->u.tevconf);
+#else
     GXSetTevColorOp(desc->stage, desc->u.tevconf.clr_op,
                     desc->u.tevconf.clr_bias, desc->u.tevconf.clr_scale,
                     desc->u.tevconf.clr_clamp, desc->u.tevconf.clr_out_reg);
@@ -237,6 +263,7 @@ void HSD_SetupTevStage(HSD_TevDesc* desc)
                      desc->u.tevconf.tex_swap);
     GXSetTevKColorSel(desc->stage, desc->u.tevconf.kcsel);
     GXSetTevKAlphaSel(desc->stage, desc->u.tevconf.kasel);
+#endif
 }
 
 static inline int setupTevStages(HSD_TevDesc* desc)

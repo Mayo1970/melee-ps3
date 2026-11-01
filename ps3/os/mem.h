@@ -10,6 +10,7 @@
 #define PS3_PHYS_LIMIT (512u << 20)
 
 // Maps [base, base + size) to the next free physical range. Returns false when the physical range is full.
+// Only before the threads that translate addresses start (OSInit): the translations read regions unordered.
 bool ps3_mem_add_region(void* base, u32 size);
 // The flipper's MMIO registers (CP, PE, PI, MEM) as plain memory, by GameCube physical address.
 volatile u16* ps3_mmio16(u32 paddr);

@@ -18,3 +18,10 @@ void ps3_log(const char* fmt, ...)
     vprintf(fmt, ap);
     va_end(ap);
 }
+
+void ps3_log_text(const char* text, int len)
+{
+    if (len > 0) {
+        fwrite(text, 1, (size_t) len, stdout);
+    }
+}

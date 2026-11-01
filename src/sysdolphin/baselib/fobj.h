@@ -54,6 +54,10 @@ struct HSD_FObj {
     f32 p1;
     f32 d0;
     f32 d1;
+#ifdef TARGET_PS3
+    // fterm as a float, set with it, so the readers need no integer to float conversion through memory.
+    f32 fterm_f;
+#endif
 };
 
 typedef struct _HSD_FObjDesc {

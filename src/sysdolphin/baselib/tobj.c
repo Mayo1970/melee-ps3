@@ -1131,10 +1131,190 @@ static int DifferentTluts(HSD_Tlut* t0, HSD_Tlut* t1)
         (t0->n_entries != t1->n_entries);
 }
 
+#ifdef TARGET_PS3
+// GXInitTexObj/CI/LOD give the same object for the same inputs: an entry per
+// TObj keeps it. A load changes only its register numbers, which it sets.
+typedef struct TObjMemo {
+    void* image_ptr;
+    u16 width;
+    u16 height;
+    GXTexFmt format;
+    GXTexWrapMode wrap_s;
+    GXTexWrapMode wrap_t;
+    u32 tlut_name;
+    GXTexFilter min_filter;
+    GXTexFilter mag_filter;
+    u32 min_lod;
+    u32 max_lod;
+    u32 lod_bias;
+    GXAnisotropy max_aniso;
+    u8 mipmap;
+    u8 bias_clamp;
+    u8 edge_lod;
+    u8 valid;
+    GXTexObj obj;
+} TObjMemo;
+
+#define TOBJ_MEMO_SET_BITS 9
+#define TOBJ_MEMO_WAYS 4
+
+// 4-way sets found by the TObj's address; the tags apart keep a lookup on
+// one cache line.
+static HSD_TObj* tobj_memo_tag[1 << TOBJ_MEMO_SET_BITS][TOBJ_MEMO_WAYS];
+static TObjMemo tobj_memo[1 << TOBJ_MEMO_SET_BITS][TOBJ_MEMO_WAYS];
+static u8 tobj_memo_victim[1 << TOBJ_MEMO_SET_BITS];
+
+// The bits of a float in memory, loaded as an integer.
+static inline u32 TObjMemoBits(const f32* f)
+{
+    u32 u;
+
+    memcpy(&u, f, sizeof(u));
+    return u;
+}
+
+static void TObjInitTexObj(GXTexObj* obj, HSD_TObj* tobj,
+                           struct HSD_ImageDesc* imagedesc,
+                           HSD_TexLODDesc* lod, GXTexFilter min_filter,
+                           u32 tlut_name)
+{
+    GXBool mipmap = imagedesc->mipmap ? GX_TRUE : GX_FALSE;
+
+    switch (imagedesc->format) {
+    case GX_TF_C4:
+    case GX_TF_C8:
+    case GX_TF_C14X2:
+        GXInitTexObjCI(obj, imagedesc->image_ptr, imagedesc->width,
+                       imagedesc->height, imagedesc->format, tobj->wrap_s,
+                       tobj->wrap_t, mipmap, tlut_name);
+        break;
+    default:
+        GXInitTexObj(obj, imagedesc->image_ptr, imagedesc->width,
+                     imagedesc->height, imagedesc->format, tobj->wrap_s,
+                     tobj->wrap_t, mipmap);
+        break;
+    }
+    GXInitTexObjLOD(obj, min_filter, tobj->magFilt, imagedesc->minLOD,
+                    imagedesc->maxLOD, lod->LODBias, lod->bias_clamp,
+                    lod->edgeLODEnable, lod->max_anisotropy);
+}
+
+#ifdef HSD_TOBJ_MEMO_CHECK
+#include <dolphin/os.h>
+
+static u32 tobj_memo_uses;
+static u32 tobj_memo_misses;
+static u32 tobj_memo_changes;
+static u32 tobj_memo_diffs;
+
+// Check builds: each use also builds the object as before and compares it
+// with the kept one, before the load.
+static void TObjMemoCheck(GXTexObj* obj, HSD_TObj* tobj,
+                          struct HSD_ImageDesc* imagedesc, HSD_TexLODDesc* lod,
+                          GXTexFilter min_filter, u32 tlut_name)
+{
+    GXTexObj fresh;
+    u32 a[sizeof(GXTexObj) / 4];
+    u32 b[sizeof(GXTexObj) / 4];
+    int i;
+
+    memset(&fresh, 0, sizeof(fresh));
+    TObjInitTexObj(&fresh, tobj, imagedesc, lod, min_filter, tlut_name);
+    memcpy(a, obj, sizeof(a));
+    memcpy(b, &fresh, sizeof(b));
+    // mode0, mode1, image0 and image3 come first; loads set their top bytes.
+    for (i = 0; i < 4; i++) {
+        a[i] &= 0xFFFFFF;
+        b[i] &= 0xFFFFFF;
+    }
+    tobj_memo_uses++;
+    if (memcmp(a, b, sizeof(a)) != 0) {
+        tobj_memo_diffs++;
+        OSReport("tobj memo check: difference at use %u, image %p format %d\n",
+                 tobj_memo_uses, imagedesc->image_ptr, imagedesc->format);
+    }
+    if ((tobj_memo_uses & 0xFFFF) == 0) {
+        OSReport("tobj memo check: %u uses, %u misses (%u changed inputs), "
+                 "%u differences\n",
+                 tobj_memo_uses, tobj_memo_misses, tobj_memo_changes,
+                 tobj_memo_diffs);
+    }
+}
+#endif
+
+static void TObjLoadMemo(HSD_TObj* tobj, struct HSD_ImageDesc* imagedesc,
+                         HSD_TexLODDesc* lod, GXTexFilter min_filter,
+                         u32 tlut_name)
+{
+    u32 set = ((u32) ((uintptr_t) tobj >> 4) * 0x9E3779B1u) >>
+              (32 - TOBJ_MEMO_SET_BITS);
+    TObjMemo* m;
+    u8 mipmap = imagedesc->mipmap ? GX_TRUE : GX_FALSE;
+    u32 min_lod = TObjMemoBits(&imagedesc->minLOD);
+    u32 max_lod = TObjMemoBits(&imagedesc->maxLOD);
+    u32 lod_bias = TObjMemoBits(&lod->LODBias);
+    int w;
+
+    for (w = 0; w < TOBJ_MEMO_WAYS; w++) {
+        if (tobj_memo_tag[set][w] == tobj) {
+            break;
+        }
+    }
+    if (w == TOBJ_MEMO_WAYS) {
+        w = tobj_memo_victim[set]++ % TOBJ_MEMO_WAYS;
+        tobj_memo_tag[set][w] = tobj;
+        tobj_memo[set][w].valid = 0;
+    }
+    m = &tobj_memo[set][w];
+    if (!m->valid || m->image_ptr != imagedesc->image_ptr ||
+        m->width != imagedesc->width || m->height != imagedesc->height ||
+        m->format != imagedesc->format || m->wrap_s != tobj->wrap_s ||
+        m->wrap_t != tobj->wrap_t || m->tlut_name != tlut_name ||
+        m->min_filter != min_filter || m->mag_filter != tobj->magFilt ||
+        m->min_lod != min_lod || m->max_lod != max_lod ||
+        m->lod_bias != lod_bias || m->max_aniso != lod->max_anisotropy ||
+        m->mipmap != mipmap || m->bias_clamp != lod->bias_clamp ||
+        m->edge_lod != lod->edgeLODEnable)
+    {
+#ifdef HSD_TOBJ_MEMO_CHECK
+        tobj_memo_misses++;
+        tobj_memo_changes += m->valid;
+#endif
+        m->image_ptr = imagedesc->image_ptr;
+        m->width = imagedesc->width;
+        m->height = imagedesc->height;
+        m->format = imagedesc->format;
+        m->wrap_s = tobj->wrap_s;
+        m->wrap_t = tobj->wrap_t;
+        m->tlut_name = tlut_name;
+        m->min_filter = min_filter;
+        m->mag_filter = tobj->magFilt;
+        m->min_lod = min_lod;
+        m->max_lod = max_lod;
+        m->lod_bias = lod_bias;
+        m->max_aniso = lod->max_anisotropy;
+        m->mipmap = mipmap;
+        m->bias_clamp = lod->bias_clamp;
+        m->edge_lod = lod->edgeLODEnable;
+        m->valid = 1;
+        memset(&m->obj, 0, sizeof(m->obj));
+        TObjInitTexObj(&m->obj, tobj, imagedesc, lod, min_filter, tlut_name);
+    }
+#ifdef HSD_TOBJ_MEMO_CHECK
+    TObjMemoCheck(&m->obj, tobj, imagedesc, lod, min_filter, tlut_name);
+#endif
+    GXLoadTexObj(&m->obj, tobj->id);
+}
+#endif
+
 void HSD_TObjSetup(HSD_TObj* tobj)
 {
     GXTlutObj tlutobj;
+#ifdef TARGET_PS3
+    u32 memo_tlut_name;
+#else
     GXTexObj texobj;
+#endif
     int num;
     HSD_Tlut* tluts[8];
     int nb_tluts = 0;
@@ -1206,11 +1386,15 @@ void HSD_TObjSetup(HSD_TObj* tobj)
                 tlut->tlut_name = GX_TLUT0;
             }
 
+#ifdef TARGET_PS3
+            memo_tlut_name = tlut->tlut_name;
+#else
             GXInitTexObjCI(&texobj, imagedesc->image_ptr, imagedesc->width,
                            imagedesc->height, imagedesc->format, tobj->wrap_s,
                            tobj->wrap_t,
                            imagedesc->mipmap ? GX_TRUE : GX_FALSE,
                            tlut->tlut_name);
+#endif
             if (min_filter == GX_LIN_MIP_LIN) {
                 min_filter = GX_LIN_MIP_NEAR;
             }
@@ -1224,9 +1408,13 @@ void HSD_TObjSetup(HSD_TObj* tobj)
         case GX_TF_RGB5A3:
         case GX_TF_RGBA8:
         case GX_TF_CMPR:
+#ifdef TARGET_PS3
+            memo_tlut_name = 0;
+#else
             GXInitTexObj(&texobj, imagedesc->image_ptr, imagedesc->width,
                          imagedesc->height, imagedesc->format, tobj->wrap_s,
                          tobj->wrap_t, imagedesc->mipmap ? GX_TRUE : GX_FALSE);
+#endif
             break;
 
         default:
@@ -1236,11 +1424,15 @@ void HSD_TObjSetup(HSD_TObj* tobj)
         if (!imagedesc->mipmap) {
             min_filter &= 0x01;
         }
+#ifdef TARGET_PS3
+        TObjLoadMemo(tobj, imagedesc, lod, min_filter, memo_tlut_name);
+#else
         GXInitTexObjLOD(&texobj, min_filter, tobj->magFilt, imagedesc->minLOD,
                         imagedesc->maxLOD, lod->LODBias, lod->bias_clamp,
                         lod->edgeLODEnable, lod->max_anisotropy);
 
         GXLoadTexObj(&texobj, tobj->id);
+#endif
     }
 }
 

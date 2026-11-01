@@ -7,20 +7,40 @@
 extern u8* __GXPipeWp;
 extern u8* __GXPipeLimit;
 
-// Called when __GXPipeWp reaches __GXPipeLimit: publishes the stores and makes room for at least 8 bytes.
+// The most bytes stored after one __GXPipeBegin; fifo.c keeps that much slack past the ring end.
+#define GX_PIPE_CMD_MAX 128
+
+// Called when __GXPipeWp reaches __GXPipeLimit: publishes the stores and makes room for GX_PIPE_CMD_MAX bytes.
 void __GXPipeMakeRoom(void);
 // Publishes the stores to the GP, as a flush of the gather buffer does.
 void __GXPipeFlush(void);
 
+// Where the next command goes: store it through the returned pointer, then __GXPipeEnd. Each store may alias
+// __GXPipeWp itself, so a local pointer is what spares a reload of it after every store.
+static inline u8* __GXPipeBegin(void)
+{
+    u8* p = __GXPipeWp;
+
+    if (__builtin_expect(p >= __GXPipeLimit, 0)) {
+        __GXPipeMakeRoom();
+        p = __GXPipeWp;
+    }
+    return p;
+}
+
+#define __GXPipeEnd(p) (__GXPipeWp = (p))
+
 // memcpy, as the stream is byte-packed and most stores are unaligned.
+static inline void __GXPipeSt8(u8* p, u8 v) { *p = v; }
+static inline void __GXPipeSt16(u8* p, u16 v) { __builtin_memcpy(p, &v, 2); }
+static inline void __GXPipeSt32(u8* p, u32 v) { __builtin_memcpy(p, &v, 4); }
+
 #define GX_PIPE_PUT(T, x)                                                                               \
     do {                                                                                                \
         T v_ = (x);                                                                                     \
-        if (__builtin_expect(__GXPipeWp >= __GXPipeLimit, 0)) {                                         \
-            __GXPipeMakeRoom();                                                                         \
-        }                                                                                               \
-        __builtin_memcpy(__GXPipeWp, &v_, sizeof(T));                                                   \
-        __GXPipeWp += sizeof(T);                                                                        \
+        u8* p_ = __GXPipeBegin();                                                                       \
+        __builtin_memcpy(p_, &v_, sizeof(T));                                                           \
+        __GXPipeEnd(p_ + sizeof(T));                                                                    \
     } while (0)
 
 static inline void __GXPipe_u8(u8 x) { GX_PIPE_PUT(u8, x); }

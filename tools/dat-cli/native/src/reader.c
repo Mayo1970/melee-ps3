@@ -1,6 +1,9 @@
 /** @file Storage and references for generated native readers. */
 #include <limits.h>
 #include <math.h>
+#if defined(TARGET_PS3) && defined(DAT_INDEX_CHECK)
+#include <stdio.h>
+#endif
 
 #include <dat/reader-internal.h>
 
@@ -68,6 +71,197 @@ uint64_t dat_reader_bytes_at(const DatArchive* a, uint64_t offset,
     return v;
 }
 
+#ifdef TARGET_PS3
+/* The PS3 opens about 20 archives a second (fighter motions), and linear
+ * scans of the schema's names and roots took ~17,800 strcmp per open. */
+typedef struct DatIndexEntry {
+    uint32_t hash, next;
+    const DatRoot* root;
+} DatIndexEntry;
+
+typedef struct DatIndex {
+    const DatSchema* s;
+    int32_t name_index, name_command;
+    uint32_t mask;
+    uint32_t* heads;
+    DatIndexEntry* entries;
+} DatIndex;
+
+static DatIndex* dat_index;
+
+static uint32_t dat_index_hash(const char* name)
+{
+    uint32_t h = 2166136261u;
+    for (const unsigned char* p = (const unsigned char*) name; *p; p++) {
+        h = (h ^ *p) * 16777619u;
+    }
+    return h;
+}
+
+static void dat_special_names_scan(const DatSchema* schema, int32_t* index,
+                                   int32_t* command)
+{
+    for (uint32_t i = 1; i < schema->nnames; i++) {
+        if (strcmp(schema->names[i], "_index") == 0) {
+            *index = i;
+        }
+        if (strcmp(schema->names[i], "_command") == 0) {
+            *command = i;
+        }
+    }
+}
+
+/* dat_public's loop: the first root of that name whose type is `type`. */
+static const DatRoot* dat_public_scan(const DatArchive* a, const char* name,
+                                      int32_t type)
+{
+    for (uint32_t i = 0; i < a->s->nmodules; i++) {
+        const DatModule* module = &a->s->modules[i];
+        for (uint32_t j = 0; j < module->nfiles; j++) {
+            const DatFileRoots* file = &module->files[j];
+            for (uint32_t k = 0; k < file->nroots; k++) {
+                const DatRoot* root = &file->roots[k];
+                if (!root->alias && !strcmp(root->name, name) &&
+                    dat_reader_resolve(a, root->type) ==
+                        dat_reader_resolve(a, type))
+                {
+                    return root;
+                }
+            }
+        }
+    }
+    return NULL;
+}
+
+static DatIndex* dat_index_build(const DatSchema* schema)
+{
+    uint32_t n = 0, nheads = 1;
+    for (uint32_t i = 0; i < schema->nmodules; i++) {
+        for (uint32_t j = 0; j < schema->modules[i].nfiles; j++) {
+            const DatFileRoots* file = &schema->modules[i].files[j];
+            for (uint32_t k = 0; k < file->nroots; k++) {
+                n += !file->roots[k].alias;
+            }
+        }
+    }
+    while (nheads < n) {
+        nheads <<= 1;
+    }
+    DatIndex* x = calloc(1, sizeof(*x));
+    uint32_t* heads = malloc(sizeof(*heads) * nheads);
+    DatIndexEntry* entries = malloc(sizeof(*entries) * (n ? n : 1));
+    if (x == NULL || heads == NULL || entries == NULL) {
+        free(x);
+        free(heads);
+        free(entries);
+        return NULL;
+    }
+    x->s = schema;
+    x->mask = nheads - 1;
+    x->heads = heads;
+    x->entries = entries;
+    memset(heads, 0xFF, sizeof(*heads) * nheads);
+    dat_special_names_scan(schema, &x->name_index, &x->name_command);
+    /* Pushed in reverse, so each chain is in schema order, as the scan. */
+    for (uint32_t i = schema->nmodules; i-- > 0;) {
+        for (uint32_t j = schema->modules[i].nfiles; j-- > 0;) {
+            const DatFileRoots* file = &schema->modules[i].files[j];
+            for (uint32_t k = file->nroots; k-- > 0;) {
+                const DatRoot* root = &file->roots[k];
+                if (!root->alias) {
+                    uint32_t h = dat_index_hash(root->name);
+                    n--;
+                    entries[n].hash = h;
+                    entries[n].root = root;
+                    entries[n].next = heads[h & x->mask];
+                    heads[h & x->mask] = n;
+                }
+            }
+        }
+    }
+    return x;
+}
+
+/* Built by the first open; a thread that loses the race frees its copy. */
+static const DatIndex* dat_index_of(const DatSchema* schema)
+{
+    DatIndex* x = __atomic_load_n(&dat_index, __ATOMIC_ACQUIRE);
+    if (x == NULL) {
+        DatIndex* none = NULL;
+        x = dat_index_build(schema);
+        if (x == NULL) {
+            return NULL;
+        }
+        if (!__atomic_compare_exchange_n(&dat_index, &none, x, false,
+                                         __ATOMIC_ACQ_REL, __ATOMIC_ACQUIRE))
+        {
+            free(x->heads);
+            free(x->entries);
+            free(x);
+            x = none;
+        }
+    }
+    return x->s == schema ? x : NULL;
+}
+
+static void dat_special_names(const DatSchema* schema, int32_t* index,
+                              int32_t* command)
+{
+    const DatIndex* x = dat_index_of(schema);
+    if (x == NULL) {
+        dat_special_names_scan(schema, index, command);
+        return;
+    }
+    *index = x->name_index;
+    *command = x->name_command;
+#ifdef DAT_INDEX_CHECK
+    int32_t scan_index = 0, scan_command = 0;
+    dat_special_names_scan(schema, &scan_index, &scan_command);
+    if (scan_index != *index || scan_command != *command) {
+        fprintf(stderr, "dat index check: _index %d/%d, _command %d/%d\n",
+                (int) *index, (int) scan_index, (int) *command,
+                (int) scan_command);
+        abort();
+    }
+#endif
+}
+
+static const DatRoot* dat_public_root(const DatArchive* a, const char* name,
+                                      int32_t type)
+{
+    const DatIndex* x = dat_index_of(a->s);
+    if (x == NULL) {
+        return dat_public_scan(a, name, type);
+    }
+    uint32_t h = dat_index_hash(name);
+    int32_t want = dat_reader_resolve(a, type);
+    const DatRoot* found = NULL;
+    for (uint32_t e = x->heads[h & x->mask]; e != UINT32_MAX;
+         e = x->entries[e].next)
+    {
+        const DatRoot* root = x->entries[e].root;
+        if (x->entries[e].hash == h && !strcmp(root->name, name) &&
+            dat_reader_resolve(a, root->type) == want)
+        {
+            found = root;
+            break;
+        }
+    }
+#ifdef DAT_INDEX_CHECK
+    static uint32_t checks;
+    if (dat_public_scan(a, name, type) != found) {
+        fprintf(stderr, "dat index check: %s type %d: the index differs\n",
+                name, (int) type);
+        abort();
+    }
+    if ((++checks & 127) == 0) {
+        fprintf(stderr, "dat index check: %u lookups agree\n", checks);
+    }
+#endif
+    return found;
+}
+#endif
+
 static DatArchive* dat_wrap(const DatSchema* schema, DatArchiveData* archive)
 {
     if (archive == NULL) {
@@ -82,6 +276,9 @@ static DatArchive* dat_wrap(const DatSchema* schema, DatArchiveData* archive)
     bits_init(&a->object, archive->size);
     bits_init(&a->script, archive->size);
     dat_test_init(a);
+#ifdef TARGET_PS3
+    dat_special_names(schema, &a->name_index, &a->name_command);
+#else
     for (uint32_t i = 1; i < schema->nnames; i++) {
         if (strcmp(schema->names[i], "_index") == 0) {
             a->name_index = i;
@@ -90,6 +287,7 @@ static DatArchive* dat_wrap(const DatSchema* schema, DatArchiveData* archive)
             a->name_command = i;
         }
     }
+#endif
     return a;
 }
 
@@ -1494,6 +1692,13 @@ void* dat_public(DatArchive* a, const char* name, int32_t type)
     if (!symbol) {
         return NULL;
     }
+#ifdef TARGET_PS3
+    const DatRoot* root = dat_public_root(a, name, type);
+    if (root != NULL) {
+        return dat_reader_walk(a, symbol->offset, root, type,
+                               (DatCount) root->count_kind, root->count);
+    }
+#else
     /* Loader bindings are constants generated for this public symbol/type. */
     for (uint32_t i = 0; i < a->s->nmodules; i++) {
         const DatModule* module = &a->s->modules[i];
@@ -1512,6 +1717,7 @@ void* dat_public(DatArchive* a, const char* name, int32_t type)
             }
         }
     }
+#endif
     return dat_at(a, symbol->offset, type, DAT_COUNT_ONE, 0);
 }
 

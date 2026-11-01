@@ -16,4 +16,17 @@ void* ps3_dat_script(const void* at, u32 offset);
 // a field as another type than its declared one. False when `native` is no object of a live archive.
 bool ps3_dat_word(const void* native, u32 offset, u32* out);
 
+struct FigaTree;
+
+// A fighter motion's archive, which the game copied to `src`: parses it and looks up `name`, as HSD_ArchiveParse
+// and HSD_ArchiveGetPublicAs(FigaTree) do, from a cache of the motions seen before. The parse's result.
+s32 ps3_dat_motion(u8* src, u32 size, const char* name, struct FigaTree** tree);
+// The same, parsed in the buffer itself, so the motion's FObjs read the buffer as on the GameCube.
+s32 ps3_dat_motion_parse(u8* src, u32 size, const char* name, struct FigaTree** tree);
+// ps3_dat_motion into a buffer whose earlier archive may still be in use: that archive is kept.
+s32 ps3_dat_motion_keep(u8* src, u32 size, const char* name, struct FigaTree** tree);
+
+// A scene's fighters are about to be made and the last scene's are gone: the motion cache makes room.
+void ps3_dat_motion_scene(void);
+
 #endif

@@ -20,6 +20,10 @@ enum {
     PROF_PRESENT,    // presents, with their flip waits
     PROF_MAIN_SLEEP, // main thread in OSSleepThread (retraces, draw done)
     PROF_MAIN_RING,  // main thread waits for ring space
+    PROF_MAIN_LOGIC, // main thread in the GObj procs (mainprof.c)
+    PROF_MAIN_RENDER, // main thread in the GObj render pass
+    PROF_MAIN_XFB,   // main thread in the XFB copy, with its wait for a free XFB
+    PROF_MAIN_PAD,   // main thread asleep in the pad-queue wait: ahead of the pad alarm
     PROF_COUNT
 };
 
@@ -47,6 +51,15 @@ typedef struct Ps3Prof {
     volatile uint32_t spu_jobs, spu_ppe, spu_waits;
     volatile uint64_t spu_wait_ticks;
     volatile uint64_t upload_bytes;
+    // The main thread's logic frames and render passes (mainprof.c), and the longest of each since the heartbeat
+    // took and cleared them.
+    volatile uint32_t logic_frames, render_passes;
+    volatile uint64_t logic_max, render_max;
+    // Archive parses (dat/lookup.c). Fighter motions (dat/motion.c): cache hits, misses it parsed, those parsed in
+    // place while it is full; its entries and their pool bytes.
+    volatile uint32_t dat_parses;
+    volatile uint32_t motion_hits, motion_misses, motion_uncached;
+    volatile uint32_t motion_entries, motion_bytes;
 } Ps3Prof;
 
 extern Ps3Prof ps3_prof;

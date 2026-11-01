@@ -38,7 +38,58 @@ volatile PPCWGPipe GXWGFifo : GXFIFO_ADDR;
 #define GX_WG(T, x) (GXWGFifo.T = (x))
 #endif
 
-#if DEBUG
+#if defined(TARGET_PS3) && !DEBUG
+
+// One pipe reservation per call (gx_pipe.h), for the same bytes.
+#define FUNC_1PARAM(name, T)                                                  \
+    static inline void name##1##T(T x)                                        \
+    {                                                                         \
+        GX_WG(T, x);                                                          \
+    }
+
+#define FUNC_2PARAM(name, T)                                                  \
+    static inline void name##2##T(T x, T y)                                   \
+    {                                                                         \
+        u8* p_ = __GXPipeBegin();                                             \
+        __builtin_memcpy(p_, &x, sizeof(T));                                  \
+        __builtin_memcpy(p_ + sizeof(T), &y, sizeof(T));                      \
+        __GXPipeEnd(p_ + 2 * sizeof(T));                                      \
+    }
+
+#define FUNC_3PARAM(name, T)                                                  \
+    static inline void name##3##T(T x, T y, T z)                              \
+    {                                                                         \
+        u8* p_ = __GXPipeBegin();                                             \
+        __builtin_memcpy(p_, &x, sizeof(T));                                  \
+        __builtin_memcpy(p_ + sizeof(T), &y, sizeof(T));                      \
+        __builtin_memcpy(p_ + 2 * sizeof(T), &z, sizeof(T));                  \
+        __GXPipeEnd(p_ + 3 * sizeof(T));                                      \
+    }
+
+#define FUNC_4PARAM(name, T)                                                  \
+    static inline void name##4##T(T x, T y, T z, T w)                         \
+    {                                                                         \
+        u8* p_ = __GXPipeBegin();                                             \
+        __builtin_memcpy(p_, &x, sizeof(T));                                  \
+        __builtin_memcpy(p_ + sizeof(T), &y, sizeof(T));                      \
+        __builtin_memcpy(p_ + 2 * sizeof(T), &z, sizeof(T));                  \
+        __builtin_memcpy(p_ + 3 * sizeof(T), &w, sizeof(T));                  \
+        __GXPipeEnd(p_ + 4 * sizeof(T));                                      \
+    }
+
+#define FUNC_INDEX8(name)                                                     \
+    static inline void name##1x8(u8 x)                                        \
+    {                                                                         \
+        GX_WG(u8, x);                                                         \
+    }
+
+#define FUNC_INDEX16(name)                                                    \
+    static inline void name##1x16(u16 x)                                      \
+    {                                                                         \
+        GX_WG(u16, x);                                                        \
+    }
+
+#elif DEBUG
 
 // external functions
 

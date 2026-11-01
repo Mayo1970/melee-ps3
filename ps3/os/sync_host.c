@@ -97,6 +97,12 @@ const char* ps_thread_name(void)
     return thread_name;
 }
 
+int ps_thread_set_priority(int priority)
+{
+    (void) priority;
+    return 0;
+}
+
 static void* entry(void* arg)
 {
     Start s = *(Start*) arg;

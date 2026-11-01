@@ -51,3 +51,12 @@ void ps3_log(const char* fmt, ...)
     }
     ps_mutex_unlock(&lock);
 }
+
+void ps3_log_text(const char* text, int len)
+{
+    ps_mutex_lock(&lock);
+    if (sock >= 0 && len > 0) {
+        sendto(sock, text, (size_t) len, 0, (struct sockaddr*) &addr, sizeof(addr));
+    }
+    ps_mutex_unlock(&lock);
+}

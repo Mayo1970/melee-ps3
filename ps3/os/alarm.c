@@ -5,6 +5,7 @@
 #include <dolphin/os.h>
 
 #include "diag.h"
+#include "intr.h"
 #include "sync.h"
 
 static PsMutex lock = PS_MUTEX_INIT;
@@ -106,6 +107,7 @@ static void alarm_main(void* arg)
             ps3_diag.alarms++;
             handler(alarm, NULL);
         }
+        ps3_intr_alarms_ran();
         OSRestoreInterrupts(enabled);
     }
 }

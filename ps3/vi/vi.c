@@ -12,6 +12,7 @@
 #include "../gx/rsxdev.h"
 #include "../os/diag.h"
 #include "../os/intr.h"
+#include "../os/mainprof.h"
 #include "../os/prof.h"
 #include "../os/sync.h"
 #include "../os/sys.h"
@@ -196,6 +197,55 @@ static void log_audio(u32 n)
     last_silent = silent;
 }
 
+// The main thread's frame phases a second (mainprof.c): logic and render time per frame in µs, and every 10 s the
+// sampler's busiest callbacks.
+static void log_main(u32 n)
+{
+    static uint64_t last_now, last_logic, last_render, last_xfb, last_pad, last_gp_wait;
+    static u32 last_frames, last_passes, last_parses, last_hits, last_misses, last_uncached;
+    uint64_t now = ps3_prof_now(), span = now - last_now;
+    uint64_t logic = ps3_prof.ticks[PROF_MAIN_LOGIC] - last_logic;
+    uint64_t render = ps3_prof.ticks[PROF_MAIN_RENDER] - last_render;
+    uint64_t xfb = ps3_prof.ticks[PROF_MAIN_XFB] - last_xfb, pad = ps3_prof.ticks[PROF_MAIN_PAD] - last_pad;
+    uint64_t gp_wait_now = ps3_prof.ticks[PROF_GP_IDLE] + ps3_prof.ticks[PROF_GP_RSX] + ps3_prof.ticks[PROF_GP_FLIP];
+    uint64_t gp_wait = gp_wait_now - last_gp_wait;
+    uint64_t logic_max = __atomic_exchange_n(&ps3_prof.logic_max, 0, __ATOMIC_RELAXED);
+    uint64_t render_max = __atomic_exchange_n(&ps3_prof.render_max, 0, __ATOMIC_RELAXED);
+    u32 frames = ps3_prof.logic_frames - last_frames, passes = ps3_prof.render_passes - last_passes;
+    // The host's mftb under qemu runs at another rate: its µs are not real, its shares are.
+    u32 tb_mhz = (u32) (ps3_sys_timebase_freq() / 1000000);
+
+    if (last_now != 0 && span != 0 && tb_mhz != 0) {
+        OSReport("heartbeat %u: main per mille: logic %u, render %u, XFB %u, pad wait %u; %u logic frames, %u render "
+                 "passes; per frame: logic %u us (longest %u), render %u us (longest %u); GP busy %u per mille\n",
+                 n, (u32) (logic * 1000 / span), (u32) (render * 1000 / span), (u32) (xfb * 1000 / span),
+                 (u32) (pad * 1000 / span), frames, passes, frames != 0 ? (u32) (logic / tb_mhz / frames) : 0,
+                 (u32) (logic_max / tb_mhz), passes != 0 ? (u32) (render / tb_mhz / passes) : 0,
+                 (u32) (render_max / tb_mhz),
+                 gp_wait < span ? (u32) (1000 - gp_wait * 1000 / span) : 0);
+        OSReport("heartbeat %u: dat: %u parses a second; motions: %u from the cache, %u added, %u parsed in place; "
+                 "cache %u entries, %u KB\n",
+                 n, ps3_prof.dat_parses - last_parses, ps3_prof.motion_hits - last_hits,
+                 ps3_prof.motion_misses - last_misses, ps3_prof.motion_uncached - last_uncached,
+                 ps3_prof.motion_entries, ps3_prof.motion_bytes >> 10);
+    }
+    if (n % 10 == 0) {
+        ps3_mainprof_log(n);
+    }
+    last_now = now;
+    last_logic = ps3_prof.ticks[PROF_MAIN_LOGIC];
+    last_render = ps3_prof.ticks[PROF_MAIN_RENDER];
+    last_xfb = ps3_prof.ticks[PROF_MAIN_XFB];
+    last_pad = ps3_prof.ticks[PROF_MAIN_PAD];
+    last_gp_wait = gp_wait_now;
+    last_frames = ps3_prof.logic_frames;
+    last_passes = ps3_prof.render_passes;
+    last_parses = ps3_prof.dat_parses;
+    last_hits = ps3_prof.motion_hits;
+    last_misses = ps3_prof.motion_misses;
+    last_uncached = ps3_prof.motion_uncached;
+}
+
 // Once a second, apart from the interrupts: a log that stops means the process is gone, counts that stop
 // name the part that is stuck (step 3 diagnostics).
 static void heartbeat_main(void* arg)
@@ -240,6 +290,7 @@ static void heartbeat_main(void* arg)
                      q == NULL ? "nothing" : q == &retrace_queue ? "the retrace queue" : "the queue at", q);
         }
         log_audio(n);
+        log_main(n);
         if (ps3_diag.main_calls != 0) {
             log_calltrace(n);
         }
@@ -263,6 +314,7 @@ void VIInit(void)
     ps3_intr_set_handler(PS3_INTR_VI, retrace);
     dev_set_vblank(raise_retrace);
     ps_thread_start(heartbeat_main, NULL, "heartbeat");
+    ps3_mainprof_start();
 }
 
 VIRetraceCallback VISetPreRetraceCallback(VIRetraceCallback cb)

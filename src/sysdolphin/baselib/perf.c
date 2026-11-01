@@ -39,8 +39,10 @@ void HSD_PerfSetTotalTime(void)
         (OSGetTime() - start_time) / (f32) (OSSecondsToTicks(1) / 60);
 }
 
+#ifndef TARGET_PS3
 void HSD_PerfCountEnvelopeBlending(s32 n)
 {
     HSD_ASSERT(0xA4, n < 32);
     HSD_PerfCurrentStat.env_blend[n]++;
 }
+#endif

@@ -145,6 +145,32 @@ static void WriteMTX3x3from3x4(f32 mtx[3][4])
 #define WriteMTXPS3x3from3x4(mtx, dest) WriteMTX3x3from3x4(mtx)
 #define WriteMTXPS3x3(mtx, dest) WriteMTX(&(mtx)[0][0], 9)
 #define WriteMTXPS4x2(mtx, dest) WriteMTX(&(mtx)[0][0], 8)
+
+#if !DEBUG
+// An XF load of cols words from each of rows rows of 4, in one reservation;
+// a row is read before its stores, which may alias it.
+static inline void WriteMTXCmd(u32 reg, const f32* m, int rows, int cols)
+{
+    const u32* w = (const u32*) m;
+    u8* p = __GXPipeBegin();
+    u8* q = p + 5;
+    int i;
+
+    __GXPipeSt8(p, 0x10);
+    __GXPipeSt32(p + 1, reg);
+    for (i = 0; i < rows; i++, w += 4, q += 4 * cols) {
+        u32 x0 = w[0], x1 = w[1], x2 = w[2], x3 = cols > 3 ? w[3] : 0;
+
+        __GXPipeSt32(q, x0);
+        __GXPipeSt32(q + 4, x1);
+        __GXPipeSt32(q + 8, x2);
+        if (cols > 3) {
+            __GXPipeSt32(q + 12, x3);
+        }
+    }
+    __GXPipeEnd(q);
+}
+#endif
 #else
 static asm void WriteMTXPS4x3(register f32 mtx[3][4],
                               register volatile f32* dest)
@@ -233,6 +259,9 @@ void GXLoadPosMtxImm(f32 mtx[3][4], u32 id)
     addr = id * 4;
     reg = addr | 0xB0000;
 
+#if defined(TARGET_PS3) && !DEBUG
+    WriteMTXCmd(reg, &mtx[0][0], 3, 4);
+#else
     GX_WRITE_U8(0x10);
     GX_WRITE_U32(reg);
 #if DEBUG
@@ -250,6 +279,7 @@ void GXLoadPosMtxImm(f32 mtx[3][4], u32 id)
     GX_WRITE_MTX_ELEM(addr + 11, mtx[2][3]);
 #else
     WriteMTXPS4x3(mtx, &GXWGFifo.f32);
+#endif
 #endif
 }
 
@@ -290,6 +320,9 @@ void GXLoadNrmMtxImm(f32 mtx[3][4], u32 id)
     addr = id * 3 + 0x400;
     reg = addr | 0x80000;
 
+#if defined(TARGET_PS3) && !DEBUG
+    WriteMTXCmd(reg, &mtx[0][0], 3, 3);
+#else
     GX_WRITE_U8(0x10);
     GX_WRITE_U32(reg);
 #if DEBUG
@@ -304,6 +337,7 @@ void GXLoadNrmMtxImm(f32 mtx[3][4], u32 id)
     GX_WRITE_MTX_ELEM(addr + 8, mtx[2][2]);
 #else
     WriteMTXPS3x3from3x4(mtx, &GXWGFifo.f32);
+#endif
 #endif
 }
 
@@ -377,6 +411,13 @@ void GXLoadTexMtxImm(f32 mtx[][4], u32 id, GXTexMtxType type)
     count = (type == GX_MTX2x4) ? 8 : 12;
     reg = addr | ((count - 1) << 16);
 
+#if defined(TARGET_PS3) && !DEBUG
+    if (type == GX_MTX3x4) {
+        WriteMTXCmd(reg, &mtx[0][0], 3, 4);
+    } else {
+        WriteMTXCmd(reg, &mtx[0][0], 2, 4);
+    }
+#else
     GX_WRITE_U8(0x10);
     GX_WRITE_U32(reg);
 #if DEBUG
@@ -400,6 +441,7 @@ void GXLoadTexMtxImm(f32 mtx[][4], u32 id, GXTexMtxType type)
     } else {
         WriteMTXPS4x2(mtx, &GXWGFifo.f32);
     }
+#endif
 #endif
 }
 

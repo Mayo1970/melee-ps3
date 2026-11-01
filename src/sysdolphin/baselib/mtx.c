@@ -157,6 +157,42 @@ void HSD_MtxInverseConcat(Mtx inv, Mtx src, Mtx dest)
 
 void HSD_MtxInverseTranspose(Mtx src, Mtx dest)
 {
+#ifdef TARGET_PS3
+    // src is read once, before dest is written, so dest may be src without a copy. The fmas are the ones GCC made
+    // of the #else expressions, pinned.
+    f32 m00 = src[0][0], m01 = src[0][1], m02 = src[0][2];
+    f32 m10 = src[1][0], m11 = src[1][1], m12 = src[1][2];
+    f32 m20 = src[2][0], m21 = src[2][1], m22 = src[2][2];
+    f32 det = __builtin_fmaf(
+        -m12, m00 * m21,
+        __builtin_fmaf(-m22, m01 * m10,
+                       __builtin_fmaf(-m02, m11 * m20,
+                                      __builtin_fmaf(m02 * m10, m21,
+                                                     __builtin_fmaf(m00 * m11, m22, (m01 * m12) * m20)))));
+
+    if (fabsf_bitwise(det) < EPSILON) {
+        if (src != dest) {
+            MTXCopy(src, dest);
+        }
+        return;
+    }
+    det = 1.0f / det;
+    // GCC orders a product's operands by definition; copies defined in this order give the #else code's operand
+    // orders, which decide the NaN that passes.
+    __asm__("" : "+f"(m20), "+f"(m10), "+f"(m00), "+f"(m21), "+f"(m11), "+f"(m01), "+f"(m12), "+f"(m02), "+f"(m22));
+    dest[0][0] = __builtin_fmaf(m11, m22, -(m21 * m12)) * det;
+    dest[1][0] = -__builtin_fmaf(m01, m22, -(m21 * m02)) * det;
+    dest[2][0] = __builtin_fmaf(m01, m12, -(m11 * m02)) * det;
+    dest[0][1] = -__builtin_fmaf(m10, m22, -(m20 * m12)) * det;
+    dest[1][1] = __builtin_fmaf(m00, m22, -(m20 * m02)) * det;
+    dest[2][1] = -__builtin_fmaf(m00, m12, -(m10 * m02)) * det;
+    dest[0][2] = __builtin_fmaf(m10, m21, -(m20 * m11)) * det;
+    dest[1][2] = -__builtin_fmaf(m00, m21, -(m20 * m01)) * det;
+    dest[2][2] = __builtin_fmaf(m00, m11, -(m10 * m01)) * det;
+    dest[0][3] = 0;
+    dest[1][3] = 0;
+    dest[2][3] = 0;
+#else
     Mtx* m;
     Mtx tempMatrix;
     f32 det = HSD_CalcDeterminantMatrix3x4(src);
@@ -199,6 +235,7 @@ void HSD_MtxInverseTranspose(Mtx src, Mtx dest)
         dest[1][3] = 0;
         dest[2][3] = 0;
     }
+#endif
 }
 
 static inline f32 calcVal(f32 x, f32 y)
@@ -435,6 +472,21 @@ void HSD_MtxSRTQuat(Mtx arg0, Vec3* arg1, Quaternion* arg2, Vec3* arg3,
 /// might be a fakematch?
 void HSD_MtxScaledAdd(Mtx arg0, Mtx arg1, Mtx arg2, f32 arg3)
 {
+#ifdef TARGET_PS3
+    // All loads before the first store, so the twelve fmas overlap; arg2 is arg1 at the callers.
+    f32* arr0 = &arg0[0][0];
+    f32* arr1 = &arg1[0][0];
+    f32* arr2 = &arg2[0][0];
+    f32 r0 = __builtin_fmaf(arr0[0], arg3, arr1[0]), r1 = __builtin_fmaf(arr0[1], arg3, arr1[1]);
+    f32 r2 = __builtin_fmaf(arr0[2], arg3, arr1[2]), r3 = __builtin_fmaf(arr0[3], arg3, arr1[3]);
+    f32 r4 = __builtin_fmaf(arr0[4], arg3, arr1[4]), r5 = __builtin_fmaf(arr0[5], arg3, arr1[5]);
+    f32 r6 = __builtin_fmaf(arr0[6], arg3, arr1[6]), r7 = __builtin_fmaf(arr0[7], arg3, arr1[7]);
+    f32 r8 = __builtin_fmaf(arr0[8], arg3, arr1[8]), r9 = __builtin_fmaf(arr0[9], arg3, arr1[9]);
+    f32 r10 = __builtin_fmaf(arr0[10], arg3, arr1[10]), r11 = __builtin_fmaf(arr0[11], arg3, arr1[11]);
+
+    arr2[0] = r0; arr2[1] = r1; arr2[2] = r2; arr2[3] = r3; arr2[4] = r4; arr2[5] = r5;
+    arr2[6] = r6; arr2[7] = r7; arr2[8] = r8; arr2[9] = r9; arr2[10] = r10; arr2[11] = r11;
+#else
     f32* arr0 = (&arg0[0][0]);
     f32* arr1 = (&arg1[0][0]);
     f32* arr2 = (&arg2[0][0]);
@@ -453,6 +505,7 @@ void HSD_MtxScaledAdd(Mtx arg0, Mtx arg1, Mtx arg2, f32 arg3)
     *arr2++ = *arr1++ + (arg3 * *arr0++);
     *arr2++ = *arr1++ + (arg3 * *arr0++);
     *arr2++ = *arr1++ + (arg3 * *arr0++);
+#endif
 }
 
 void* HSD_VecAlloc(void)

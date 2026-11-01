@@ -19,7 +19,12 @@ void HSD_PerfSetStartTime(void);
 void HSD_PerfSetCPUTime(void);
 void HSD_PerfSetDrawTime(void);
 void HSD_PerfSetTotalTime(void);
+#ifdef TARGET_PS3
+// Nothing reads env_blend: the count goes, and the call with it.
+static inline void HSD_PerfCountEnvelopeBlending(s32 n) {}
+#else
 void HSD_PerfCountEnvelopeBlending(s32 n);
+#endif
 
 static inline void HSD_PerfCountMtxLoad(void)
 {

@@ -15,8 +15,8 @@
 
 // The producer publishes at least this often, so the GP works while the game still writes.
 #define PUBLISH_CHUNK 0x4000
-// A store of up to 8 bytes may run past the ring end; the next slow path moves it to the ring start.
-#define SLACK 8
+// A command of up to SLACK bytes may run past the ring end; the next slow path moves it to the ring start.
+#define SLACK GX_PIPE_CMD_MAX
 // Larger reads are assembled piecewise in the scratch buffer, so a block can exceed the free space.
 #define MAX_DIRECT_READ(size) ((size) / 4)
 
@@ -47,6 +47,29 @@ static void (*idle_work)(void);
 static u8* scratch;
 static u32 scratch_size;
 
+#ifdef GX_PIPE_HASH
+// Check builds: an FNV-1a hash of every byte written to the ring in stream order, printed at exit.
+static u64 hash_pos;
+static u64 hash_val = 0xCBF29CE484222325ull;
+
+// Unpublished bytes of the previous lap sit at their ring offset; those of this lap may run into the slack.
+static void hash_to(u64 pos)
+{
+    for (; hash_pos < pos; hash_pos++) {
+        u8 b = hash_pos >= prod_base ? ring[hash_pos - prod_base] : ring[hash_pos % ring_size];
+
+        hash_val = (hash_val ^ b) * 0x100000001B3ull;
+    }
+}
+
+static void hash_report(void)
+{
+    hash_to(prod_base + (u64) (__GXPipeWp - ring));
+    OSReport("GX pipe hash %016llx over %llu bytes\n", (unsigned long long) hash_val,
+             (unsigned long long) hash_pos);
+}
+#endif
+
 void gp_fifo_init(u32 size)
 {
     if (ring != NULL) {
@@ -64,6 +87,9 @@ void gp_fifo_init(u32 size)
     gp_fifo_rp = ring;
     gp_fifo_avail = ring;
     gp_fifo_released = ring;
+#ifdef GX_PIPE_HASH
+    atexit(hash_report);
+#endif
 }
 
 static u64 load(u64* p)
@@ -116,6 +142,9 @@ static u64 wrap_and_publish(void)
         __GXPipeWp = ring + over;
     }
     pos = prod_base + (u64) (__GXPipeWp - ring);
+#ifdef GX_PIPE_HASH
+    hash_to(pos);
+#endif
     publish(pos);
     return pos;
 }

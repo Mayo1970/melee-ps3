@@ -128,6 +128,14 @@ static void entry(void* arg)
     sysThreadExit(0);
 }
 
+int ps_thread_set_priority(int priority)
+{
+    sys_ppu_thread_t tid;
+    int err = sysThreadGetId(&tid);
+
+    return err != 0 ? err : sysThreadSetPriority(tid, priority);
+}
+
 int ps_thread_start(void (*fn)(void* arg), void* arg, const char* name)
 {
     Start* s = malloc(sizeof(*s));

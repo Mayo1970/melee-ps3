@@ -155,10 +155,16 @@ void GXSetTevColor(GXTevRegID id, GXColor color)
     SET_REG_FIELD(0x18B, regBG, 11, 12, color.g);
     SET_REG_FIELD(0x18C, regBG, 8, 24, 225 + id * 2);
 
+#ifdef TARGET_PS3
+    // The GP thread takes BG at its first write; the GameCube repeats it as
+    // a hardware workaround.
+    GX_WRITE_RAS_REG2(regRA, regBG);
+#else
     GX_WRITE_RAS_REG(regRA);
     GX_WRITE_RAS_REG(regBG);
     GX_WRITE_RAS_REG(regBG);
     GX_WRITE_RAS_REG(regBG);
+#endif
     gx->bpSent = 0;
 }
 
@@ -188,10 +194,16 @@ void GXSetTevColorS10(GXTevRegID id, GXColorS10 color)
     SET_REG_FIELD(0x1B5, regBG, 11, 12, color.g & 0x7FF);
     SET_REG_FIELD(0x1B6, regBG, 8, 24, 225 + id * 2);
 
+#ifdef TARGET_PS3
+    // The GP thread takes BG at its first write; the GameCube repeats it as
+    // a hardware workaround.
+    GX_WRITE_RAS_REG2(regRA, regBG);
+#else
     GX_WRITE_RAS_REG(regRA);
     GX_WRITE_RAS_REG(regBG);
     GX_WRITE_RAS_REG(regBG);
     GX_WRITE_RAS_REG(regBG);
+#endif
     gx->bpSent = 0;
 }
 
@@ -214,8 +226,12 @@ void GXSetTevKColor(GXTevKColorID id, GXColor color)
     SET_REG_FIELD(0x1E8, regBG, 4, 20, 8);
     SET_REG_FIELD(0x1E9, regBG, 8, 24, 225 + id * 2);
 
+#ifdef TARGET_PS3
+    GX_WRITE_RAS_REG2(regRA, regBG);
+#else
     GX_WRITE_RAS_REG(regRA);
     GX_WRITE_RAS_REG(regBG);
+#endif
     gx->bpSent = 0;
 }
 
@@ -273,6 +289,83 @@ void GXSetTevSwapMode(GXTevStageID stage, GXTevSwapSel ras_sel,
     GX_WRITE_RAS_REG(*pTevReg);
     gx->bpSent = 0;
 }
+
+#ifdef TARGET_PS3
+// The seven calls' field updates in order. If a value spills into a register
+// number, their extra writes matter, so the calls run instead.
+void GXSetTevStagePS3(GXTevStageID stage, const GXTevStagePS3* conf)
+{
+    u32 tevc, teva, ksel, spill;
+
+    CHECK_GXBEGIN(0, "GXSetTevStagePS3");
+    if (stage < GX_MAX_TEVSTAGE) {
+        tevc = gx->tevc[stage];
+        SET_REG_FIELD(0, tevc, 1, 18, conf->clr_op & 1);
+        if (conf->clr_op <= 1) {
+            SET_REG_FIELD(0, tevc, 2, 20, conf->clr_scale);
+            SET_REG_FIELD(0, tevc, 2, 16, conf->clr_bias);
+        } else {
+            SET_REG_FIELD(0, tevc, 2, 20, (conf->clr_op >> 1) & 3);
+            SET_REG_FIELD(0, tevc, 2, 16, 3);
+        }
+        SET_REG_FIELD(0, tevc, 1, 19, conf->clr_clamp & 0xFF);
+        SET_REG_FIELD(0, tevc, 2, 22, conf->clr_out_reg);
+        SET_REG_FIELD(0, tevc, 4, 12, conf->clr_a);
+        SET_REG_FIELD(0, tevc, 4, 8, conf->clr_b);
+        SET_REG_FIELD(0, tevc, 4, 4, conf->clr_c);
+        SET_REG_FIELD(0, tevc, 4, 0, conf->clr_d);
+
+        teva = gx->teva[stage];
+        SET_REG_FIELD(0, teva, 1, 18, conf->alpha_op & 1);
+        if (conf->alpha_op <= 1) {
+            SET_REG_FIELD(0, teva, 2, 20, conf->alpha_scale);
+            SET_REG_FIELD(0, teva, 2, 16, conf->alpha_bias);
+        } else {
+            SET_REG_FIELD(0, teva, 2, 20, (conf->alpha_op >> 1) & 3);
+            SET_REG_FIELD(0, teva, 2, 16, 3);
+        }
+        SET_REG_FIELD(0, teva, 1, 19, conf->alpha_clamp & 0xFF);
+        SET_REG_FIELD(0, teva, 2, 22, conf->alpha_out_reg);
+        SET_REG_FIELD(0, teva, 3, 13, conf->alpha_a);
+        SET_REG_FIELD(0, teva, 3, 10, conf->alpha_b);
+        SET_REG_FIELD(0, teva, 3, 7, conf->alpha_c);
+        SET_REG_FIELD(0, teva, 3, 4, conf->alpha_d);
+        SET_REG_FIELD(0, teva, 2, 0, conf->ras_swap);
+        SET_REG_FIELD(0, teva, 2, 2, conf->tex_swap);
+
+        ksel = gx->tevKsel[stage >> 1];
+        if (stage & 1) {
+            SET_REG_FIELD(0, ksel, 5, 14, conf->kcsel);
+            SET_REG_FIELD(0, ksel, 5, 19, conf->kasel);
+        } else {
+            SET_REG_FIELD(0, ksel, 5, 4, conf->kcsel);
+            SET_REG_FIELD(0, ksel, 5, 9, conf->kasel);
+        }
+
+        // No field covers bits 24-31: they differ only if a value spilled.
+        spill = (tevc ^ gx->tevc[stage]) | (teva ^ gx->teva[stage]) |
+                (ksel ^ gx->tevKsel[stage >> 1]);
+        if ((spill >> 24) == 0) {
+            gx->tevc[stage] = tevc;
+            gx->teva[stage] = teva;
+            gx->tevKsel[stage >> 1] = ksel;
+            GX_WRITE_RAS_REG3(tevc, teva, ksel);
+            gx->bpSent = 0;
+            return;
+        }
+    }
+    GXSetTevColorOp(stage, conf->clr_op, conf->clr_bias, conf->clr_scale,
+                    conf->clr_clamp, conf->clr_out_reg);
+    GXSetTevColorIn(stage, conf->clr_a, conf->clr_b, conf->clr_c, conf->clr_d);
+    GXSetTevAlphaOp(stage, conf->alpha_op, conf->alpha_bias, conf->alpha_scale,
+                    conf->alpha_clamp, conf->alpha_out_reg);
+    GXSetTevAlphaIn(stage, conf->alpha_a, conf->alpha_b, conf->alpha_c,
+                    conf->alpha_d);
+    GXSetTevSwapMode(stage, conf->ras_swap, conf->tex_swap);
+    GXSetTevKColorSel(stage, conf->kcsel);
+    GXSetTevKAlphaSel(stage, conf->kasel);
+}
+#endif
 
 void GXSetTevSwapModeTable(GXTevSwapSel table, GXTevColorChan red,
                            GXTevColorChan green, GXTevColorChan blue,

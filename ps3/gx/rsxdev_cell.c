@@ -7,6 +7,7 @@
 #include <string.h>
 #include <unistd.h>
 
+#include <rsx/nv40.h>
 #include <rsx/rsx.h>
 #include <sysutil/video.h>
 
@@ -453,10 +454,47 @@ void dev_texture(int unit, const DevTexture* t)
     rsxTextureWrapMode(ctx, (u8) unit, t->wrap_s, t->wrap_t, GCM_TEXTURE_CLAMP_TO_EDGE, 0, GCM_TEXTURE_ZFUNC_LESS, 0);
 }
 
+// The attribute registers as dev_attribs last wrote them; attr_valid false after anything else wrote them.
+static bool attr_valid;
+static u32 attr_format[16], attr_offset[16];
+
 void dev_attrib(int slot, u32 offset, u32 stride, u32 count, u32 type)
 {
+    attr_valid = false;
     rsxBindVertexArrayAttrib(ctx, (u8) slot, 0, offset & ~DEV_LOCAL, (u8) stride, (u8) count, (u8) type,
                              (offset & DEV_LOCAL) ? GCM_LOCATION_RSX : GCM_LOCATION_CELL);
+}
+
+void dev_attribs(const u32 format[16], const u32 offset[16], u32 base, u32 enabled)
+{
+    u32 f0, f1, o0, o1, n, i;
+    u32* p;
+
+    dev_attribs_diff(format, offset, base, enabled, attr_valid, attr_format, attr_offset, &f0, &f1, &o0, &o1);
+    n = (f1 > f0 ? f1 - f0 + 1 : 0) + (o1 > o0 ? o1 - o0 + 1 : 0);
+    if (n == 0) {
+        return;
+    }
+    // As librsx: one reservation, ctx->current stored once. Read from the arguments, not the shadow just stored.
+    if (ctx->current + n > ctx->end && rsxContextCallback(ctx, n) != 0) {
+        attr_valid = false;
+        return;
+    }
+    p = ctx->current;
+    if (f1 > f0) {
+        *p++ = (f1 - f0) << 18 | NV40TCL_VTXFMT(f0);
+        for (i = f0; i < f1; i++) {
+            *p++ = format[i];
+        }
+    }
+    if (o1 > o0) {
+        *p++ = (o1 - o0) << 18 | NV40TCL_VTXBUF_ADDRESS(o0);
+        for (i = o0; i < o1; i++) {
+            *p++ = dev_attribs_offset(offset, base, enabled, i);
+        }
+    }
+    ctx->current = p;
+    attr_valid = true;
 }
 
 void dev_draw(u32 prim, u32 count)
@@ -657,6 +695,8 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
     dev_draw(GCM_TYPE_QUADS, 4);
     // No gcmSetWaitFlip: it would hold the GX draws until the vblank. A buffer with a flip pending is not drawn.
     gcmSetFlip(ctx, (u8) b);
+    // The flip runs gcm's state reset.
+    attr_valid = false;
     flush();
     flips_queued++;
     if (flips_queued <= 4) {

@@ -8,6 +8,7 @@
 #include <stdbool.h>
 
 #include <dolphin/os.h>
+#include <ps3_intr.h>
 
 Ps3Diag ps3_diag;
 Ps3Prof ps3_prof;
@@ -249,6 +250,38 @@ void OSWakeupThread(OSThreadQueue* queue)
     (*queue_wakeups(queue))++;
     ps_cond_broadcast(&sleep_cond);
     OSRestoreInterrupts(level);
+}
+
+// Alarm handlers run under intr_lock, so one cannot run between the caller's check and the wait.
+static PsCond alarm_cond = PS_COND_INIT;
+static int alarm_waiters;
+
+void ps3_intr_wait_alarms(unsigned long long usec)
+{
+    BOOL level = OSDisableInterrupts();
+    const char* owner = ps3_diag.intr_owner;
+    uint64_t t = ps3_prof_now();
+
+    if (&thread_marker == main_marker) {
+        ps3_diag.main_sleep = &alarm_cond;
+    }
+    alarm_waiters++;
+    ps3_diag.intr_owner = NULL;
+    ps_cond_timedwait(&alarm_cond, &intr_lock, usec);
+    ps3_diag.intr_owner = owner;
+    alarm_waiters--;
+    if (&thread_marker == main_marker) {
+        ps3_prof_lap(PROF_MAIN_PAD, &t);
+        ps3_diag.main_sleep = NULL;
+    }
+    OSRestoreInterrupts(level);
+}
+
+void ps3_intr_alarms_ran(void)
+{
+    if (alarm_waiters != 0) {
+        ps_cond_broadcast(&alarm_cond);
+    }
 }
 
 void ps3_intr_init(void)

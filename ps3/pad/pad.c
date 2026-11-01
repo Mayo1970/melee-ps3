@@ -173,10 +173,11 @@ u32 PADRead(PADStatus* status)
         connected |= PAD_CHAN0_BIT >> chan;
     }
     {
-        // As built; vertex conversion on the PPE; the old bindings after a present (the black flicker); the old depth
-        // output; the flicker detector; then the black flicker's earlier tests (runs 46-52) and specular lights off.
+        // As built; SPU off; the black flicker's tests (old bindings, old depth, detector, runs 46-52, no specular);
+        // then the GP's attribute binds a librsx call each, and the GP thread below the main thread.
         static const unsigned modes[] = { 0,       33554432, 16777216, 4194304, 2097152, 1048576, 524288, 262144,
-                                          131072,  65536,    16,       4096,    8192,    16384,   32768,  2048 };
+                                          131072,  65536,    16,       4096,    8192,    16384,   32768,  2048,
+                                          67108864, 134217728 };
         static const char* const names[] = { "as built",
                                              "vertex conversion on the PPE (no SPU jobs)",
                                              "the old texture bindings after a present (the black flicker)",
@@ -192,7 +193,9 @@ u32 PADRead(PADStatus* status)
                                              "an RSX barrier after ring draws",
                                              "an RSX barrier before fragment program changes",
                                              "an RSX barrier before vertex format changes",
-                                             "specular lights off" };
+                                             "specular lights off",
+                                             "the attributes bound a librsx call per slot",
+                                             "the GP thread at priority 1200, below the main thread" };
         static unsigned held, mode;
 
         // Select is no GameCube button: each press moves the backend to the next A/B mode.

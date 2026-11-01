@@ -121,10 +121,12 @@ bool ps3_mem_written_since(u32 paddr, u32 size, u32 stamp)
     return false;
 }
 
+// Regions are added in OSInit, before the threads that translate start (thread creation orders those writes), so
+// the translations read nregions with a plain load: an acquire load costs an isync on the PPE.
 u32 OSCachedToPhysical(void* caddr)
 {
     uintptr_t p = (uintptr_t) caddr;
-    int n = __atomic_load_n(&nregions, __ATOMIC_ACQUIRE);
+    int n = __atomic_load_n(&nregions, __ATOMIC_RELAXED);
     int i;
 
     for (i = 0; i < n; i++) {
@@ -141,7 +143,7 @@ u32 OSCachedToPhysical(void* caddr)
 
 void* OSPhysicalToCached(u32 paddr)
 {
-    int n = __atomic_load_n(&nregions, __ATOMIC_ACQUIRE);
+    int n = __atomic_load_n(&nregions, __ATOMIC_RELAXED);
     int i;
 
     for (i = 0; i < n; i++) {

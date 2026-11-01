@@ -37,8 +37,13 @@ void HSD_MtxInitAllocData(void);
 
 static inline f32 fabsf_bitwise(f32 v)
 {
+#ifdef TARGET_PS3
+    // fabs clears the same bit (NaN payloads and denormals kept) without the trip through memory.
+    return __builtin_fabsf(v);
+#else
     *(u32*) &v &= ~0x80000000;
     return v;
+#endif
 }
 
 static inline void HSD_MtxColVec(MtxPtr mtx, int col, Vec3* vec)

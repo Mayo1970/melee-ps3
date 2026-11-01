@@ -30,5 +30,8 @@ void ps_cond_broadcast(PsCond* c);
 int ps_thread_start(void (*fn)(void* arg), void* arg, const char* name);
 // The name ps_thread_start gave the calling thread; NULL for other threads.
 const char* ps_thread_name(void);
+// The calling thread's lv2 priority (lower runs first; ps_thread_start gives 1001, the main thread has 1100).
+// Returns 0, or an error code; nothing on the host.
+int ps_thread_set_priority(int priority);
 
 #endif

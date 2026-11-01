@@ -142,6 +142,10 @@ static u32 vp_slot_next;
 
 static VtxLayout layouts[LAYOUTS];
 static int nlayouts, layout_next;
+// Each layout's attributes for dev_attribs: format words, and offsets in the vertex.
+static struct {
+    u32 format[16], offset[16];
+} layout_attribs[LAYOUTS];
 
 static TexEntry tex_cache[TEX_CACHE];
 // The cache entries by address: the first entry of each chain, -1 when none.
@@ -194,11 +198,17 @@ static struct {
     u16 vp_attrs, vp_tev;
     bool vp_pos3, vp_nospec, vp_olddepth;
     VpEntry* v;
-    // The RSX raster state as apply_state left it, and its result.
+    // The RSX raster state as apply_state left it, its result, and the register words it read (state_same).
     u32 state_bp, state_xf;
     bool state_pass, state_olddepth;
-    u32 tex_bp, tex_stamp, tex_tluts;
+    u32 state_src[18];
+    // The textures as bind_textures left them: the units the program samples and their register words.
+    u32 tex_bp, tex_stamp, tex_tluts, tex_ab, tex_used;
+    u32 tex_regs[8][5];
 } memo;
+
+// The A/B bits for one draw setup, read once, so the memos and the work they guard see the same modes.
+static unsigned draw_ab;
 
 static void unsupported(u32 bit, const char* what)
 {
@@ -310,10 +320,49 @@ static const FpEntry* fp_get(const TevConfig* cfg)
     return fp_get(cfg);
 }
 
+static void vp_recent_add(VpEntry* recent[4], VpEntry* e)
+{
+    recent[3] = recent[2];
+    recent[2] = recent[1];
+    recent[1] = recent[0];
+    recent[0] = e;
+}
+
+// xf_make_key clears the whole key, padding too, so keys compare and hash as words.
+_Static_assert(sizeof(XfKey) % 4 == 0 && _Alignof(XfKey) >= 4, "XfKey compares as words");
+
+static bool xf_key_equal(const XfKey* a, const XfKey* b)
+{
+    const u32* p = (const u32*) a;
+    const u32* q = (const u32*) b;
+    u32 i;
+
+    for (i = 0; i < sizeof(XfKey) / 4; i++) {
+        if (p[i] != q[i]) {
+            return false;
+        }
+    }
+    return true;
+}
+
 static VpEntry* vp_get(const XfKey* key)
 {
-    u32 h = hash_bytes(key, sizeof(*key), 2166136261u), i;
+    // The last programs found, newest first: entries are never freed.
+    static VpEntry* recent[4];
+    u32 h, i;
 
+    for (i = 0; i < 4 && recent[i] != NULL; i++) {
+        if (xf_key_equal(&recent[i]->key, key)) {
+            VpEntry* e = recent[i];
+
+            for (; i > 0; i--) {
+                recent[i] = recent[i - 1];
+            }
+            recent[0] = e;
+            return e;
+        }
+    }
+    h = hash_words(key, sizeof(*key), 2166136261u);
     for (i = 0; i < VP_CACHE; i++) {
         VpEntry* e = &vp_cache[(h + i) % VP_CACHE];
 
@@ -336,9 +385,11 @@ static VpEntry* vp_get(const XfKey* key)
             e->key = *key;
             e->used = true;
             stats.vertex_programs++;
+            vp_recent_add(recent, e);
             return e;
         }
-        if (e->hash == h && memcmp(&e->key, key, sizeof(*key)) == 0) {
+        if (e->hash == h && xf_key_equal(&e->key, key)) {
+            vp_recent_add(recent, e);
             return e;
         }
     }
@@ -847,7 +898,7 @@ static bool apply_alpha_test(const GpState* s)
     u32 c0 = (at >> 16) & 7, c1 = (at >> 19) & 7, logic = (at >> 22) & 3;
     bool k0 = c0 == 0 || c0 == 7, k1 = c1 == 0 || c1 == 7;
     bool v0 = c0 == 7, v1 = c1 == 7;
-    bool old = (ps3_diag.gx_ab & 524288) != 0;
+    bool old = (draw_ab & 524288) != 0;
 
     // Not in the old A/B mode: always-true or always-false compares, and two equal halves, reduce too. Melee's
     // translucent materials use alpha > 0 AND alpha > 0 with depth writes: with no test, clear pixels wrote depth.
@@ -977,10 +1028,69 @@ static bool apply_state(const GpState* s)
     return apply_alpha_test(s);
 }
 
+// What apply_state reads besides the viewport depth mode: these BP registers, the XF viewport (0x1A-0x1F), the cull
+// bits of genmode and the alpha test A/B bit. memo.state_src holds them in this order.
+static const u8 state_bps[10] = { 0x20, 0x21, 0x22, 0x40, 0x41, 0x42, 0x43, 0x59, 0xF3, 0xF5 };
+
+static bool state_same(const GpState* s)
+{
+    const u32* m = memo.state_src;
+    int i;
+
+    for (i = 0; i < 10; i++) {
+        if (m[i] != s->bp[state_bps[i]]) {
+            return false;
+        }
+    }
+    for (i = 0; i < 6; i++) {
+        if (m[10 + i] != s->xf_regs[0x1A + i]) {
+            return false;
+        }
+    }
+    return m[16] == (s->bp[0x00] & 0xC000) && m[17] == (draw_ab & 524288);
+}
+
+static void state_save(const GpState* s)
+{
+    u32* m = memo.state_src;
+    int i;
+
+    for (i = 0; i < 10; i++) {
+        m[i] = s->bp[state_bps[i]];
+    }
+    for (i = 0; i < 6; i++) {
+        m[10 + i] = s->xf_regs[0x1A + i];
+    }
+    m[16] = s->bp[0x00] & 0xC000;
+    m[17] = draw_ab & 524288;
+}
+
+#ifdef GX_STATE_CHECK
+// Check build (host): a draw that keeps the raster state runs apply_state again, which must change nothing.
+static void state_check(const GpState* s)
+{
+    static u8 before[256], after[256];
+    static u32 checks, errors;
+    u32 n = dev_debug_raster(before, sizeof(before));
+    bool pass = apply_state(s);
+
+    checks++;
+    if (dev_debug_raster(after, sizeof(after)) != n || memcmp(before, after, n) != 0 || pass != memo.state_pass) {
+        if (errors++ < 20) {
+            ps3_log("state check: kept state %u differs (pass %d against %d)\n", checks, pass, memo.state_pass);
+        }
+    }
+    if (checks % 100000 == 0) {
+        ps3_log("state check: %u kept states, %u differ\n", checks, errors);
+    }
+}
+#endif
+
 // Constants
 
 // Words, not floats: a float load of a value just stored as an integer waits for the store (load-hit-store).
-static void set_row(int r, u32 x, u32 y, u32 z, u32 w)
+// Returns 1 when the row changed; the caller gathers the bits, as vc_changed's would wait for the store too.
+static inline u64 set_row(int r, u32 x, u32 y, u32 z, u32 w)
 {
     u32* d = (u32*) vc[r];
 
@@ -989,35 +1099,55 @@ static void set_row(int r, u32 x, u32 y, u32 z, u32 w)
         d[1] = y;
         d[2] = z;
         d[3] = w;
-        vc_changed[r >> 5] |= 1u << (r & 31);
+        return 1;
     }
+    return 0;
 }
 
-// Each run of changed rows in one upload.
-static void upload_changed(void)
+// The DQ and TEV rows' bits in update_constants: rows 192 to 255, one u64.
+#define C_HI 192
+_Static_assert(C_DQ >= C_HI && C_COUNT <= C_HI + 64 && C_HI % 32 == 0, "the DQ and TEV rows fit one u64");
+
+// Each run of changed rows in one upload, in row order; hi adds bits for rows C_HI and up. Runs go on across words.
+static void upload_changed(u64 hi)
 {
-    int r = 0, e;
+    int run = -1;
+    u32 w;
     bool barrier = (ps3_diag.gx_ab & 64) != 0;
 
-    while (r < C_COUNT) {
-        u32 rest = vc_changed[r >> 5] >> (r & 31);
+    for (w = 0; w < (C_COUNT + 31) / 32; w++) {
+        u32 x = vc_changed[w], pos = 0, m;
 
-        if (rest == 0) {
-            r = (r | 31) + 1;
-            continue;
+        if (w >= C_HI / 32) {
+            x |= (u32) (hi >> (32 * (w - C_HI / 32)));
         }
-        if (!(rest & 1)) {
-            r++;
-            continue;
+        while (pos < 32) {
+            if (run < 0) {
+                m = x >> pos;
+                if (m == 0) {
+                    break;
+                }
+                pos += (u32) __builtin_ctz(m);
+                run = (int) (w * 32 + pos);
+            }
+            m = ~x >> pos;
+            if (m == 0) {
+                break;
+            }
+            pos += (u32) __builtin_ctz(m);
+            if (barrier) {
+                dev_barrier();
+                barrier = false;
+            }
+            dev_vp_constants((u32) run, w * 32 + pos - (u32) run, vc[run]);
+            run = -1;
         }
-        for (e = r + 1; e < C_COUNT && ((vc_changed[e >> 5] >> (e & 31)) & 1); e++) {
-        }
+    }
+    if (run >= 0) {
         if (barrier) {
             dev_barrier();
-            barrier = false;
         }
-        dev_vp_constants((u32) r, (u32) (e - r), vc[r]);
-        r = e;
+        dev_vp_constants((u32) run, (u32) (C_COUNT - run), vc[run]);
     }
     memset(vc_changed, 0, sizeof(vc_changed));
 }
@@ -1026,6 +1156,7 @@ static void update_constants(GpState* s, const VtxLayout* l, float tev[XF_TEV_CO
 {
     const u32* q = (const u32*) l->dq;
     u32 mem = 0, i;
+    u64 hi;
     bool xf_dirty;
 
     if (ps3_diag.gx_ab & 4) {
@@ -1051,17 +1182,17 @@ static void update_constants(GpState* s, const VtxLayout* l, float tev[XF_TEV_CO
     }
     memset(s->xf_mem_dirty, 0, sizeof(s->xf_mem_dirty));
     memset(s->xf_reg_dirty, 0, sizeof(s->xf_reg_dirty));
-    set_row(C_DQ, q[0], q[1], q[2], q[3]);
-    set_row(C_DQ + 1, q[4], q[5], q[6], q[7]);
-    set_row(C_DQ + 2, q[8], q[9], 0, 0);
+    hi = set_row(C_DQ, q[0], q[1], q[2], q[3]) << (C_DQ - C_HI);
+    hi |= set_row(C_DQ + 1, q[4], q[5], q[6], q[7]) << (C_DQ + 1 - C_HI);
+    hi |= set_row(C_DQ + 2, q[8], q[9], 0, 0) << (C_DQ + 2 - C_HI);
     for (i = 0; i < XF_TEV_CONSTS; i++) {
         if ((tev_mask >> i) & 1) {
             const u32* t = (const u32*) tev[i];
 
-            set_row(C_TEV + (int) i, t[0], t[1], t[2], t[3]);
+            hi |= set_row(C_TEV + (int) i, t[0], t[1], t[2], t[3]) << (C_TEV + i - C_HI);
         }
     }
-    upload_changed();
+    upload_changed(hi);
     memo.consts_ok = true;
 }
 
@@ -1069,7 +1200,7 @@ static void update_constants(GpState* s, const VtxLayout* l, float tev[XF_TEV_CO
 
 static VtxLayout* get_layout(const GpState* s, int vat)
 {
-    int i;
+    int i, k;
 
     for (i = 0; i < nlayouts; i++) {
         VtxLayout* l = &layouts[i];
@@ -1086,6 +1217,14 @@ static VtxLayout* get_layout(const GpState* s, int vat)
         layout_next = (layout_next + 1) % LAYOUTS;
     }
     vtx_layout(s, vat, &layouts[i]);
+    for (k = 0; k < 16; k++) {
+        const VtxLayout* l = &layouts[i];
+        bool on = (l->attrs >> k) & 1;
+
+        layout_attribs[i].format[k] = on ? dev_attrib_format(l->out_size, l->attr[k].count, l->attr[k].type)
+                                         : dev_attrib_format(0, 0, VTX_F32);
+        layout_attribs[i].offset[k] = on ? l->attr[k].offset : 0;
+    }
     if ((s->vcd_lo >> 8) & 1) {
         unsupported(U_TEX7_MTXIDX, "a texcoord 7 matrix index in the vertex");
     }
@@ -1546,16 +1685,31 @@ static const DevTexture* white_for(const DevTexture* d)
     return &w;
 }
 
-static void bind_textures(const GpState* s, const TevConfig* cfg)
+// GX map unit's BP register k: mode 0, mode 1, image 0, image 3, TLUT.
+static u32 tex_reg(const GpState* s, int unit, int k)
 {
     static const u8 base[2] = { 0x80, 0xA0 };
+    static const u8 off[5] = { 0x00, 0x04, 0x08, 0x14, 0x18 };
+
+    return s->bp[base[unit >> 2] + off[k] + (unit & 3)];
+}
+
+#ifdef GX_TCACHE_CHECK
+// dev_texture calls by bind_textures.
+static u32 tex_binds;
+#endif
+
+// Returns the units the config samples.
+static u32 bind_textures(const GpState* s, const TevConfig* cfg)
+{
     bool used[8] = { false };
-    u32 frees = tex_frees, restarts = 0;
+    u32 frees = tex_frees, restarts = 0, mask = 0;
     int i, k;
 
     for (i = 0; i < cfg->nstages; i++) {
         if (cfg->st[i].tex >= 0) {
             used[cfg->st[i].tex] = true;
+            mask |= 1u << cfg->st[i].tex;
         }
     }
     for (i = 0; i < 8; i++) {
@@ -1565,10 +1719,8 @@ static void bind_textures(const GpState* s, const TevConfig* cfg)
         if (!used[i]) {
             continue;
         }
-        // Mode 0, mode 1, image 0, image 3, TLUT.
         for (k = 0; k < 5; k++) {
-            static const u8 off[5] = { 0x00, 0x04, 0x08, 0x14, 0x18 };
-            regs[k] = s->bp[base[i >> 2] + off[k] + (i & 3)];
+            regs[k] = tex_reg(s, i, k);
         }
         same = tex_memo[i].e != NULL && tex_memo[i].tlut_loads == tlut_loads &&
                memcmp(tex_memo[i].regs, regs, sizeof(regs)) == 0 && tex_current(tex_memo[i].e);
@@ -1580,8 +1732,8 @@ static void bind_textures(const GpState* s, const TevConfig* cfg)
             }
             memcpy(tex_memo[i].regs, regs, sizeof(regs));
             tex_memo[i].tlut_loads = tlut_loads;
-            if (tex_frees != frees && restarts++ == 0) {
-                // The lookup freed textures, maybe ones bound for earlier units: all of them again, once.
+            if (tex_frees != frees && restarts++ < 4) {
+                // The lookup freed textures, maybe ones bound for earlier units: all of them again.
                 frees = tex_frees;
                 i = -1;
                 continue;
@@ -1597,18 +1749,41 @@ static void bind_textures(const GpState* s, const TevConfig* cfg)
             const TexEntry* e = tex_memo[i].e;
             const DevTexture* d = e != NULL ? &tex_memo[i].d : NULL;
 
-            if (ps3_diag.gx_ab & 256) {
+            if (draw_ab & 256) {
                 dev_barrier();
             }
             // A/B: the fighters' shadows (lbshadow.c's 256x256 EFB copies) sample white.
-            if ((ps3_diag.gx_ab & 262144) && e != NULL && e->efb && e->width == 256 && e->height == 256) {
+            if ((draw_ab & 262144) && e != NULL && e->efb && e->width == 256 && e->height == 256) {
                 d = white_for(d);
             }
+#ifdef GX_TCACHE_CHECK
+            tex_binds++;
+#endif
             dev_texture(i, d);
             tex_bind(i, e);
         }
     }
-    textures_bound = true;
+    // Past the last restart, a free emptied bound[]: the units count as unbound.
+    textures_bound = tex_frees == frees;
+    return mask;
+}
+
+// The used units' texture registers as at the last bind_textures.
+static bool tex_regs_same(const GpState* s)
+{
+    u32 used = memo.tex_used;
+    int i, k;
+
+    for (i = 0; used != 0; i++, used >>= 1) {
+        if (used & 1) {
+            for (k = 0; k < 5; k++) {
+                if (memo.tex_regs[i][k] != tex_reg(s, i, k)) {
+                    return false;
+                }
+            }
+        }
+    }
+    return true;
 }
 
 // Draws
@@ -1698,6 +1873,38 @@ static void put_indices(u16* d, int prim, u32 b, u32 count)
 // The layout of the RSX's vertex bindings; NULL after a copy or present pass bound its own.
 static const VtxLayout* bound_layout;
 
+#ifdef GX_ATTRIB_CHECK
+// Check build (host): after each bind the device's registers must hold what the old per-slot dev_attrib calls set.
+static void attrib_check(const VtxLayout* l, u32 io)
+{
+    static u32 checks, errors;
+    u32 format[16], offset[16], i;
+
+    dev_debug_attribs(format, offset);
+    checks++;
+    for (i = 0; i < 16; i++) {
+        bool on = (l->attrs >> i) & 1;
+        u32 a = on ? io + l->attr[i].offset : 0, f = VTX_F32, o;
+
+        // As librsx's rsxBindVertexArrayAttrib encodes dev_attrib's arguments.
+        if (on) {
+            f = (u32) (u8) l->out_size << 8 | (u32) (u8) l->attr[i].count << 4 | (u8) l->attr[i].type;
+        }
+        o = (a & ~DEV_LOCAL) | ((a & DEV_LOCAL) ? 0 : 1u << 31);
+        if (format[i] != f || offset[i] != o) {
+            if (errors++ < 20) {
+                ps3_log("attrib check: bind %u slot %u: %08x %08x against %08x %08x\n", checks, i, format[i],
+                        offset[i], f, o);
+            }
+            break;
+        }
+    }
+    if (checks % 100000 == 0) {
+        ps3_log("attrib check: %u binds, %u differ\n", checks, errors);
+    }
+}
+#endif
+
 static void bind_attribs(const VtxLayout* l, u32 io)
 {
     u32 i;
@@ -1707,13 +1914,21 @@ static void bind_attribs(const VtxLayout* l, u32 io)
         dev_barrier();
     }
     bound_layout = l;
-    for (i = 0; i < 16; i++) {
-        if ((l->attrs >> i) & 1) {
-            dev_attrib((int) i, io + l->attr[i].offset, l->out_size, l->attr[i].count, l->attr[i].type);
-        } else {
-            dev_attrib((int) i, 0, 0, 0, VTX_F32);
+    if (!(ps3_diag.gx_ab & 67108864)) {
+        dev_attribs(layout_attribs[l - layouts].format, layout_attribs[l - layouts].offset, io, l->attrs);
+    } else {
+        // A/B: a librsx call per slot.
+        for (i = 0; i < 16; i++) {
+            if ((l->attrs >> i) & 1) {
+                dev_attrib((int) i, io + l->attr[i].offset, l->out_size, l->attr[i].count, l->attr[i].type);
+            } else {
+                dev_attrib((int) i, 0, 0, 0, VTX_F32);
+            }
         }
     }
+#ifdef GX_ATTRIB_CHECK
+    attrib_check(l, io);
+#endif
 }
 
 // A/B after an RSX draw (diag.h): the PPE waits for it (8); the RSX waits for its own backend after every draw (16),
@@ -1849,8 +2064,11 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
     const FpEntry* f;
     VpEntry* v;
     XfKey key;
-    u32 numtexgens = s->xf_regs[0x3F] & 0xF, stamp;
-    bool tev_hit, reused = true, nospec, olddepth;
+    u32 numtexgens = s->xf_regs[0x3F] & 0xF, stamp, tex_ab;
+    bool tev_hit, tex_hit, reused = true, nospec, olddepth;
+    int i, k;
+
+    draw_ab = ps3_diag.gx_ab;
 
     l = current_layout(s, vat);
     if (!(l->attrs & (1u << VA_POS)) || (((s->bp[0x00] >> 14) & 3) == 3 && prim <= 4)) {
@@ -1871,16 +2089,14 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
     f = memo.f;
     ps3_prof_lap(PROF_DRAW_TEV, t);
     ps3_diag.gp_site = "draw: XF";
-    nospec = (ps3_diag.gx_ab & 2048) != 0;
-    olddepth = (ps3_diag.gx_ab & 4194304) != 0;
+    nospec = (draw_ab & 2048) != 0;
+    olddepth = (draw_ab & 4194304) != 0;
     if (!memo.vp_ok || memo.vp_xf != s->xf_gen || memo.vp_attrs != l->attrs || memo.vp_pos3 != l->pos3 ||
         memo.vp_tev != memo.tev_mask || memo.vp_nospec != nospec || memo.vp_olddepth != olddepth) {
         reused = false;
         xf_make_key(s, l->attrs, l->pos3, memo.tev_mask, &key);
         key.old_depth = olddepth;
         if (nospec) {
-            int i;
-
             // A/B: specular channels (attenuation on, spot off) light nothing and give their ambient colour.
             for (i = 0; i < 4; i++) {
                 if (((key.chan[i] >> 9) & 3) == 1) {
@@ -1903,16 +2119,22 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
     if (f == NULL || v == NULL) {
         return NULL;
     }
-    // The viewport's depth follows the program's depth output (apply_state).
-    if (!memo.state_ok || memo.state_bp != s->bp_gen || memo.state_xf != s->xf_gen ||
-        memo.state_olddepth != olddepth) {
+    // The viewport's depth follows the program's depth output (apply_state). Other BP or XF writes keep the state.
+    if (!memo.state_ok || memo.state_olddepth != olddepth ||
+        ((memo.state_bp != s->bp_gen || memo.state_xf != s->xf_gen) && !state_same(s))) {
         reused = false;
         memo.state_pass = apply_state(s);
-        memo.state_bp = s->bp_gen;
-        memo.state_xf = s->xf_gen;
+        state_save(s);
         memo.state_olddepth = olddepth;
         memo.state_ok = true;
     }
+#ifdef GX_STATE_CHECK
+    else if (memo.state_bp != s->bp_gen || memo.state_xf != s->xf_gen) {
+        state_check(s);
+    }
+#endif
+    memo.state_bp = s->bp_gen;
+    memo.state_xf = s->xf_gen;
     if (!memo.state_pass) {
         return NULL;
     }
@@ -1926,19 +2148,48 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
     ps3_diag.gp_site = "draw: programs and textures";
     use_vp(v);
     use_fp(f);
-    // The textures are checked again after a BP change, a TLUT load or a memory write (bind_textures).
+    // The textures are checked again after a write to their registers, a TLUT load or a memory write
+    // (bind_textures).
     stamp = ps3_mem_stamp();
+    tex_ab = draw_ab & (256 | 262144);
+    tex_hit = memo.tex_ok && textures_bound && memo.tex_stamp == stamp && memo.tex_tluts == tlut_loads &&
+              memo.tex_ab == tex_ab && (memo.tex_bp == s->bp_gen || tex_regs_same(s));
 #ifdef GX_TCACHE_CHECK
-    memo.tex_ok = false;
+    {
+        // Check build: the textures bind at each draw; where the memo keeps them, nothing may change.
+        static u32 kept, errors;
+        const TexEntry* was[8];
+        u32 binds = tex_binds;
+
+        memcpy(was, bound, sizeof(was));
+        memo.tex_used = bind_textures(s, &f->cfg);
+        if (tex_hit && (tex_binds != binds || memcmp(was, bound, sizeof(was)) != 0) && errors++ < 20) {
+            ps3_log("tcache check: kept bindings %u changed\n", kept);
+        }
+        if (tex_hit && ++kept % 100000 == 0) {
+            ps3_log("tcache check: %u kept bindings, %u changed\n", kept, errors);
+        }
+        tex_hit = false;
+    }
 #endif
-    if (!memo.tex_ok || !textures_bound || memo.tex_bp != s->bp_gen || memo.tex_stamp != stamp ||
-        memo.tex_tluts != tlut_loads) {
-        bind_textures(s, &f->cfg);
-        memo.tex_bp = s->bp_gen;
+    if (!tex_hit) {
+#ifndef GX_TCACHE_CHECK
+        memo.tex_used = bind_textures(s, &f->cfg);
+#endif
+        for (i = 0; i < 8; i++) {
+            if ((memo.tex_used >> i) & 1) {
+                for (k = 0; k < 5; k++) {
+                    memo.tex_regs[i][k] = tex_reg(s, i, k);
+                }
+            }
+        }
         memo.tex_stamp = stamp;
         memo.tex_tluts = tlut_loads;
-        memo.tex_ok = true;
+        memo.tex_ab = tex_ab;
+        // A free after bind_textures' last pass cleared bound[]: bind again at the next draw.
+        memo.tex_ok = textures_bound;
     }
+    memo.tex_bp = s->bp_gen;
     ps3_prof_lap(PROF_DRAW_TEX, t);
     if (trace_left != 0) {
         trace_left--;
@@ -2007,7 +2258,6 @@ static void draw(GpState* s, int prim, int vat, u32 count, const u8* data)
 
 typedef struct VcEntry {
     u32 paddr, size;
-    s32 next; // hash chain
     // used: the slot is taken; linked: in its hash chain. A stale cached entry keeps its slot until its heap
     // space goes.
     bool used, linked;
@@ -2015,9 +2265,7 @@ typedef struct VcEntry {
     bool cached;
     u8 vat, prim;
     u32 family;
-    // The state the vertices were converted with.
-    u32 vcd_lo, vcd_hi, vat_a, vat_b, vat_c, mtx_a, mtx_b;
-    bool midx_def;
+    // The arrays the vertices were converted with (the rest of that state is in its VcKey).
     u16 arrays;
     u32 base[VTX_ARRAYS];
     u8 stride[VTX_ARRAYS];
@@ -2034,6 +2282,16 @@ typedef struct VcEntry {
 } VcEntry;
 
 static VcEntry vc_entries[VC_ENTRIES];
+// What vc_find compares of each entry, apart, so a chain walk reads a few lines. The VAT words and default matrix
+// indices only as far as the conversion read them (vc_masks).
+typedef struct VcKey {
+    u32 paddr, size, vcd_lo, vcd_hi;
+    u32 vat_a, vat_b, vat_c, mtx_a, mtx_b;
+    s32 next; // hash chain
+    bool cached;
+    u8 vat;
+} VcKey;
+static VcKey vc_keys[VC_ENTRIES];
 static s32 vc_bucket[VC_BUCKETS];
 static s32 vc_free[VC_ENTRIES];
 static u32 vc_nfree;
@@ -2072,9 +2330,9 @@ static void vc_unlink(VcEntry* e)
     s32* p = &vc_bucket[vc_hash(e->paddr, e->size)];
 
     while (*p != idx) {
-        p = &vc_entries[*p].next;
+        p = &vc_keys[*p].next;
     }
-    *p = e->next;
+    *p = vc_keys[idx].next;
     e->linked = false;
 }
 
@@ -2115,6 +2373,7 @@ static VcEntry* vc_new(u32 paddr, u32 size)
 {
     u32 h = vc_hash(paddr, size), i;
     VcEntry* e;
+    VcKey* k;
 
     if (vc_nfree == 0) {
         // The lists run as commands go first: they are found again with one parse each.
@@ -2129,12 +2388,14 @@ static VcEntry* vc_new(u32 paddr, u32 size)
         dev_finish();
     }
     e = &vc_entries[vc_free[--vc_nfree]];
+    k = &vc_keys[e - vc_entries];
     memset(e, 0, sizeof(*e));
-    e->paddr = paddr;
-    e->size = size;
+    memset(k, 0, sizeof(*k));
+    e->paddr = k->paddr = paddr;
+    e->size = k->size = size;
     e->used = true;
     e->linked = true;
-    e->next = vc_bucket[h];
+    k->next = vc_bucket[h];
     vc_bucket[h] = (s32) (e - vc_entries);
     return e;
 }
@@ -2172,25 +2433,69 @@ static bool vc_alloc(u32 size, u32* off)
     return true;
 }
 
+// The VAT A, B and C bits and the default matrix indices (XF 0x18, 0x19) that converting vertices under this VCD
+// reads: the counts and formats of the attributes present. Fractions only scale, in the constants (vtx.c dq).
+static const u32* vc_masks(u32 lo, u32 hi)
+{
+    static const u8 word[8] = { 0, 1, 1, 1, 1, 2, 2, 2 };
+    static const u8 shift[8] = { 21, 0, 9, 18, 27, 5, 14, 23 };
+    static u32 last_lo, last_hi, m[5];
+    static bool ok;
+    u32 i;
+
+    if (ok && lo == last_lo && hi == last_hi) {
+        return m;
+    }
+    ok = true;
+    last_lo = lo;
+    last_hi = hi;
+    memset(m, 0, sizeof(m));
+    m[0] |= ((lo >> 9) & 3) ? 0xFu : 0;
+    // Normal: NBT and format; NBT3 only with indices.
+    m[0] |= ((lo >> 11) & 3) ? 0x1E00u : 0;
+    m[0] |= ((lo >> 11) & 3) >= 2 ? 0x80000000u : 0;
+    m[0] |= ((lo >> 13) & 3) ? 0x1C000u : 0;
+    m[0] |= ((lo >> 15) & 3) ? 0x1C0000u : 0;
+    for (i = 0; i < 8; i++) {
+        if ((hi >> (2 * i)) & 3) {
+            m[word[i]] |= 0xFu << shift[i];
+        }
+    }
+    // As vtx_layout: MIDX_A (position, texcoords 0-2) goes out when any index is in the vertex, MIDX_B (texcoords
+    // 3-6) when one of its own is; a missing index takes its default.
+    for (i = 0; i < 8; i++) {
+        if (!((lo >> i) & 1) && (lo & (i < 4 ? 0xFFu : 0xF0u)) != 0) {
+            if (i < 5) {
+                m[3] |= 0x3Fu << (6 * i);
+            } else {
+                m[4] |= 0x3Fu << (6 * (i - 5));
+            }
+        }
+    }
+    return m;
+}
+
 // The entry for the list under the current state: its VCD, the VAT, arrays and default matrix indices it read.
 static VcEntry* vc_find(const GpState* s, u32 paddr, u32 size)
 {
+    const u32* m = vc_masks(s->vcd_lo, s->vcd_hi);
     s32 i;
 
-    for (i = vc_bucket[vc_hash(paddr, size)]; i >= 0; i = vc_entries[i].next) {
-        VcEntry* e = &vc_entries[i];
+    for (i = vc_bucket[vc_hash(paddr, size)]; i >= 0; i = vc_keys[i].next) {
+        const VcKey* c = &vc_keys[i];
+        VcEntry* e;
         u32 k;
 
-        if (e->paddr != paddr || e->size != size || e->vcd_lo != s->vcd_lo || e->vcd_hi != s->vcd_hi) {
+        if (c->paddr != paddr || c->size != size || c->vcd_lo != s->vcd_lo || c->vcd_hi != s->vcd_hi) {
             continue;
         }
-        if (!e->cached) {
+        e = &vc_entries[i];
+        if (!c->cached) {
             return e;
         }
-        if (e->vat_a != s->vat_a[e->vat] || e->vat_b != s->vat_b[e->vat] || e->vat_c != s->vat_c[e->vat]) {
-            continue;
-        }
-        if (e->midx_def && (e->mtx_a != s->xf_regs[0x18] || e->mtx_b != s->xf_regs[0x19])) {
+        if (c->vat_a != (s->vat_a[c->vat] & m[0]) || c->vat_b != (s->vat_b[c->vat] & m[1]) ||
+            c->vat_c != (s->vat_c[c->vat] & m[2]) || c->mtx_a != (s->xf_regs[0x18] & m[3]) ||
+            c->mtx_b != (s->xf_regs[0x19] & m[4])) {
             continue;
         }
         for (k = 0; k < VTX_ARRAYS; k++) {
@@ -2267,13 +2572,16 @@ static VcEntry* vc_build(GpState* s, u32 paddr, const u8* list, u32 size)
     u32 n, i, k, nverts, nidx, idx_at, bytes, off;
     u32 lo[VTX_ARRAYS], hi[VTX_ARRAYS];
     const VtxLayout* l;
+    const u32* m;
     VcEntry* e = vc_new(paddr, size);
+    VcKey* c;
 
     if (e == NULL) {
         return NULL;
     }
-    e->vcd_lo = s->vcd_lo;
-    e->vcd_hi = s->vcd_hi;
+    c = &vc_keys[e - vc_entries];
+    c->vcd_lo = s->vcd_lo;
+    c->vcd_hi = s->vcd_hi;
     // Read before the memory, so a write during the conversion makes the entry stale.
     e->stamp = ps3_mem_stamp();
     n = gp_list_draws(s, list, size, vc_draws, VC_MAX_DRAWS);
@@ -2320,12 +2628,14 @@ static VcEntry* vc_build(GpState* s, u32 paddr, const u8* list, u32 size)
     e->vat = vc_draws[0].vat;
     e->prim = vc_draws[0].prim;
     e->family = prim_family(e->prim);
-    e->vat_a = s->vat_a[e->vat];
-    e->vat_b = s->vat_b[e->vat];
-    e->vat_c = s->vat_c[e->vat];
-    e->midx_def = l->midx_def;
-    e->mtx_a = s->xf_regs[0x18];
-    e->mtx_b = s->xf_regs[0x19];
+    m = vc_masks(s->vcd_lo, s->vcd_hi);
+    c->cached = true;
+    c->vat = e->vat;
+    c->vat_a = s->vat_a[e->vat] & m[0];
+    c->vat_b = s->vat_b[e->vat] & m[1];
+    c->vat_c = s->vat_c[e->vat] & m[2];
+    c->mtx_a = s->xf_regs[0x18] & m[3];
+    c->mtx_b = s->xf_regs[0x19] & m[4];
     e->off = off;
     e->bytes = bytes;
     e->idx_at = idx_at;

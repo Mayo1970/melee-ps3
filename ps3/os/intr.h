@@ -23,5 +23,7 @@ void ps3_intr_set_handler(int source, Ps3IntrHandler handler);
 // Any thread may raise; the handler runs on the next thread that enables interrupts, or on the
 // interrupt thread, whichever comes first.
 void ps3_intr_raise(int source);
+// The alarm thread, with interrupts disabled, after running due alarms: wakes ps3_intr_wait_alarms (ps3_intr.h).
+void ps3_intr_alarms_ran(void);
 
 #endif

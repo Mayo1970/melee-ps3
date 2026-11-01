@@ -1,7 +1,5 @@
-# Compile check of the game sources for the PS3: LP64, big-endian, ELFv1, no PSL1GHT code yet.
-# ./build.sh -j12 check, then ./build.sh report and ./build.sh toc. Each object keeps its diagnostics in <obj>.log.
-# TOOLCHAIN=linux (build_linux.sh): GCC 13 for ppc64 big-endian ELFv1, for the sources ppu-gcc 7.2 rejects.
-# It uses the PS3 code model (small, FP constants in the TOC), so its TOC numbers approximate ppu-gcc's.
+# The PS3 port (ppu-gcc, ./build.sh) and its host builds and tests (TOOLCHAIN=linux, GCC 13 ppc64 big-endian ELFv1
+# with the PS3 code model, ./build_linux.sh). Each object keeps its diagnostics in <obj>.log.
 TOOLCHAIN ?= ppu
 ROOT := ..
 
@@ -52,7 +50,8 @@ CFLAGS := -std=gnu11 -O2 $(ARCH) -ffunction-sections -fdata-sections -fno-strict
           -DTARGET_PC -DTARGET_PS3 -Iinclude -I$(ROOT)/src -I$(ROOT)/libs/doldecomp/include -I$(ROOT)/libs/dolphin/include \
           $(EXTRA_CFLAGS)
 
-.PHONY: check report toc dvdtest audiotest gxtest scenetest progtest thptest dattest gxeboot spu game hostgame clean
+.PHONY: check report toc dvdtest alarmtest audiotest reverbtest gxtest streamtest tevfusetest scenetest progtest thptest \
+        dattest mathobjs mathtest gxeboot spu game hostgame clean
 check: $(OBJS)
 
 $(BUILD)/ps3/%.o: CFLAGS += $(PORT_INCS)
@@ -73,6 +72,13 @@ $(BUILD)/%_test: $(ROOT)/ps3/tests/%_test.c $(TEST_DEPS) $(TEST_HEADERS)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -DPS3_APP_DIR=\"$(DVD_APP_DIR)\" -static -o $@ $< $(TEST_DEPS) -lpthread
 
+# The pad wait's sleep (ps3_intr_wait_alarms) under OS alarms (TOOLCHAIN=linux).
+ALARM_TEST_SRCS := $(addprefix $(ROOT)/ps3/,tests/alarm_test.c os/intr.c os/alarm.c os/ostime.c os/globals.c os/sync_host.c)
+alarmtest: $(BUILD)/alarm_test
+$(BUILD)/alarm_test: $(ALARM_TEST_SRCS) $(wildcard $(ROOT)/ps3/os/*.h) $(ROOT)/ps3/include/ps3_intr.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -static -o $@ $(ALARM_TEST_SRCS) -lpthread
+
 # The SDK's AX library over ps3/audio, with the audio program on a host thread (TOOLCHAIN=linux).
 AUDIO_TEST_SRCS := $(addprefix $(ROOT)/ps3/,tests/audio_test.c tests/audio_host.c audio/ax_spu.c \
                    audio/sdk_audio.c os/intr.c os/mem.c os/sync_host.c os/globals.c) $(addprefix $(ROOT)/,$(SDK_AUDIO_SRCS)) \
@@ -82,6 +88,13 @@ $(BUILD)/audio_test: $(AUDIO_TEST_SRCS) $(wildcard $(ROOT)/ps3/audio/*.h $(ROOT)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -static -o $@ $(AUDIO_TEST_SRCS) -lpthread -lm
 
+# reverb_std.c's HandleReverb against the version it replaced, bit for bit (TOOLCHAIN=linux).
+reverbtest: $(BUILD)/reverb_test
+$(BUILD)/reverb_test: $(ROOT)/ps3/tests/reverb_test.c $(ROOT)/libs/dolphin/src/dolphin/axfx/reverb_std.c \
+                      $(ROOT)/libs/dolphin/include/dolphin/axfx.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -static -o $@ $< -lm
+
 # The SDK's GX library over the GP thread, with a backend that records what it gets (TOOLCHAIN=linux).
 GX_TEST_SRCS := $(addprefix $(ROOT)/,ps3/tests/gx_test.c ps3/os/intr.c ps3/os/sync_host.c ps3/os/globals.c \
                 ps3/tests/udplog_host.c $(GX_PORT_SRCS) \
@@ -90,6 +103,22 @@ gxtest: $(BUILD)/gx_test
 $(BUILD)/gx_test: $(GX_TEST_SRCS) $(wildcard $(ROOT)/ps3/gx/*.h $(ROOT)/ps3/os/*.h $(ROOT)/ps3/include/*.h)
 	@mkdir -p $(dir $@)
 	$(CC) $(CFLAGS) -static -o $@ $(GX_TEST_SRCS) -lpthread -lm
+
+GX_SDK_HEADERS := $(ROOT)/libs/dolphin/src/dolphin/gx/__gx.h $(wildcard $(ROOT)/libs/dolphin/include/dolphin/gx/*.h)
+# Every SDK GX call that writes the pipe, with random arguments; -DGX_PIPE_HASH hashes the stream (TOOLCHAIN=linux).
+STREAM_TEST_SRCS := $(addprefix $(ROOT)/,ps3/tests/gx_stream_test.c ps3/os/intr.c ps3/os/sync_host.c ps3/os/globals.c                     ps3/tests/udplog_host.c ps3/gx/fifo.c ps3/os/mem.c ps3/os/ppcarch.c $(SDK_GX_SRCS))
+streamtest: $(BUILD)/gx_stream_test
+$(BUILD)/gx_stream_test: $(STREAM_TEST_SRCS) $(wildcard $(ROOT)/ps3/gx/*.h $(ROOT)/ps3/os/*.h $(ROOT)/ps3/include/*.h) \
+                         $(GX_SDK_HEADERS)
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -static -o $@ $(STREAM_TEST_SRCS) -lpthread -lm
+
+# GXSetTevStagePS3 against the seven TEV stage calls it replaces (TOOLCHAIN=linux).
+TEVFUSE_TEST_SRCS := $(addprefix $(ROOT)/,ps3/tests/gx_tevfuse_test.c libs/dolphin/src/dolphin/gx/GXTev.c)
+tevfusetest: $(BUILD)/gx_tevfuse_test
+$(BUILD)/gx_tevfuse_test: $(TEVFUSE_TEST_SRCS) $(GX_SDK_HEADERS) $(ROOT)/ps3/include/gx_pipe.h
+	@mkdir -p $(dir $@)
+	$(CC) $(CFLAGS) -static -o $@ $(TEVFUSE_TEST_SRCS) -lm
 
 # The RSX backend over a software RSX: the GX test frame as PPM files (TOOLCHAIN=linux, big-endian hosts).
 GX_RSX_SRCS := $(addprefix ps3/gx/,fpgen.c tevgen.c vpgen.c xfgen.c vtx.c texdec.c backend.c vxjob.c)
@@ -177,12 +206,13 @@ GAME_SDK_SRCS := $(SDK_AUDIO_SRCS) $(SDK_GX_SRCS) libs/dolphin/src/dolphin/os/OS
                  $(addprefix libs/dolphin/src/dolphin/axfx/,axfx.c chorus.c delay.c reverb_hi.c reverb_std.c)
 GAME_PORT_SRCS := $(addprefix ps3/,dvd/dvd.c os/intr.c os/globals.c os/os.c os/ostime.c os/heap.c \
                   os/alarm.c os/thread.c os/mem.c os/ppcarch.c audio/sdk_audio.c gx/fifo.c gx/gp.c sdk/mtx.c \
-                  sdk/card.c sdk/stubs.c sdk/thp.c pad/pad.c vi/vi.c dat/pool.c dat/trace.c os/calltrace.c) $(GX_RSX_SRCS) \
+                  sdk/trig.c sdk/card.c sdk/stubs.c sdk/thp.c pad/pad.c vi/vi.c dat/pool.c dat/trace.c os/calltrace.c \
+                  os/mainprof.c) $(GX_RSX_SRCS) \
                   $(EXTRA_SRCS)
 # The PSL1GHT side, which no SDK header meets.
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_cell.c os/sys_cell.c os/udplog_cell.c audio/audio_cell.c \
                   gx/rsxdev_cell.c gx/vxjob_cell.c pad/pad_cell.c pad/gcadapter_cell.c)
-DAT_SRCS := $(addprefix tools/dat-cli/native/src/,archive.c reader.c hsd.c) ps3/dat/lookup.c \
+DAT_SRCS := $(addprefix tools/dat-cli/native/src/,archive.c reader.c hsd.c) ps3/dat/lookup.c ps3/dat/motion.c \
             $(sort $(shell cd $(ROOT) && find $(DAT_SCHEMA) -name '*.c' 2> /dev/null))
 # Their allocations come from the .dat pool; GeoTypes.h stands in for Aurora's.
 DAT_FLAGS := -include $(ROOT)/ps3/dat/redirect.h -I$(ROOT)/tools/dat-cli/native/include -I$(ROOT)/$(DAT_SCHEMA) \
@@ -201,9 +231,10 @@ ifneq ($(TOOLCHAIN),linux)
 GAME_OBJS += $(GAME_DIR)/ps3/os/setjmp.o $(GAME_DIR)/ax_spu_elf.o $(GAME_DIR)/vx_spu_elf.o
 endif
 # Untyped lookups become typed ones, parses free the native data of the buffers they reuse (ps3/dat/lookup.c);
-# the trace logs typed lookups (step 3).
+# the trace logs typed lookups (step 3). The scene loop's logic, render and XFB calls are timed (os/mainprof.c).
 GAME_WRAP := -Wl,--wrap=HSD_ArchiveParse,--wrap=HSD_ArchiveGetPublicAddress,--wrap=HSD_ArchiveGetPublicTyped \
-             -Wl,--wrap=HSD_ArchiveReleaseNative
+             -Wl,--wrap=HSD_ArchiveReleaseNative \
+             -Wl,--wrap=HSD_GObj_RunProcs,--wrap=HSD_GObj_80390FC0,--wrap=HSD_VICopyXFBAsync
 GAME_LIBS := -L$(PS3DEV)/ppu/lib -lrsx -lgcm_sys -lio -lusb -laudio -lsysutil -lsysmodule -lnet -llv2 -lrt -lm
 FONT_INCS := $(addprefix $(GAME_DIR)/include/sysdolphin/baselib/,debug_font.inc sislib_font.inc)
 
@@ -212,6 +243,8 @@ FONT_INCS := $(addprefix $(GAME_DIR)/include/sysdolphin/baselib/,debug_font.inc 
 $(GAME_DIR)/src/%.o: GAME_FLAGS := -mminimal-toc -include ps3_msl_math.h -finput-charset=UTF-8 -fexec-charset=CP932
 $(call GAME_OBJ,$(GAME_CELL_SRCS)): GAME_FLAGS := $(PORT_INCS)
 $(call GAME_OBJ,$(DAT_SRCS)): GAME_FLAGS := -mminimal-toc $(DAT_FLAGS)
+# The only fused operations of newlib's sinef replica are its own fmas.
+$(call GAME_OBJ,ps3/sdk/trig.c): GAME_FLAGS := -ffp-contract=off
 ifeq ($(TOOLCHAIN),linux)
 $(call GAME_OBJ,ps3/dvd/dvd.c): GAME_FLAGS := -DPS3_APP_DIR=\"$(DVD_APP_DIR)\"
 # The disc folder is read-only there: the memory card lives in the build tree.
@@ -301,6 +334,32 @@ $(DAT_TEST_DIR)/%.o: $(ROOT)/%.c
 dattest: $(DAT_TEST_DIR)/dat_test
 $(DAT_TEST_DIR)/dat_test: $(DAT_TEST_OBJS)
 	$(CC) $(CFLAGS) -static -o $@ $(DAT_TEST_OBJS) -lpthread -lm
+
+# The math replicas against the code they replace, bit for bit (tests/math_test.c): ./build.sh mathobjs builds the
+# game's objects and the references with ppu-gcc, then ./build_linux.sh mathtest links them with newlib's libm.a.
+MATH_DIR := build/math
+MATH_OBJS := $(addprefix $(MATH_DIR)/,trig.o sdkmtx.o hsdmtx.o fobj.o ref.o libm.a)
+ifneq ($(TOOLCHAIN),linux)
+mathobjs: $(MATH_OBJS)
+$(MATH_DIR)/trig.o: $(GAME_DIR)/ps3/sdk/trig.o
+$(MATH_DIR)/sdkmtx.o: $(GAME_DIR)/ps3/sdk/mtx.o
+$(MATH_DIR)/hsdmtx.o: $(GAME_DIR)/src/sysdolphin/baselib/mtx.o
+$(MATH_DIR)/libm.a: $(PS3DEV)/ppu/powerpc64-ps3-elf/lib/libm.a
+$(MATH_DIR)/trig.o $(MATH_DIR)/sdkmtx.o $(MATH_DIR)/hsdmtx.o $(MATH_DIR)/libm.a:
+	@mkdir -p $(MATH_DIR)
+	cp $< $@
+$(MATH_DIR)/fobj.o: $(ROOT)/ps3/tests/math_fobj.c $(ROOT)/src/sysdolphin/baselib/fobj.c \
+                    $(ROOT)/src/sysdolphin/baselib/fobj.h
+	@mkdir -p $(MATH_DIR)
+	$(CC) $(CFLAGS) -fno-common -mminimal-toc -include ps3_msl_math.h -c $< -o $@
+$(MATH_DIR)/ref.o: $(ROOT)/ps3/tests/math_ref.c
+	@mkdir -p $(MATH_DIR)
+	$(CC) $(CFLAGS) -fno-common -c $< -o $@
+endif
+# docker run ... ppc64-qemu-test:2 qemu-ppc64 build/linux/math_test trig 0 100000000 | mtx 1000000 1 | fobj
+mathtest: $(BUILD)/math_test
+$(BUILD)/math_test: $(ROOT)/ps3/tests/math_test.c $(MATH_OBJS)
+	$(CC) $(CFLAGS) -fno-builtin -static -o $@ $< $(MATH_OBJS)
 
 report:
 	@sh tools/report.sh $(BUILD)

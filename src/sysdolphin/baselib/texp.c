@@ -1160,7 +1160,12 @@ void HSD_TExpSetReg(HSD_TExp* texp)
                 GXSetTevColor(id2[i - 4], reg[i]);
             }
         }
+#ifdef TARGET_PS3
+        // HSD_StateInvalidate(HSD_STATE_TEV_REGISTER) without its table walk.
+        _HSD_StateInvalidateTevRegister();
+#else
         HSD_StateInvalidate(0x10);
+#endif
         GXPixModeSync();
     }
 }

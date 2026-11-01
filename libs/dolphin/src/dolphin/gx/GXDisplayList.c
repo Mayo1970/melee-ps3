@@ -97,6 +97,17 @@ void GXCallDisplayList(void* list, u32 nbytes)
     if (*(u32*) &gx->unk == 0) { // checks both unk and bpSent
         __GXSendFlushPrim();
     }
+#if defined(TARGET_PS3) && !DEBUG
+    {
+        u32 phys = OSCachedToPhysical(list);
+        u8* p = __GXPipeBegin();
+
+        __GXPipeSt8(p, 0x40);
+        __GXPipeSt32(p + 1, phys);
+        __GXPipeSt32(p + 5, nbytes);
+        __GXPipeEnd(p + 9);
+    }
+#else
     GX_WRITE_U8(0x40);
 #ifdef TARGET_PS3
     GX_WRITE_U32(OSCachedToPhysical(list));
@@ -104,4 +115,5 @@ void GXCallDisplayList(void* list, u32 nbytes)
     GX_WRITE_U32(list);
 #endif
     GX_WRITE_U32(nbytes);
+#endif
 }

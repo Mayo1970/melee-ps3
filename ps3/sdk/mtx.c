@@ -5,6 +5,8 @@
 
 #include <dolphin/mtx.h>
 
+#include <ps3_trig.h>
+
 void PSMTXIdentity(Mtx m)
 {
     memset(m, 0, sizeof(Mtx));
@@ -18,19 +20,26 @@ void PSMTXCopy(Mtx src, Mtx dst)
     }
 }
 
-// ab may be a or b.
+// ab may be a or b: all of a and b is read before ab is written. The fmas are the contraction GCC gave the plain
+// sums, pinned for both compilers; a, read first, stays the first operand, which decides the NaN that passes.
 void PSMTXConcat(Mtx a, Mtx b, Mtx ab)
 {
-    Mtx t;
-    int i;
+    f32 a00 = a[0][0], a01 = a[0][1], a02 = a[0][2], a03 = a[0][3];
+    f32 a10 = a[1][0], a11 = a[1][1], a12 = a[1][2], a13 = a[1][3];
+    f32 a20 = a[2][0], a21 = a[2][1], a22 = a[2][2], a23 = a[2][3];
+    f32 b00 = b[0][0], b01 = b[0][1], b02 = b[0][2], b03 = b[0][3];
+    f32 b10 = b[1][0], b11 = b[1][1], b12 = b[1][2], b13 = b[1][3];
+    f32 b20 = b[2][0], b21 = b[2][1], b22 = b[2][2], b23 = b[2][3];
 
-    for (i = 0; i < 3; i++) {
-        t[i][0] = a[i][0] * b[0][0] + a[i][1] * b[1][0] + a[i][2] * b[2][0];
-        t[i][1] = a[i][0] * b[0][1] + a[i][1] * b[1][1] + a[i][2] * b[2][1];
-        t[i][2] = a[i][0] * b[0][2] + a[i][1] * b[1][2] + a[i][2] * b[2][2];
-        t[i][3] = a[i][0] * b[0][3] + a[i][1] * b[1][3] + a[i][2] * b[2][3] + a[i][3];
-    }
-    memcpy(ab, t, sizeof(Mtx));
+#define CONCAT_ROW(i, a0, a1, a2, a3)                                                                                  \
+    ab[i][0] = __builtin_fmaf(a2, b20, __builtin_fmaf(a0, b00, a1 * b10));                                            \
+    ab[i][1] = __builtin_fmaf(a2, b21, __builtin_fmaf(a0, b01, a1 * b11));                                            \
+    ab[i][2] = __builtin_fmaf(a2, b22, __builtin_fmaf(a0, b02, a1 * b12));                                            \
+    ab[i][3] = __builtin_fmaf(a2, b23, __builtin_fmaf(a0, b03, a1 * b13)) + a3;
+    CONCAT_ROW(0, a00, a01, a02, a03)
+    CONCAT_ROW(1, a10, a11, a12, a13)
+    CONCAT_ROW(2, a20, a21, a22, a23)
+#undef CONCAT_ROW
 }
 
 void PSMTXTranspose(Mtx src, Mtx xPose)

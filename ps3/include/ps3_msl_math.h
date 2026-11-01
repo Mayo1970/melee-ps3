@@ -4,6 +4,8 @@
 
 #include <math.h>
 
+#include <ps3_trig.h>
+
 // MSL's sqrtf (math_ppc.h) returns x for x <= 0; libm gives NaN for a negative x, as from rounding in 1 - x * x.
 static inline float ps3_msl_sqrtf(float x)
 {

@@ -4,6 +4,7 @@
 #include <stdarg.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <string.h>
 
 #include <dolphin/db.h>
 #include <dolphin/os.h>
@@ -61,9 +62,12 @@ void OSReport(char* fmt, ...)
     va_list ap;
 
     va_start(ap, fmt);
-    vsnprintf(buf, sizeof(buf), fmt, ap);
+    if (vsnprintf(buf, sizeof(buf), fmt, ap) < 0) {
+        buf[0] = '\0';
+    }
     va_end(ap);
-    ps3_log("%s", buf);
+    // Formatted once; an embedded NUL still ends the line, as it did through ps3_log("%s").
+    ps3_log_text(buf, (int) strlen(buf));
 }
 
 // The PPC64 back chain: a frame holds its caller's frame at 0, whose word at 16 is the return address into that

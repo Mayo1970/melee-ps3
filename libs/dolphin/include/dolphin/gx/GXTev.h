@@ -34,6 +34,40 @@ void GXSetTevOrder(GXTevStageID stage, GXTexCoordID coord, GXTexMapID map,
                    GXChannelID color);
 void GXSetNumTevStages(u8 nStages);
 
+#ifdef TARGET_PS3
+// A stage's colour and alpha ops and inputs, swap and konst selections,
+// laid out as HSD_TevConf (sysdolphin/baselib/texp.h).
+typedef struct GXTevStagePS3 {
+    GXTevOp clr_op;
+    GXTevColorArg clr_a;
+    GXTevColorArg clr_b;
+    GXTevColorArg clr_c;
+    GXTevColorArg clr_d;
+    GXTevScale clr_scale;
+    GXTevBias clr_bias;
+    u8 clr_clamp;
+    GXTevRegID clr_out_reg;
+    GXTevOp alpha_op;
+    GXTevAlphaArg alpha_a;
+    GXTevAlphaArg alpha_b;
+    GXTevAlphaArg alpha_c;
+    GXTevAlphaArg alpha_d;
+    GXTevScale alpha_scale;
+    GXTevBias alpha_bias;
+    u8 alpha_clamp;
+    GXTevRegID alpha_out_reg;
+    GXTevClampMode mode;
+    GXTevSwapSel ras_swap;
+    GXTevSwapSel tex_swap;
+    GXTevKColorSel kcsel;
+    GXTevKAlphaSel kasel;
+} GXTevStagePS3;
+
+// The seven TEV stage calls in one, each register written once. No BP mask
+// may be pending: it would hit the final value, not an intermediate one.
+void GXSetTevStagePS3(GXTevStageID stage, const GXTevStagePS3* conf);
+#endif
+
 #ifdef __cplusplus
 }
 #endif

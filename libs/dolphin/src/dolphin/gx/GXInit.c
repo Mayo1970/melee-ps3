@@ -7,8 +7,12 @@
 #include <dolphin/os.h>
 #include <dolphin/vi.h>
 
+#ifdef TARGET_PS3
+struct __GXData_struct __GXData;
+#else
 static struct __GXData_struct gxData;
 struct __GXData_struct* gx = &gxData;
+#endif
 // DWARF info lists all of these as "void *", but these types make more sense.
 u16* __memReg;
 u16* __peReg;

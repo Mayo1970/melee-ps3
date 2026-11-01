@@ -134,6 +134,7 @@
 #include <sysdolphin/baselib/objalloc.h>
 #ifdef TARGET_PS3
 #include <dolphin/ar.h>
+#include <ps3_dat.h>
 #endif
 
 typedef struct ft_8045993C_t {
@@ -223,6 +224,11 @@ void ft_800852B0(void)
     ft_800852B0_Reset_ft_8045993C(list, 3);
     ft_800852B0_Reset_ft_8045993C(list, 4);
     ft_800852B0_Reset_ft_8045993C(list, 5);
+#ifdef TARGET_PS3
+    // Fighter_800679B0 resets the fighter allocators: no fighter of the last
+    // scene is left to use a cached motion, and this scene's come next.
+    ps3_dat_motion_scene();
+#endif
 }
 
 void ft_8008549C(void)
@@ -1748,6 +1754,17 @@ void ftData_80085B98(Fighter* fp, int arg1, int arg2)
     }
 }
 
+#ifdef TARGET_PS3
+// Nana's main motion is not cached: ftData_80085E50's copy branch rewrites
+// her x59C under its live FObjs, which then read the new bytes.
+static s32 ftData_ParseMainMotion(Fighter* fp, u8* src, u32 size,
+                                  const char* name)
+{
+    return (fp->kind == Ft_Kind_Nana ? ps3_dat_motion_parse : ps3_dat_motion)(
+        src, size, name, &fp->x590);
+}
+#endif
+
 void ftData_80085CD8(Fighter* fp, Fighter* arg1, int msid)
 {
     HSD_Archive sp14;
@@ -1771,7 +1788,8 @@ void ftData_80085CD8(Fighter* fp, Fighter* arg1, int msid)
 #ifdef TARGET_PS3
                     // The copied file is unrelocated here, and
                     // lbArchiveRelocate makes no native data: parse it.
-                    temp_ret = HSD_ArchiveParse(&sp14, temp_r4->x0, temp_r3->x8);
+                    temp_ret = ftData_ParseMainMotion(fp, temp_r4->x0,
+                                                      temp_r3->x8, temp_r3->x0);
 #else
                     temp_ret = lbArchiveRelocate(
                         &sp14, temp_r4->x0, temp_r3->x8,
@@ -1795,15 +1813,22 @@ void ftData_80085CD8(Fighter* fp, Fighter* arg1, int msid)
                     } else {
                         memcpy(fp->x59C, (void*) temp_r4_2, temp_r3->x8);
                     }
+#ifdef TARGET_PS3
+                    temp_ret_2 = ftData_ParseMainMotion(fp, fp->x59C->x0,
+                                                        temp_r3->x8, temp_r3->x0);
+#else
                     temp_ret_2 =
                         HSD_ArchiveParse(&sp14, fp->x59C->x0, temp_r3->x8);
+#endif
                     if (temp_ret_2 == -1) {
                         HSD_ASSERTREPORT(0xA0F, 0,
                                          "HSD_ArchiveParse error! %x\n", msid);
                     }
                 }
+#ifndef TARGET_PS3
                 fp->x590 =
                     HSD_ArchiveGetPublicAs(FigaTree, &sp14, temp_r3->x0);
+#endif
             } else {
                 fp->x590 = NULL;
             }
@@ -1833,9 +1858,10 @@ FigaTree* ftData_80085E50(Fighter* arg0, int msid)
                     memcpy(arg0->x59C, temp_r3_3->x59C, temp_r3->x8);
                     temp_r4 = arg0->x59C;
 #ifdef TARGET_PS3
-                    // The copied file is unrelocated here, and
-                    // lbArchiveRelocate makes no native data: parse it.
-                    temp_ret = HSD_ArchiveParse(&sp10, temp_r4->x0, temp_r3->x8);
+                    // lbArchiveRelocate makes no native data: parse. x59C's
+                    // old archive stays, as Nana's uncached x590 may use it.
+                    temp_ret = ps3_dat_motion_keep(temp_r4->x0, temp_r3->x8,
+                                                   temp_r3->x0, &arg0->x598);
 #else
                     temp_ret = lbArchiveRelocate(
                         &sp10, temp_r4->x0, temp_r3->x8,
@@ -1857,15 +1883,22 @@ FigaTree* ftData_80085E50(Fighter* arg0, int msid)
                     } else {
                         memcpy(arg0->x5A0, (void*) temp_r4_2, temp_r3->x8);
                     }
+#ifdef TARGET_PS3
+                    temp_ret_2 = ps3_dat_motion(arg0->x5A0->x0, temp_r3->x8,
+                                                temp_r3->x0, &arg0->x598);
+#else
                     temp_ret_2 =
                         HSD_ArchiveParse(&sp10, arg0->x5A0->x0, temp_r3->x8);
+#endif
                     if (temp_ret_2 == -1) {
                         HSD_ASSERTREPORT(0xA45, 0,
                                          "HSD_ArchiveParse error! %x\n", msid);
                     }
                 }
+#ifndef TARGET_PS3
                 arg0->x598 =
                     HSD_ArchiveGetPublicAs(FigaTree, &sp10, temp_r3->x0);
+#endif
             } else {
                 arg0->x598 = 0;
             }

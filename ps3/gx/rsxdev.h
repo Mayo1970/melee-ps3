@@ -94,6 +94,47 @@ void dev_fragment_program(uint32_t offset, uint32_t regs, uint16_t texcoords, ui
 void dev_texture(int unit, const DevTexture* t);
 // An attribute at offset (IO, or local with DEV_LOCAL); count 0 disables it.
 void dev_attrib(int slot, uint32_t offset, uint32_t stride, uint32_t count, uint32_t type);
+// The RSX's format word of an attribute (NV40 VTXFMT), as dev_attrib's arguments make it.
+static inline uint32_t dev_attrib_format(uint32_t stride, uint32_t count, uint32_t type)
+{
+    return (stride & 0xFF) << 8 | (count & 0xFF) << 4 | (type & 0xFF);
+}
+// All 16 attributes: slot i of enabled at base + offset[i] with format[i], the others off. Only the slots that
+// changed since the last call go to the RSX; dev_attrib and a present make it send all of them again.
+void dev_attribs(const uint32_t format[16], const uint32_t offset[16], uint32_t base, uint32_t enabled);
+
+// For the devices' dev_attribs. Slot i's offset word: the location in bit 31 (1 main memory), the inverse of DEV_LOCAL.
+static inline uint32_t dev_attribs_offset(const uint32_t offset[16], uint32_t base, uint32_t enabled, uint32_t i)
+{
+    return ((enabled >> i) & 1) ? (base + offset[i]) ^ DEV_LOCAL : DEV_LOCAL;
+}
+
+// The slots [*f0, *f1) whose format and [*o0, *o1) whose offset word differ from the shadow (all of them when !valid),
+// which takes the new words. Shared, so the host check covers the console device's ranges.
+static inline void dev_attribs_diff(const uint32_t format[16], const uint32_t offset[16], uint32_t base,
+                                    uint32_t enabled, bool valid, uint32_t shadow_format[16],
+                                    uint32_t shadow_offset[16], uint32_t* f0, uint32_t* f1, uint32_t* o0, uint32_t* o1)
+{
+    uint32_t i;
+
+    *f0 = *o0 = 16;
+    *f1 = *o1 = 0;
+    for (i = 0; i < 16; i++) {
+        uint32_t o = dev_attribs_offset(offset, base, enabled, i);
+
+        if (!valid || format[i] != shadow_format[i]) {
+            *f0 = i < *f0 ? i : *f0;
+            *f1 = i + 1;
+            shadow_format[i] = format[i];
+        }
+        if (!valid || o != shadow_offset[i]) {
+            *o0 = i < *o0 ? i : *o0;
+            *o1 = i + 1;
+            shadow_offset[i] = o;
+        }
+    }
+}
+
 void dev_draw(uint32_t prim, uint32_t count);
 // count u16 indices at offset (IO, or local with DEV_LOCAL), into the vertices of the bound attributes.
 void dev_draw_indexed(uint32_t prim, uint32_t offset, uint32_t count);
@@ -122,6 +163,12 @@ bool dev_debug_dump_stall(void);
 #ifdef PS3_DUMP_FRAMES
 // RPCS3 builds only: waits for the RSX, then writes the w x h pixels at mem to /dev_hdd0/tmp as raw XRGB.
 void dev_debug_dump(const char* name, uint32_t n, const void* mem, uint32_t pitch, uint32_t w, uint32_t h);
+#endif
+#if defined(GX_ATTRIB_CHECK) || defined(GX_STATE_CHECK)
+// Host check builds (tests/rsxdev_soft.c): the attribute format and offset registers as the commands left them
+// (location in bit 31, 1 main memory), and the raster state as bytes (at most size; returns the length).
+void dev_debug_attribs(uint32_t format[16], uint32_t offset[16]);
+uint32_t dev_debug_raster(void* out, uint32_t size);
 #endif
 
 #endif

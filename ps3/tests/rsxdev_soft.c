@@ -48,9 +48,9 @@ static float vconst[468][4];
 static u32 fp_offset;
 static DevTexture tex[16];
 static bool tex_on[16];
-static struct {
-    u32 offset, stride, count, type;
-} attr[16];
+// The RSX's attribute registers as the commands set them (rsxdev_cell.c): format, and offset with the location in
+// bit 31 (1 main memory). The draws read them.
+static u32 reg_format[16], reg_offset[16];
 
 static u32 screen[SCREEN_W * SCREEN_H];
 static u32 presents;
@@ -301,13 +301,76 @@ void dev_texture(int unit, const DevTexture* t)
     }
 }
 
+// The device's shadow of the attribute registers, as rsxdev_cell.c's.
+static bool attr_valid;
+static u32 attr_format[16], attr_offset[16];
+
 void dev_attrib(int slot, u32 offset, u32 stride, u32 count, u32 type)
 {
-    attr[slot].offset = offset;
-    attr[slot].stride = stride;
-    attr[slot].count = count;
-    attr[slot].type = type;
+    // As librsx's rsxBindVertexArrayAttrib encodes it.
+    attr_valid = false;
+    reg_format[slot] = (u32) (u8) stride << 8 | (u32) (u8) count << 4 | (u8) type;
+    reg_offset[slot] = (offset & ~DEV_LOCAL) | ((offset & DEV_LOCAL) ? 0 : 1u << 31);
 }
+
+void dev_attribs(const u32 format[16], const u32 offset[16], u32 base, u32 enabled)
+{
+    u32 f0, f1, o0, o1, i;
+
+    dev_attribs_diff(format, offset, base, enabled, attr_valid, attr_format, attr_offset, &f0, &f1, &o0, &o1);
+    // Only the ranges rsxdev_cell.c's commands carry reach the registers.
+    for (i = f0; i < f1; i++) {
+        reg_format[i] = format[i];
+    }
+    for (i = o0; i < o1; i++) {
+        reg_offset[i] = dev_attribs_offset(offset, base, enabled, i);
+    }
+    attr_valid = true;
+}
+
+#if defined(GX_ATTRIB_CHECK) || defined(GX_STATE_CHECK)
+void dev_debug_attribs(u32 format[16], u32 offset[16])
+{
+    memcpy(format, reg_format, sizeof(reg_format));
+    memcpy(offset, reg_offset, sizeof(reg_offset));
+}
+
+uint32_t dev_debug_raster(void* out, uint32_t size)
+{
+    u8* p = out;
+    u32 n = 0;
+
+#define RASTER(v)                                                                                                      \
+    if (n + sizeof(v) <= size) {                                                                                       \
+        memcpy(p + n, &(v), sizeof(v));                                                                                \
+        n += sizeof(v);                                                                                                \
+    }
+    RASTER(target)
+    RASTER(vp_scale)
+    RASTER(vp_offset)
+    RASTER(sc_x)
+    RASTER(sc_y)
+    RASTER(sc_w)
+    RASTER(sc_h)
+    RASTER(depth_test)
+    RASTER(depth_write)
+    RASTER(depth_func)
+    RASTER(blend_on)
+    RASTER(blend_src)
+    RASTER(blend_dst)
+    RASTER(blend_eq)
+    RASTER(alpha_on)
+    RASTER(alpha_func)
+    RASTER(alpha_ref)
+    RASTER(mask_rgb)
+    RASTER(mask_alpha)
+    RASTER(cull_cw)
+    RASTER(cull_ccw)
+    RASTER(point_size)
+#undef RASTER
+    return n;
+}
+#endif
 
 static bool compare(u32 func, float a, float b)
 {
@@ -541,12 +604,13 @@ static void fetch(u32 index, float in[16][4])
     int s, k;
 
     for (s = 0; s < 16; s++) {
-        const u8* p = vertex_mem(attr[s].offset) + index * attr[s].stride;
+        u32 f = reg_format[s];
+        const u8* p = vertex_mem(reg_offset[s] ^ DEV_LOCAL) + index * ((f >> 8) & 0xFF);
 
         in[s][0] = in[s][1] = in[s][2] = 0.0f;
         in[s][3] = 1.0f;
-        for (k = 0; k < (int) attr[s].count; k++) {
-            switch (attr[s].type) {
+        for (k = 0; k < (int) ((f >> 4) & 0xF); k++) {
+            switch (f & 0xF) {
             case 2:
                 memcpy(&in[s][k], p + 4 * k, 4);
                 break;
@@ -724,7 +788,14 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h)
     char path[300];
     FILE* f;
     u32 x, y;
+    int i;
 
+    // The attributes rsxdev_cell.c's present pass binds (its quad), so the backend binds its own again after it.
+    for (i = 0; i < 16; i++) {
+        dev_attrib(i, 0, 0, 0, 2);
+    }
+    dev_attrib(0, 0, 24, 4, 2);
+    dev_attrib(8, 16, 24, 2, 2);
     presents++;
     if (soft_drop && (dump_prefix[0] == 0 || presents % dump_every != 0 || presents < soft_dump_from)) {
         return;

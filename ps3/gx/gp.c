@@ -260,6 +260,7 @@ static inline void cp_write(Gens* g, u8 addr, u32 v)
     }
 }
 
+// The caller marks the register dirty (xf_load).
 static inline void xf_reg_write(Gens* g, u32 i, u32 v)
 {
     // The matrix indices (0x18, 0x19) and the projection (0x20-0x26) feed only the vertices and constants.
@@ -271,38 +272,81 @@ static inline void xf_reg_write(Gens* g, u32 i, u32 v)
         }
     }
     state.xf_regs[i] = v;
-    state.xf_reg_dirty[i >> 5] |= 1u << (i & 31);
+}
+
+// Sets bits first to last of a dirty bitmap, one store per word.
+static inline void mark_dirty(u32* dirty, u32 first, u32 last)
+{
+    u32 w;
+
+    for (w = first >> 5; w <= last >> 5; w++) {
+        u32 lo = w == first >> 5 ? first & 31 : 0, hi = w == last >> 5 ? last & 31 : 31;
+
+        dirty[w] |= (2u << hi) - (1u << lo);
+    }
+}
+
+// n big-endian words from p, any alignment, to d. With aligned loads: on the PPE a load that crosses a 32-byte
+// boundary stalls, and the FIFO's XF words are misaligned as often as not.
+static inline __attribute__((always_inline)) void copy_be32(u32* d, const u8* p, u32 n)
+{
+#if __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+    u32 sh = (u32) ((uintptr_t) p & 3) * 8, prev, a, b;
+    const u32* w = (const u32*) (p - ((uintptr_t) p & 3));
+
+    if (sh == 0) {
+        for (; n != 0; n--) {
+            *d++ = *w++;
+        }
+        return;
+    }
+    // Two words a turn, fewer moves of the carried word. The last load is of the word that holds the last byte.
+    prev = *w++;
+    for (; n >= 2; n -= 2, w += 2, d += 2) {
+        a = w[0];
+        b = w[1];
+        d[0] = prev << sh | a >> (32 - sh);
+        d[1] = a << sh | b >> (32 - sh);
+        prev = b;
+    }
+    if (n != 0) {
+        *d = prev << sh | *w >> (32 - sh);
+    }
+#else
+    for (; n != 0; n--, p += 4) {
+        *d++ = be32(p);
+    }
+#endif
 }
 
 // count XF words from p (big-endian, any alignment) from XF address addr on: one write command. Inline, so the
 // caller's Gens stays in registers.
 static inline __attribute__((always_inline)) void xf_load(Gens* g, u32 addr, const u8* p, u32 count)
 {
+    u32 first = XF_REG_COUNT, last = 0;
+
     g->writes++;
     if (addr < XF_MEM_SIZE) {
-        u32 n = XF_MEM_SIZE - addr < count ? XF_MEM_SIZE - addr : count, i, last = (addr + n - 1) >> 2;
+        u32 n = XF_MEM_SIZE - addr < count ? XF_MEM_SIZE - addr : count;
 
-        for (i = 0; i < n; i++) {
-            state.xf_mem[addr + i] = be32(p + 4 * i);
-        }
-        // A dirty bit per 4 words, gathered per dirty word before the store.
-        for (i = addr >> 2; i <= last;) {
-            u32 w = i >> 5, bits = 0;
-
-            do {
-                bits |= 1u << (i & 31);
-                i++;
-            } while (i <= last && (i >> 5) == w);
-            state.xf_mem_dirty[w] |= bits;
-        }
+        copy_be32(&state.xf_mem[addr], p, n);
+        // A dirty bit per 4 words.
+        mark_dirty(state.xf_mem_dirty, addr >> 2, (addr + n - 1) >> 2);
         addr += n;
         p += 4 * n;
         count -= n;
     }
     for (; count != 0; count--, addr++, p += 4) {
-        if (addr - XF_REG_BASE < XF_REG_COUNT) {
-            xf_reg_write(g, addr - XF_REG_BASE, be32(p));
+        u32 r = addr - XF_REG_BASE;
+
+        if (r < XF_REG_COUNT) {
+            xf_reg_write(g, r, be32(p));
+            first = r < first ? r : first;
+            last = r;
         }
+    }
+    if (first < XF_REG_COUNT) {
+        mark_dirty(state.xf_reg_dirty, first, last);
     }
 }
 
@@ -768,12 +812,23 @@ void gp_wait_copy(u32 n)
     ps_mutex_unlock(&copy_lock);
 }
 
+// A/B: the GP thread below the main thread (1100), so the other port threads' wakeups take the GP's hardware
+// thread, not main's.
+#define GP_PRIORITY 1001
+#define GP_PRIORITY_LOW 1200
+
 static void gp_main(void* arg)
 {
     Src ring = { NULL, NULL };
+    unsigned low = 0;
 
     ps3_log("gp: thread running\n");
     for (;;) {
+        if ((ps3_diag.gx_ab & 134217728) != low) {
+            low = ps3_diag.gx_ab & 134217728;
+            ps3_log("gp: priority %d: %d\n", low ? GP_PRIORITY_LOW : GP_PRIORITY,
+                    ps_thread_set_priority(low ? GP_PRIORITY_LOW : GP_PRIORITY));
+        }
         run_command(&ring, false);
         gp_fifo_release_step();
         if (__atomic_load_n(&present_pending, __ATOMIC_RELAXED)) {

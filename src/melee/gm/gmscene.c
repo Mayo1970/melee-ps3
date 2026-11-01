@@ -21,6 +21,9 @@
 #include <sysdolphin/baselib/leak.h>
 #include <sysdolphin/baselib/perf.h>
 #include <sysdolphin/baselib/sobjlib.h>
+#ifdef TARGET_PS3
+#include <ps3_intr.h>
+#endif
 
 /* 479D30 */ static HSD_GObjLibInitDataType gobj_init_data;
 /* 479D58 */ static struct gm_80479D58_t gm_80479D58;
@@ -289,9 +292,23 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
         hsd_80392E80();
         gmMainLib_8046B0F0.xC = false;
 
+#ifdef TARGET_PS3
+        // Sleeps until the pad alarm instead of spinning; the timeout keeps the disc and card polls going.
+        while ((pad_queue_count = lb_80019894()) == 0) {
+            int enabled;
+
+            lb_800195D0();
+            enabled = OSDisableInterrupts();
+            if (HSD_PadGetRawQueueCount() == 0) {
+                ps3_intr_wait_alarms(1000);
+            }
+            OSRestoreInterrupts(enabled);
+        }
+#else
         while ((pad_queue_count = lb_80019894()) == 0) {
             lb_800195D0();
         }
+#endif
         lb_800195D0();
 
         if (HSD_PadGetResetSwitch()) {

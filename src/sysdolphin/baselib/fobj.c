@@ -7,6 +7,11 @@
 
 HSD_ObjAllocData fobj_alloc_data;
 
+#ifdef TARGET_PS3
+// fterm_f lives in what was tail padding (LP64), so HSD_FObj keeps its size and every offset.
+_Static_assert(sizeof(HSD_FObj) == 64, "fterm_f must fit the tail padding");
+#endif
+
 HSD_ObjAllocData* HSD_FObjGetAllocData(void)
 {
     return &fobj_alloc_data;
@@ -64,6 +69,9 @@ static inline void HSD_FObjReqAnim(HSD_FObj* fobj, f32 startframe)
     fobj->flags &= ~0x40;
     fobj->nb_pack = 0;
     fobj->fterm = 0;
+#ifdef TARGET_PS3
+    fobj->fterm_f = 0.f;
+#endif
     fobj->p0 = 0.f;
     fobj->p1 = 0.f;
     fobj->d0 = 0.f;
@@ -116,6 +124,59 @@ union parseFloat_u {
     u32 d;
 };
 
+#ifdef TARGET_PS3
+#define FOBJ_T4(n) n, n + 1, n + 2, n + 3
+#define FOBJ_T16(n) FOBJ_T4(n), FOBJ_T4(n + 4), FOBJ_T4(n + 8), FOBJ_T4(n + 12)
+#define FOBJ_T64(n) FOBJ_T16(n), FOBJ_T16(n + 16), FOBJ_T16(n + 32), FOBJ_T16(n + 48)
+static const f32 parseFloat_u8[256] = { FOBJ_T64(0), FOBJ_T64(64), FOBJ_T64(128), FOBJ_T64(192) };
+static const f32 parseFloat_s8[256] = { FOBJ_T64(0), FOBJ_T64(64), FOBJ_T64(-128), FOBJ_T64(-64) };
+// 1 / (1 << n) as an s32: 1 << 31 is INT_MIN, so the last is -2^-31.
+static const f32 parseFloat_recip[32] = {
+    0x1p0f,   0x1p-1f,  0x1p-2f,  0x1p-3f,  0x1p-4f,  0x1p-5f,  0x1p-6f,  0x1p-7f,  0x1p-8f,  0x1p-9f,   0x1p-10f,
+    0x1p-11f, 0x1p-12f, 0x1p-13f, 0x1p-14f, 0x1p-15f, 0x1p-16f, 0x1p-17f, 0x1p-18f, 0x1p-19f, 0x1p-20f,  0x1p-21f,
+    0x1p-22f, 0x1p-23f, 0x1p-24f, 0x1p-25f, 0x1p-26f, 0x1p-27f, 0x1p-28f, 0x1p-29f, 0x1p-30f, -0x1p-31f,
+};
+#undef FOBJ_T64
+#undef FOBJ_T16
+#undef FOBJ_T4
+
+// The integers come from tables and scale by an exact power of two: the same bits as numer / denom, without the
+// integer to float conversions through memory and the divide.
+static f32 parseFloat(u8** pos, u8 frac)
+{
+    union parseFloat_u u;
+    u8* p = *pos;
+    f32 numer;
+
+    if (frac == HSD_A_FRAC_FLOAT) {
+        u.d = p[0] | (p[1] << 8) | (p[2] << 16) | ((u32) p[3] << 24);
+        *pos = p + 4;
+        return u.f;
+    }
+
+    switch (frac & 0xE0) {
+    case HSD_A_FRAC_S8:
+        numer = parseFloat_s8[p[0]];
+        *pos = p + 1;
+        break;
+    case HSD_A_FRAC_U8:
+        numer = parseFloat_u8[p[0]];
+        *pos = p + 1;
+        break;
+    case HSD_A_FRAC_S16:
+        numer = parseFloat_s8[p[1]] * 256.0f + parseFloat_u8[p[0]];
+        *pos = p + 2;
+        break;
+    case HSD_A_FRAC_U16:
+        numer = parseFloat_u8[p[1]] * 256.0f + parseFloat_u8[p[0]];
+        *pos = p + 2;
+        break;
+    default:
+        return 0.0f;
+    }
+    return numer * parseFloat_recip[frac & 0x1F];
+}
+#else
 static f32 parseFloat(u8** pos, u8 frac)
 {
     union parseFloat_u u;
@@ -153,6 +214,7 @@ static f32 parseFloat(u8** pos, u8 frac)
     }
     return numer / denom;
 }
+#endif
 
 static u8 parseOpCode(u8** curr_parse)
 {
@@ -213,6 +275,9 @@ static u32 FObjLoadWait(HSD_FObj* fobj)
         return 6;
     } else {
         fobj->fterm = parseWait(&fobj->ad);
+#ifdef TARGET_PS3
+        fobj->fterm_f = fobj->fterm;
+#endif
         fobj->flags |= 0x20;
         return HSD_FObjSetState(fobj, 2);
     }
@@ -353,7 +418,11 @@ void FObjUpdateAnim(HSD_FObj* fobj, void* obj, HSD_ObjUpdateFunc obj_update)
         }
         break;
     case HSD_A_OP_CON:
+#ifdef TARGET_PS3
+        if (fobj->time >= fobj->fterm_f) {
+#else
         if (fobj->time >= fobj->fterm) {
+#endif
             phi_f0 = fobj->p1;
         } else {
             phi_f0 = fobj->p0;
@@ -364,7 +433,11 @@ void FObjUpdateAnim(HSD_FObj* fobj, void* obj, HSD_ObjUpdateFunc obj_update)
         if (fobj->flags & 0x20) {
             fobj->flags = fobj->flags & 0xFFFFFFDF;
             if (fobj->fterm != 0) {
+#ifdef TARGET_PS3
+                fobj->d0 = (fobj->p1 - fobj->p0) / fobj->fterm_f;
+#else
                 fobj->d0 = (fobj->p1 - fobj->p0) / fobj->fterm;
+#endif
             } else {
                 fobj->d0 = 0;
                 fobj->p0 = fobj->p1;
@@ -376,9 +449,15 @@ void FObjUpdateAnim(HSD_FObj* fobj, void* obj, HSD_ObjUpdateFunc obj_update)
     case HSD_A_OP_SPL:
     case HSD_A_OP_SLP:
         if (fobj->fterm != 0) {
+#ifdef TARGET_PS3
+            // (f32) (1.0 / fterm) as one fdivs: a quotient rounded to double, then to float, is still correctly
+            // rounded (53 >= 2 * 24 + 2 bits).
+            fobjdata.fv = splGetHelmite(1.0f / fobj->fterm_f, fobj->time, fobj->p0, fobj->p1, fobj->d0, fobj->d1);
+#else
             fobjdata.fv =
                 splGetHelmite(1.0 / fobj->fterm, fobj->time, fobj->p0,
                               fobj->p1, fobj->d0, fobj->d1);
+#endif
         } else {
             fobjdata.fv = fobj->p1;
         }
@@ -419,7 +498,11 @@ void HSD_FObjInterpretAnim(HSD_FObj* fobj, void* obj,
                 break;
             }
             case 4: {
+#ifdef TARGET_PS3
+                if (fobj->fterm_f <= fobj->time) {
+#else
                 if (fobj->fterm <= fobj->time) {
+#endif
                     u8 _[8];
                     state =
 #ifdef MUST_MATCH
@@ -427,8 +510,13 @@ void HSD_FObjInterpretAnim(HSD_FObj* fobj, void* obj,
 #endif
                             3;
 
+#ifdef TARGET_PS3
+                    fterm = fobj->fterm_f;
+                    fobj->time -= fobj->fterm_f;
+#else
                     fterm = fobj->fterm;
                     fobj->time -= fobj->fterm;
+#endif
                     HSD_FObjSetState(fobj, state);
                     break;
                 }

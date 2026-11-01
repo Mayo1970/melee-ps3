@@ -11,6 +11,16 @@
         GX_WRITE_U32(b);                                                      \
         __gxVerif->rasRegs[(b >> 24) & 0xFF] = b;                             \
     } while (0)
+#elif defined(TARGET_PS3)
+// One pipe reservation for the same 5 bytes (gx_pipe.h).
+#define GX_WRITE_SOME_REG5(a, b)                                              \
+    do {                                                                      \
+        u32 bumpv_ = (b);                                                     \
+        u8* bumpp_ = __GXPipeBegin();                                         \
+        __GXPipeSt8(bumpp_, (a));                                             \
+        __GXPipeSt32(bumpp_ + 1, bumpv_);                                     \
+        __GXPipeEnd(bumpp_ + 5);                                              \
+    } while (0)
 #else
 #define GX_WRITE_SOME_REG5(a, b)                                              \
     do {                                                                      \
