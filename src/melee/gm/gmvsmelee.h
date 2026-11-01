@@ -38,6 +38,9 @@ gmVsMelee_EnterVs(GameModeState*, struct VsModeData*,
 /* 47E2A4 */ extern MatchExitInfo gmVsMelee_SuddenDeathExitInfo;
 /* 1A5258 */ void gmVsMelee_UpdateKOCounts(u8*, MatchEnd*);
 /* 1A5250 */ u8* gmVsMelee_GetKOCounts(void);
+#ifdef TARGET_PS3
+void gmVsMelee_NetplayLoads(StartMeleeData* start);
+#endif
 /* 1A55EC */ void gmVsMelee_Mode_OnLoad(void);
 /* 1A5614 */ void gm_Mode_Vs_OnUnload(void);
 /* 1A55C4 */ void gmVsMelee_ResetKOCounts(void);

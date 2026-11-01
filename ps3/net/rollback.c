@@ -843,10 +843,7 @@ static bool net_frame(Ps3RbFrame run, void* arg)
     int r;
 
     ps3_net_tick(frame, &t);
-    if (t.stall) {
-        HSD_PadDropQueueEntry();
-        return false;
-    }
+    // The tick has checked the frames up to the wrong one: they run again even when this tick runs no new frame.
     if (t.rollback_from < frame) {
         r = net_rerun(t.rollback_from, frame, t.confirmed, run, arg, &end);
         if (r < 0) {
@@ -858,6 +855,10 @@ static bool net_frame(Ps3RbFrame run, void* arg)
             frame = end + 1;
             return settle(end, run, arg);
         }
+    }
+    if (t.stall) {
+        HSD_PadDropQueueEntry();
+        return false;
     }
     t0 = ps3_prof_now();
     if (frame > t.confirmed && !save(frame)) {

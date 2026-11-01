@@ -1357,6 +1357,46 @@ Hardware test (the user and a friend, over the internet):
     in `options.txt` on both consoles; the router forwards UDP 51001 to the PC (192.168.178.99, with a firewall rule)
     and UDP 51000 to the PS3.
 
+Pairing without a matchmaker (2026-11-01). The user: the matchmaker works but is clunky; a console hosts and others join
+it. The user's decisions: the joiner enters a host code; the host opens its port by UPnP, else a manual forward.
+- The matchmaker (`tools/matchmaker.py`), the LAN broadcast and `netplay_server` are gone. Protocol version 2.
+- NETPLAY in the PS3 menu: left and right choose HOST or JOIN, A starts. A host runs UPnP (`net/upnp.c`: SSDP, the
+  device description, SOAP `GetExternalIPAddress` and `AddPortMapping` of UDP 51000 for 2 hours; a mapping that is
+  already there and leads to this PS3 counts as open) and shows its code: the public IPv4 in 8 hexadecimal digits
+  (94.35.119.59 is 5E23 773B). Without UPnP, or with a private address on the router's side, the code is the LAN
+  address. A joiner enters the 8 digits (0-9, A-F) and sends HELLOs to that address, port 51000; the host answers from
+  there, so the joiner's router may be any kind. Host is player 1, joiner player 2. When a pairing ends the host goes
+  back to waiting with the same code; A on the row stops hosting and removes the mapping.
+- The user's router (192.168.178.1) answers UPnP: WANIPConnection:1, public address 94.35.119.59 (PC test). Some
+  routers allow UPnP mappings per device only; then the PS3 needs that right in the router.
+- Host test (`tools/hostnet.sh`: p1 hosts, p2 joins the container address; no UPnP in Docker): 30 ms lag, 10 ms
+  jitter, 2% loss, delay 1: paired, handshake, 362 and 352 rollbacks, 183 checks compared, 0 desyncs.
+- Package: `.got` 0x59e8, 0 `r2off` stubs. Not yet tested on the console: UPnP from the PS3, joining by code.
+- Own fighters (2026-11-01, the user): each player picks their own fighter, and player 2's VS mode does not matter;
+  tap jump and C-stick stay as they were (each player's controller column, moved to their match port). Handshake:
+  player 2 sends READY (its first human port's fighter, colour, rumble, options); player 1 makes the 1v1 (its own
+  first human port in port 1, player 2's fighter in port 2 with the same settings, no other ports, `slot` 0, port 2 on
+  another team, no name tag) and sends it; player 2 takes it whole, the VS mode's callbacks too. Both consoles then
+  load its preloads and sound banks (`gmVsMelee_NetplayLoads`). A netplay match starts with the pad status tables
+  cleared (`HSD_PadClearStatus`), and a Zelda held A no longer turns into Sheik (`fn_8016D8AC`: each console read its
+  own pads there).
+- Host tests of it: Fox (p1) against Peach (p2's pick) on Battlefield, delay 0, 30 ms lag: desyncs at frame 450 (both
+  loads differed then) and, with the same loads, at frame 840 and 1770 (transient). Only Peach differs, her move one
+  or two frames apart; the RNG mostly equal. Fox against Fox, delay 1: 412 rollbacks, 185 checks, 0 desyncs. The
+  sync test with Peach under the same pad script: 2,718 frames, 0 gameplay and 0 memory differences.
+- The cause, from the inputs each console logs at its first desync (the 30 frames before it): at frame 866 player 2
+  gave its port B, player 1 nothing. A tick that found a wrong prediction had already marked the frames up to it as
+  checked; when that tick also ran no frame (time sync, or waiting for the other console), `net_frame` returned
+  before running them again, and no later tick looked at them. In the netplay core since step 2; delay 0 with lag
+  makes it likelier. Fix: the frames run again first, then the tick may skip its own. After it: 4 runs of the same
+  test, 135-149 rollbacks each, 0 desyncs; two 200 s runs (each about 7,700 frames, 253-306 rollbacks, 258-261
+  checks), one with different setups before the match (Fox and a CPU Marth on Battlefield, Peach and a CPU Bowser on
+  Yoshi's Story, played as Fox against Peach on Battlefield): 0 desyncs.
+- Package: `.got` 0x5a20, 0 `r2off` stubs. Not yet tested on the consoles.
+- Damaged files on E: (15:30): 9 host objects and 2 console objects held random bytes; their dates had not changed
+  and they had linked before. Deleted and rebuilt; the tracked sources were intact (`git status`). Cause not known
+  (the drive is 94% full).
+
 ## Goal: the PS3 menu (2026-11-01)
 
 Set by the user, before netplay step 2: Select opens a menu of extra features; netplay becomes an entry of it later.

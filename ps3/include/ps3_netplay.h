@@ -1,4 +1,4 @@
-// Netplay (ps3/net/netplay.c), under TARGET_PS3: two consoles that enter the same 8-digit code pair up, player 1
+// Netplay (ps3/net/netplay.c), under TARGET_PS3: a console hosts, another joins with its code; the host (player 1)
 // sets up each VS match, and the rollback (ps3_rollback.h) plays it with the inputs exchanged here.
 #ifndef PS3_NETPLAY_H
 #define PS3_NETPLAY_H
@@ -8,21 +8,27 @@
 #include <dolphin/pad.h>
 #include <melee/mn/forward.h>
 
-enum { PS3_NET_OFF, PS3_NET_SEARCH, PS3_NET_CONNECT, PS3_NET_PAIRED };
+enum { PS3_NET_OFF, PS3_NET_HOST, PS3_NET_CONNECT, PS3_NET_PAIRED };
 
-// The PS3 menu (pad thread): pairs with the console that enters the same 8 digits, or leaves the pairing.
-void ps3_net_search(const char code[8]);
+// The PS3 menu (pad thread): host (UPnP opens the port; the code is the address), join a host by its 8 hexadecimal
+// digits, or leave.
+void ps3_net_host(void);
+void ps3_net_join(const char code[8]);
 void ps3_net_cancel(void);
 // The pairing's state, the player number once paired (1 or 2) and a status line for the menu.
 int ps3_net_state(int* player, const char** status);
+// A host's code, "" until UPnP has answered.
+const char* ps3_net_code(void);
 // Changes with anything ps3_net_state gives.
 unsigned ps3_net_serial(void);
 
-// The end of gmVsMelee_EnterVs and gmVsMelee_EnterSuddenDeath, or the host's test start: when paired, player 1 sends
-// its start data and player 2 takes it (*taken). True when the match is a netplay one.
-bool ps3_net_handshake(StartMeleeData* start, bool* taken);
+// The end of gmVsMelee_EnterVs and gmVsMelee_EnterSuddenDeath, or the host's test start: when paired, player 2
+// sends its own fighter, player 1 makes the 1v1 of both, player 2 takes it whole. True for a netplay match.
+bool ps3_net_handshake(StartMeleeData* start);
 // fn_8016E730's start: a netplay match takes the agreed RNG seed and each player's options.
 void ps3_net_match_begin(void);
+// True from that start to the session's end: the game must not read local pads outside the netplay's inputs.
+bool ps3_net_playing(void);
 
 typedef struct Ps3NetTick {
     bool stall;        // run no frame this tick

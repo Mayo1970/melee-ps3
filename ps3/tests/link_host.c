@@ -3,13 +3,13 @@
 #include "../net/link.h"
 
 #include <arpa/inet.h>
-#include <netdb.h>
 #include <netinet/in.h>
 #include <poll.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <time.h>
 #include <unistd.h>
 
@@ -155,30 +155,6 @@ int ps3_link_recv(Ps3NetAddr* from, void* buf, int cap, unsigned usec)
     }
 }
 
-bool ps3_link_resolve(const char* s, Ps3NetAddr* out)
-{
-    char host[128];
-    const char* colon = strrchr(s, ':');
-    struct addrinfo hints, *res = NULL;
-    size_t n;
-
-    if (colon == NULL || (n = (size_t) (colon - s)) == 0 || n >= sizeof(host)) {
-        return false;
-    }
-    memcpy(host, s, n);
-    host[n] = '\0';
-    out->port = (uint16_t) atoi(colon + 1);
-    memset(&hints, 0, sizeof(hints));
-    hints.ai_family = AF_INET;
-    hints.ai_socktype = SOCK_DGRAM;
-    if (getaddrinfo(host, NULL, &hints, &res) != 0 || res == NULL) {
-        return false;
-    }
-    out->ip = ntohl(((struct sockaddr_in*) res->ai_addr)->sin_addr.s_addr);
-    freeaddrinfo(res);
-    return out->port != 0;
-}
-
 // The route's source address towards a public one; connecting a UDP socket sends nothing.
 bool ps3_link_local(Ps3NetAddr* out)
 {
@@ -200,4 +176,54 @@ bool ps3_link_local(Ps3NetAddr* out)
     out->ip = ntohl(s.sin_addr.s_addr);
     out->port = bound;
     return true;
+}
+
+static void set_timeout(int fd, unsigned ms)
+{
+    struct timeval tv = { (time_t) (ms / 1000), (suseconds_t) (ms % 1000) * 1000 };
+
+    setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+}
+
+int ps3_link_udp_ask(const Ps3NetAddr* to, const void* req, int len, void* resp, int cap, unsigned ms,
+                     Ps3NetAddr* from)
+{
+    struct sockaddr_in s;
+    socklen_t slen = sizeof(s);
+    int fd = socket(AF_INET, SOCK_DGRAM, 0), n = -1;
+
+    if (fd < 0) {
+        return -1;
+    }
+    set_timeout(fd, ms);
+    to_sockaddr(to, &s);
+    if (sendto(fd, req, (size_t) len, 0, (struct sockaddr*) &s, sizeof(s)) == len) {
+        n = (int) recvfrom(fd, resp, (size_t) cap, 0, (struct sockaddr*) &s, &slen);
+        from->ip = ntohl(s.sin_addr.s_addr);
+        from->port = ntohs(s.sin_port);
+    }
+    close(fd);
+    return n > 0 ? n : -1;
+}
+
+int ps3_link_tcp_ask(const Ps3NetAddr* to, const void* req, int len, void* resp, int cap, unsigned ms)
+{
+    struct sockaddr_in s;
+    int fd = socket(AF_INET, SOCK_STREAM, 0), n = 0, got;
+
+    if (fd < 0) {
+        return -1;
+    }
+    set_timeout(fd, ms);
+    to_sockaddr(to, &s);
+    if (connect(fd, (struct sockaddr*) &s, sizeof(s)) < 0 || send(fd, req, (size_t) len, 0) != len) {
+        close(fd);
+        return -1;
+    }
+    while (n < cap && (got = (int) recv(fd, (char*) resp + n, (size_t) (cap - n), 0)) > 0) {
+        n += got;
+    }
+    close(fd);
+    return n > 0 ? n : -1;
 }

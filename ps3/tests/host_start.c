@@ -30,9 +30,11 @@ void __wrap_gm_ChangeGameModeAfterCurrentScene(int pending_mode)
         OSReport("host_start: mode %d becomes debug VS (%d)\n", pending_mode, GM_DEBUG_VS);
         pending_mode = GM_DEBUG_VS;
     }
-    // MELEE_HOST_NET_CODE: the boot searches for that netplay code, so the match is a netplay one.
-    if (!booted && getenv("MELEE_HOST_NET_CODE") != NULL && strlen(getenv("MELEE_HOST_NET_CODE")) == 8) {
-        ps3_net_search(getenv("MELEE_HOST_NET_CODE"));
+    // MELEE_HOST_NET_HOST, or MELEE_HOST_NET_JOIN=<code>: the boot hosts or joins, so the match is a netplay one.
+    if (!booted && getenv("MELEE_HOST_NET_HOST") != NULL) {
+        ps3_net_host();
+    } else if (!booted && getenv("MELEE_HOST_NET_JOIN") != NULL && strlen(getenv("MELEE_HOST_NET_JOIN")) == 8) {
+        ps3_net_join(getenv("MELEE_HOST_NET_JOIN"));
     }
     booted = true;
     __real_gm_ChangeGameModeAfterCurrentScene(pending_mode);
@@ -93,10 +95,8 @@ void __wrap_gm_LoadAnnouncer(void)
     OSReport("host_start: %d fighters (%d %d %d %d), stage %d, items %d\n", i, start->players[0].ckind,
              start->players[1].ckind, start->players[2].ckind, start->players[3].ckind, start->rules.stkind,
              start->rules.item_freq);
-    // As gmVsMelee_EnterVs's hook; both instances start the same match, so player 2 needs no new preloads.
-    {
-        bool taken;
-
-        ps3_net_handshake(start, &taken);
+    // As gmVsMelee_EnterVs's hook; its announcer call would come back here.
+    if (ps3_net_handshake(start)) {
+        gmVsMelee_NetplayLoads(start);
     }
 }

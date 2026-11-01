@@ -36,12 +36,12 @@
 enum { ROW_WIDESCREEN, ROW_TAP_JUMP, ROW_CSTICK, ROW_DELAY, ROW_NETPLAY, ROWS };
 enum { DIR_UP = 1, DIR_DOWN = 2, DIR_LEFT = 4, DIR_RIGHT = 8 };
 
-Ps3Options ps3_options = { false, { true, true, true, true }, { false, false, false, false }, 2, "" };
+Ps3Options ps3_options = { false, { true, true, true, true }, { false, false, false, false }, 2 };
 
 static volatile bool open, in_match;
 static volatile int row, col;
-// The netplay code being entered, and the digit under the cursor.
-static volatile bool entering;
+// NETPLAY: hosting or joining chosen with left and right; the host code being entered, and its digit under the cursor.
+static volatile bool join_chosen, entering;
 static volatile int digit;
 static char digits[8] = { '0', '0', '0', '0', '0', '0', '0', '0' };
 // Changes with the picture; the GP thread draws it again when it differs from drawn.
@@ -78,8 +78,6 @@ static void load(void)
             load_flags(ps3_options.cstick_tilts, v);
         } else if (sscanf(line, "netplay_delay=%1s", v) == 1 && v[0] >= '0' && v[0] <= '7') {
             ps3_options.netplay_delay = v[0] - '0';
-        } else {
-            sscanf(line, "netplay_server=%63s", ps3_options.netplay_server);
         }
     }
     fclose(f);
@@ -102,9 +100,6 @@ static void save(void)
     save_flags(f, "tap_jump", ps3_options.tap_jump);
     save_flags(f, "cstick_tilts", ps3_options.cstick_tilts);
     fprintf(f, "netplay_delay=%d\n", ps3_options.netplay_delay);
-    if (ps3_options.netplay_server[0] != '\0') {
-        fprintf(f, "netplay_server=%s\n", ps3_options.netplay_server);
-    }
     fclose(f);
 }
 
@@ -142,12 +137,13 @@ static void text(int x, int y, const char* s, u32 argb)
     }
 }
 
-// The netplay row: the code being entered, or the pairing's state.
+// The netplay row: the host code being entered, hosting or joining to choose, or the pairing's state.
 static void draw_netplay(int x, int y)
 {
     char v[24];
     int player, i;
     const char* why;
+    const char* code = ps3_net_code();
     int state = ps3_net_state(&player, &why);
 
     if (entering) {
@@ -163,12 +159,15 @@ static void draw_netplay(int x, int y)
         if (row == ROW_NETPLAY) {
             fill(x, y - 2, 4 * COL_W - 4, LINE_H, COLOR_CURSOR);
         }
-        if (state == PS3_NET_SEARCH) {
-            snprintf(v, sizeof(v), "SEARCHING %.8s", digits);
+        if (state == PS3_NET_HOST) {
+            // In two groups of four, easier to read out.
+            snprintf(v, sizeof(v), code[0] != '\0' ? "CODE %.4s %.4s" : "HOSTING", code, code + 4);
         } else if (state == PS3_NET_PAIRED) {
             snprintf(v, sizeof(v), "PLAYER %d", player);
+        } else if (state == PS3_NET_CONNECT) {
+            snprintf(v, sizeof(v), "CONNECTING");
         } else {
-            snprintf(v, sizeof(v), "%s", state == PS3_NET_CONNECT ? "CONNECTING" : "ENTER A CODE");
+            snprintf(v, sizeof(v), join_chosen ? "< JOIN >" : "< HOST >");
         }
         text(x + 4, y, v, COLOR_TEXT);
     }
@@ -217,7 +216,7 @@ static void draw(void)
             text(x + 4, y, s, COLOR_TEXT);
         }
     }
-    text(MARGIN, MARGIN + 12 * LINE_H, entering ? "UP/DOWN DIGIT   A SEARCH   B BACK" : "A CHANGE   B CLOSE",
+    text(MARGIN, MARGIN + 12 * LINE_H, entering ? "UP/DOWN DIGIT   A JOIN   B BACK" : "A CHANGE   B CLOSE",
          COLOR_DIM);
 }
 
@@ -278,26 +277,43 @@ static void toggle(int step)
     changed = true;
 }
 
-// Up and down change the digit under the cursor; A searches for the code.
+// Up and down change the hexadecimal digit under the cursor; A joins the host with that code.
 static void enter_code(u16 down, u8 dir)
 {
+    static const char hex[] = "0123456789ABCDEF";
+
     if (dir & (DIR_UP | DIR_DOWN)) {
-        digits[digit] = (char) ('0' + (digits[digit] - '0' + ((dir & DIR_UP) ? 1 : 9)) % 10);
+        int v = (int) (strchr(hex, digits[digit]) - hex);
+
+        digits[digit] = hex[(v + ((dir & DIR_UP) ? 1 : 15)) % 16];
     } else if (dir & (DIR_LEFT | DIR_RIGHT)) {
         digit = (digit + ((dir & DIR_LEFT) ? 7 : 1)) % 8;
     } else if (down & PAD_BUTTON_A) {
         entering = false;
-        ps3_net_search(digits);
+        ps3_net_join(digits);
     } else if (down & PAD_BUTTON_B) {
         entering = false;
     }
 }
 
-static void navigate(u16 down, u8 dir)
+// NETPLAY with A: host or join as chosen; while hosting, joining or paired, it stops.
+static void netplay(void)
 {
     int player;
     const char* why;
 
+    if (ps3_net_state(&player, &why) != PS3_NET_OFF) {
+        ps3_net_cancel();
+    } else if (join_chosen) {
+        entering = true;
+        digit = 0;
+    } else {
+        ps3_net_host();
+    }
+}
+
+static void navigate(u16 down, u8 dir)
+{
     if (entering) {
         enter_code(down, dir);
     } else if (dir & DIR_UP) {
@@ -307,17 +323,16 @@ static void navigate(u16 down, u8 dir)
     } else if (dir & (DIR_LEFT | DIR_RIGHT)) {
         if (row == ROW_WIDESCREEN || row == ROW_DELAY) {
             toggle((dir & DIR_LEFT) ? -1 : 1);
-        } else if (row != ROW_NETPLAY) {
+        } else if (row == ROW_NETPLAY) {
+            join_chosen = !join_chosen;
+        } else {
             col = (col + ((dir & DIR_LEFT) ? 3 : 1)) % 4;
         }
     } else if (down & PAD_BUTTON_A) {
-        if (row != ROW_NETPLAY) {
-            toggle(1);
-        } else if (ps3_net_state(&player, &why) == PS3_NET_OFF) {
-            entering = true;
-            digit = 0;
+        if (row == ROW_NETPLAY) {
+            netplay();
         } else {
-            ps3_net_cancel();
+            toggle(1);
         }
     } else {
         return;

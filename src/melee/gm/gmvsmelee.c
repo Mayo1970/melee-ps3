@@ -175,18 +175,14 @@ void gmVsMelee_ExitSss(GameModeState* state, VsModeData* vs,
 }
 
 #ifdef TARGET_PS3
-// A netplay match (ps3_netplay.h): player 1's start data replaces player 2's, whose preloads, sound banks and
-// announcer then follow it, as the CSS and SSS exits set them up.
-static void gmVsMelee_NetplayStart(StartMeleeData* start)
+// The preloads and sound banks of a netplay match's start data, as the CSS and SSS exits set them up.
+void gmVsMelee_NetplayLoads(StartMeleeData* start)
 {
     struct GameCache* cache = &lbDvd_GetPreloadCacheScene()->game_cache;
     u64 mask = 0;
-    bool taken;
     ssize_t i;
 
-    if (!ps3_net_handshake(start, &taken) || !taken) {
-        return;
-    }
+    gm_SetupSubColors(start);
     for (i = 0; i < 4; i++) {
         u8 slot_type = start->players[i].slot_type;
 
@@ -204,7 +200,15 @@ static void gmVsMelee_NetplayStart(StartMeleeData* start)
     lbAudioAx_8002702C(4, mask);
     lbAudioAx_8002702C(8, lbAudioAx_80026EBC(start->rules.stkind));
     lbAudioAx_80027168();
-    gm_LoadAnnouncer();
+}
+
+// A netplay match (ps3_netplay.h): both consoles get the 1v1 of the two players' own fighters, and what it loads.
+static void gmVsMelee_NetplayStart(StartMeleeData* start)
+{
+    if (ps3_net_handshake(start)) {
+        gmVsMelee_NetplayLoads(start);
+        gm_LoadAnnouncer();
+    }
 }
 #endif
 

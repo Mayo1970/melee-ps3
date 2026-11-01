@@ -214,7 +214,7 @@ GAME_PORT_SRCS := $(addprefix ps3/,dvd/dvd.c os/intr.c os/globals.c os/os.c os/o
                   os/alarm.c os/thread.c os/mem.c os/ppcarch.c audio/sdk_audio.c gx/fifo.c gx/gp.c sdk/mtx.c \
                   sdk/trig.c sdk/card.c sdk/stubs.c sdk/thp.c pad/pad.c pad/menu.c vi/vi.c dat/pool.c dat/trace.c \
                   os/calltrace.c \
-                  os/mainprof.c net/rollback.c net/netplay.c) $(GX_RSX_SRCS) \
+                  os/mainprof.c net/rollback.c net/netplay.c net/upnp.c) $(GX_RSX_SRCS) \
                   $(EXTRA_SRCS)
 # The PSL1GHT side, which no SDK header meets.
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_cell.c os/sys_cell.c os/udplog_cell.c audio/audio_cell.c \
@@ -302,14 +302,6 @@ $(GAME_DIR)/rb_flags.txt: FORCE
 	@echo '$(RB_FLAGS)' | cmp -s - $@ || echo '$(RB_FLAGS)' > $@
 $(call GAME_OBJ,ps3/net/rollback.c): GAME_FLAGS := $(RB_FLAGS)
 $(call GAME_OBJ,ps3/net/rollback.c): $(GAME_DIR)/rb_flags.txt
-
-# The netplay's matchmaker when options.txt names none, e.g. NET_SERVER=example.org:51001 (ps3/net/netplay.c).
-NET_SERVER ?=
-$(GAME_DIR)/net_server.txt: FORCE
-	@mkdir -p $(dir $@)
-	@echo '$(NET_SERVER)' | cmp -s - $@ || echo '$(NET_SERVER)' > $@
-$(call GAME_OBJ,ps3/net/netplay.c): GAME_FLAGS := -DPS3_NET_SERVER=\"$(NET_SERVER)\"
-$(call GAME_OBJ,ps3/net/netplay.c): $(GAME_DIR)/net_server.txt
 
 -include $(GAME_OBJS:.o=.d)
 

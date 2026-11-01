@@ -373,6 +373,18 @@ void HSD_PadRenewMasterStatus(void)
     }
 }
 
+// A netplay match starts with the same pad state on both consoles, not each one's last menu input.
+void HSD_PadClearStatus(void)
+{
+    int i;
+
+    for (i = 0; i < 4; i++) {
+        HSD_PadMasterStatus[i] = default_status_data;
+        HSD_PadCopyStatus[i] = default_status_data;
+        HSD_PadGameStatus[i] = default_status_data;
+    }
+}
+
 // A netplay tick that runs no logic frame (ps3_rollback.h) drops its entry.
 void HSD_PadDropQueueEntry(void)
 {

@@ -1,5 +1,5 @@
-// Netplay (ps3_netplay.h): pairing by code (LAN broadcast, tools/matchmaker.py), handshake, a session's inputs, time
-// sync and desync check. One UDP socket: a thread receives and resends, the main thread sends each frame's inputs.
+// Netplay (ps3_netplay.h): a console hosts (UPnP, its code is its public address) and another joins with the code;
+// then the handshake and a session's inputs, time sync and desync check. One UDP socket, a thread for it.
 #include <stddef.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -7,8 +7,10 @@
 
 #include <dolphin/os.h>
 #include <melee/gm/forward.h>
+#include <melee/gm/gm_1601.h>
 #include <melee/mn/types.h>
 #include <melee/pl/forward.h>
+#include <sysdolphin/baselib/controller.h>
 #include <sysdolphin/baselib/random.h>
 
 #include <ps3_netplay.h>
@@ -19,15 +21,11 @@
 #include "../os/sys.h"
 #include "link.h"
 #include "rb_shared.h"
+#include "upnp.h"
 
-#ifndef PS3_NET_SERVER
-#define PS3_NET_SERVER ""
-#endif
-
-// The consoles' port, also the LAN broadcasts'; the matchmaker's default port.
+// The port a host listens on; a code holds only the address.
 #define NET_PORT 51000
-#define SERVER_PORT 51001
-#define NET_VERSION 1
+#define NET_VERSION 2
 #define HEAD 8
 #define FRAMES 128
 // Frames whose remote input may be a prediction, as Slippi's rollback window.
@@ -39,11 +37,10 @@
 #define VIEW_MAX 1024
 // Desyncs logged with their gameplay values.
 #define DETAILS 4
-#define SEARCH_MS 1000
 #define HELLO_MS 100
 #define KEEP_MS 500
 #define RESEND_MS 50
-#define PUNCH_TIMEOUT_MS 15000
+#define CONNECT_TIMEOUT_MS 15000
 #define PAIR_TIMEOUT_MS 15000
 #define SESSION_TIMEOUT_MS 5000
 #define PAIR_WAIT_MS 30000
@@ -51,20 +48,21 @@
 // The other console's match load may take this much longer than ours.
 #define START_WAIT_MS 60000
 #define LINGER_MS 3000
+// The router keeps a host's port open this long; hosting again renews it.
+#define UPNP_LEASE_S 7200
 
 enum {
-    PK_REG = 1,  // console to matchmaker: code, nonce, LAN address, build
-    PK_WAIT,     // matchmaker: nonce; no other console on the code yet
-    PK_PAIR,     // matchmaker: nonce, session, role, the other console's public and LAN addresses
-    PK_LAN,      // broadcast: code, nonce, search age, build
-    PK_HELLO,    // to the peer while connecting: session, nonce, build, role, heard, code
-    PK_KEEP,     // paired, between matches: session
-    PK_SETUP,    // player 1: session, match, seed, options, start data
-    PK_ACK,      // player 2: session, match, options, accepted
-    PK_INPUT,    // in a session (see send_input)
-    PK_VIEW,     // a desync's gameplay values: session, match, frame, size, bytes
-    PK_BYE,      // leaving: session
+    PK_HELLO = 1, // connecting: session, nonce, build, role, heard
+    PK_KEEP,      // paired, between matches: session
+    PK_READY,     // player 2: session, the match it waits for, its fighter, colour, rumble, options
+    PK_SETUP,     // player 1: session, match, seed, options, start data
+    PK_ACK,       // player 2: session, match
+    PK_INPUT,     // in a session (see send_input)
+    PK_VIEW,      // a desync's gameplay values: session, match, frame, size, bytes
+    PK_BYE,       // leaving: session
 };
+
+enum { REQ_NONE, REQ_HOST, REQ_JOIN, REQ_CLOSE };
 
 // One frame of a player's pad, as sent. err is not sent: the netplay ports are always connected.
 typedef struct NetIn {
@@ -93,27 +91,30 @@ extern char __executable_start[], etext[];
 
 static PsMutex lock = PS_MUTEX_INIT;
 static PsCond wake = PS_COND_INIT;
-// The thread runs; a search waits for it to resolve the matchmaker.
-static bool running, search_request;
+// The thread runs; what the menu asked of it.
+static bool running;
+static int request;
 
 // The menu reads these without the lock.
 static volatile int state = PS3_NET_OFF;
 static volatile int role;
 static const char* volatile status = "";
 static volatile unsigned serial = 1;
+static char code[9];
 
-static char code[8];
-static u32 nonce, peer_nonce, session, build;
-static u32 search_ms, punch_ms, last_rx_ms, last_tx_ms, last_search_ms, last_hello_ms;
-static Ps3NetAddr server, peer, cand[2];
-static int ncand;
-static bool have_server, heard, acked;
+// hosting: from ps3_net_host to ps3_net_cancel; a host goes back to waiting when a pairing ends.
+static bool hosting, heard, acked;
+static u32 nonce, session, build, target;
+static u32 connect_ms, last_rx_ms, last_tx_ms, last_hello_ms;
+static Ps3NetAddr peer;
 
 // The handshake. match_no counts the matches of this pairing; a session's packets carry it.
 static u32 match_no, seed;
 static u8 opts_local, opts_remote;
-static bool pending, armed, setup_wanted, setup_acked, setup_refused, setup_got;
-static u8 setup_pkt[1024], ack_pkt[32];
+static bool pending, armed, setup_wanted, setup_acked, setup_got, ready_wanted, ready_got;
+static s8 ready_ckind;
+static u8 ready_color, ready_rumble;
+static u8 setup_pkt[1024], ack_pkt[32], ready_pkt[HEAD + 12];
 static int setup_len, ack_len;
 static bool kept_tap[2], kept_cstick[2], kept;
 
@@ -207,44 +208,9 @@ static void send_simple(int type)
     send_to(&peer, p, sizeof(p));
 }
 
-static void send_reg(u32 now)
-{
-    u8 p[HEAD + 24];
-    Ps3NetAddr local = { 0, 0 };
-
-    ps3_link_local(&local);
-    head(p, PK_REG);
-    memcpy(p + 8, code, 8);
-    wr32(p + 16, nonce);
-    wr32(p + 20, local.ip);
-    wr16(p + 24, local.port);
-    wr16(p + 26, 0);
-    wr32(p + 28, build);
-    ps3_link_send(&server, p, sizeof(p));
-}
-
-static void send_lan(u32 now)
-{
-    static const Ps3NetAddr everyone = { 0xFFFFFFFFu, NET_PORT };
-    u8 p[HEAD + 20];
-
-#ifdef __linux__
-    // The host test of the matchmaker's path.
-    if (getenv("MELEE_HOST_NET_NOLAN") != NULL) {
-        return;
-    }
-#endif
-    head(p, PK_LAN);
-    memcpy(p + 8, code, 8);
-    wr32(p + 16, nonce);
-    wr32(p + 20, now - search_ms);
-    wr32(p + 24, build);
-    ps3_link_send(&everyone, p, sizeof(p));
-}
-
 static void send_hello(const Ps3NetAddr* to)
 {
-    u8 p[HEAD + 24];
+    u8 p[HEAD + 16];
 
     head(p, PK_HELLO);
     wr32(p + 8, session);
@@ -253,96 +219,56 @@ static void send_hello(const Ps3NetAddr* to)
     p[20] = (u8) role;
     p[21] = heard;
     wr16(p + 22, 0);
-    memcpy(p + 24, code, 8);
     send_to(to, p, sizeof(p));
 }
 
-static void connect_to(int r, u32 s, u32 now)
-{
-    role = r;
-    session = s;
-    heard = acked = false;
-    punch_ms = now;
-    last_hello_ms = 0;
-    set_state(PS3_NET_CONNECT);
-}
-
+// A host goes back to waiting for a player, a joiner stops.
 static void unpair(const char* why)
 {
-    set_state(PS3_NET_OFF);
+    set_state(hosting ? PS3_NET_HOST : PS3_NET_OFF);
     set_status(why);
     lost = true;
     setup_wanted = false;
     ps_cond_broadcast(&wake);
 }
 
-static void handle_pairing(const Ps3NetAddr* from, const u8* p, int n, u32 now)
+static void handle_hello(const Ps3NetAddr* from, const u8* p, u32 now)
 {
-    int type = p[4];
+    u32 s = rd32(p + 8);
 
-    if (type == PK_WAIT && n >= HEAD + 4 && state == PS3_NET_SEARCH && rd32(p + 8) == nonce) {
-        if (status[0] != 'W') {
-            set_status("WAITING FOR THE OTHER CONSOLE");
-        }
-    } else if (type == PK_PAIR && n >= HEAD + 28 && state == PS3_NET_SEARCH && rd32(p + 8) == nonce) {
-        ncand = 0;
-        cand[ncand].ip = rd32(p + 20);
-        cand[ncand++].port = rd16(p + 24);
-        // The other console's LAN address answers when both are behind the same router.
-        if (rd32(p + 28) != 0 && (rd32(p + 28) != cand[0].ip || rd16(p + 32) != cand[0].port)) {
-            cand[ncand].ip = rd32(p + 28);
-            cand[ncand++].port = rd16(p + 32);
-        }
-        OSReport("netplay: the matchmaker pairs this console as player %d (session %08x)\n", p[16], rd32(p + 12));
-        connect_to(p[16], rd32(p + 12), now);
-        set_status("CONNECTING");
-    } else if (type == PK_LAN && n >= HEAD + 20 && state == PS3_NET_SEARCH && memcmp(p + 8, code, 8) == 0 &&
-               rd32(p + 16) != nonce)
-    {
-        if (rd32(p + 24) != build) {
-            set_status("THE OTHER CONSOLE HAS ANOTHER BUILD");
-            return;
-        }
-        // The console that searched longer is player 1; the HELLOs settle a tie.
-        peer_nonce = rd32(p + 16);
-        ncand = 1;
-        cand[0] = *from;
-        OSReport("netplay: found on the LAN at %08x:%u\n", from->ip, from->port);
-        connect_to(now - search_ms >= rd32(p + 20) ? 1 : 2, nonce ^ peer_nonce, now);
-        set_status("CONNECTING (LAN)");
-    } else if (type == PK_HELLO && n >= HEAD + 24) {
-        u32 s = rd32(p + 8);
-        int their = p[20];
-
-        if (state == PS3_NET_SEARCH && memcmp(p + 24, code, 8) == 0 && rd32(p + 12) != nonce) {
-            // Its broadcast or the matchmaker's answer did not reach us; its HELLO did.
-            ncand = 1;
-            cand[0] = *from;
-            connect_to(their == 1 ? 2 : 1, s, now);
-        }
-        if ((state != PS3_NET_CONNECT && state != PS3_NET_PAIRED) || s != session) {
-            return;
-        }
+    if (state == PS3_NET_HOST && p[20] == 2) {
+        // A player joins: the host answers even another build, which then stops by itself.
         if (rd32(p + 16) != build) {
-            send_simple(PK_BYE);
-            unpair("THE OTHER CONSOLE HAS ANOTHER BUILD");
+            set_status("ANOTHER BUILD TRIED TO JOIN");
+            role = 1;
+            send_hello(from);
             return;
         }
-        if (their == role) {
-            role = nonce < rd32(p + 12) ? 1 : 2;
-        }
-        peer = *from;
-        last_rx_ms = now;
-        heard = true;
-        acked |= p[21] != 0;
-        if (state == PS3_NET_CONNECT && acked) {
-            set_state(PS3_NET_PAIRED);
-            set_status(role == 1 ? "PAIRED: SET UP A VS MATCH" : "PAIRED: START ANY VS MATCH");
-            OSReport("netplay: paired as player %d with %08x:%u\n", role, peer.ip, peer.port);
-        }
-        // Each HELLO gets an answer: the other console stops only once ours says we heard it.
-        send_hello(from);
+        role = 1;
+        session = s;
+        heard = acked = false;
+        connect_ms = now;
+        set_state(PS3_NET_CONNECT);
+        set_status("A PLAYER JOINS");
     }
+    if ((state != PS3_NET_CONNECT && state != PS3_NET_PAIRED) || s != session) {
+        return;
+    }
+    if (rd32(p + 16) != build) {
+        unpair("THE HOST HAS ANOTHER BUILD");
+        return;
+    }
+    peer = *from;
+    last_rx_ms = now;
+    heard = true;
+    acked |= p[21] != 0;
+    if (state == PS3_NET_CONNECT && acked) {
+        set_state(PS3_NET_PAIRED);
+        set_status(role == 1 ? "PAIRED: SET UP A VS MATCH" : "PAIRED: START ANY VS MATCH");
+        OSReport("netplay: paired as player %d with %08x:%u\n", role, peer.ip, peer.port);
+    }
+    // Each HELLO gets an answer: the other console stops only once ours says we heard it.
+    send_hello(from);
 }
 
 static void store_check(Check* ring, s32 frame, u32 hash)
@@ -412,8 +338,10 @@ static void handle(const Ps3NetAddr* from, const u8* p, int n, u32 now)
 {
     int type = p[4];
 
-    if (type <= PK_HELLO) {
-        handle_pairing(from, p, n, now);
+    if (type == PK_HELLO) {
+        if (n >= HEAD + 16) {
+            handle_hello(from, p, now);
+        }
         return;
     }
     if (n < HEAD + 4 || rd32(p + 8) != session || state != PS3_NET_PAIRED) {
@@ -431,10 +359,17 @@ static void handle(const Ps3NetAddr* from, const u8* p, int n, u32 now)
             ps3_link_send(&peer, ack_pkt, ack_len);
         }
         break;
+    case PK_READY:
+        if (role == 1 && n >= HEAD + 12 && rd32(p + 12) == match_no + 1) {
+            ready_ckind = (s8) p[16];
+            ready_color = p[17];
+            ready_rumble = p[18];
+            opts_remote = p[19];
+            ready_got = true;
+        }
+        break;
     case PK_ACK:
-        if (role == 1 && n >= HEAD + 10 && setup_wanted && rd32(p + 12) == match_no) {
-            opts_remote = p[16];
-            setup_refused = p[17] == 0;
+        if (role == 1 && n >= HEAD + 8 && setup_wanted && rd32(p + 12) == match_no) {
             setup_acked = true;
         }
         break;
@@ -459,30 +394,17 @@ static void handle(const Ps3NetAddr* from, const u8* p, int n, u32 now)
 // The thread's resends, by state.
 static void periodic(u32 now)
 {
-    int i;
-
     switch (state) {
-    case PS3_NET_SEARCH:
-        if (!search_request && now - last_search_ms >= SEARCH_MS) {
-            last_search_ms = now;
-            if (have_server) {
-                send_reg(now);
-            }
-            send_lan(now);
-        }
-        break;
     case PS3_NET_CONNECT:
-        if (now - punch_ms > PUNCH_TIMEOUT_MS) {
-            OSReport("netplay: no answer from the other console in %u s\n", PUNCH_TIMEOUT_MS / 1000);
-            unpair("CANNOT REACH THE OTHER CONSOLE");
-        } else if (now - last_hello_ms >= HELLO_MS) {
+        if (now - connect_ms > CONNECT_TIMEOUT_MS) {
+            OSReport("netplay: no answer from the other console in %u s\n", CONNECT_TIMEOUT_MS / 1000);
+            unpair(hosting ? "THE PLAYER DID NOT FINISH JOINING" : "NO ANSWER: CHECK THE CODE");
+        } else if (role == 2 && now - last_hello_ms >= HELLO_MS) {
+            // The joiner calls; the host only answers.
+            Ps3NetAddr host = { target, NET_PORT };
+
             last_hello_ms = now;
-            for (i = 0; i < ncand; i++) {
-                send_hello(&cand[i]);
-            }
-            if (heard) {
-                send_hello(&peer);
-            }
+            send_hello(heard ? &peer : &host);
         }
         break;
     case PS3_NET_PAIRED:
@@ -498,6 +420,8 @@ static void periodic(u32 now)
         }
         if (setup_wanted && !setup_acked && now - last_tx_ms >= HELLO_MS) {
             send_to(&peer, setup_pkt, setup_len);
+        } else if (ready_wanted && !setup_got && now - last_tx_ms >= HELLO_MS) {
+            send_to(&peer, ready_pkt, sizeof(ready_pkt));
         } else if ((in_session || (s32) (linger_until - now) > 0) && input_len != 0) {
             // While the main thread blocks, and after the session, for the other console's last frames.
             if (now - last_tx_ms >= RESEND_MS) {
@@ -510,42 +434,46 @@ static void periodic(u32 now)
     }
 }
 
-static const char* server_name(void)
+static bool private_ip(u32 ip)
 {
-#ifdef __linux__
-    if (getenv("MELEE_HOST_NET_SERVER") != NULL) {
-        return getenv("MELEE_HOST_NET_SERVER");
-    }
-#endif
-    return ps3_options.netplay_server[0] != '\0' ? ps3_options.netplay_server : PS3_NET_SERVER;
+    return (ip >> 24) == 10 || (ip >> 20) == 0xAC1 || (ip >> 16) == 0xC0A8 || (ip >> 22) == (100u << 2 | 1) ||
+           (ip >> 24) == 127 || ip == 0;
 }
 
-// The search the menu asked for; the name lookup runs outside the lock, as it may take seconds.
-static void begin_search(void)
+// Hosting: UPnP opens the port and gives the public address, the code. Outside the lock: it takes seconds.
+static void begin_host(void)
 {
-    const char* name = server_name();
-    Ps3NetAddr addr = { 0, 0 };
-    bool have = false;
-    char buf[80];
+    Ps3NetAddr local = { 0, 0 };
+    Ps3Upnp upnp;
+    u32 ip;
+    const char* why;
 
-    if (name[0] != '\0') {
-        // A name without a port takes the matchmaker's default one.
-        snprintf(buf, sizeof(buf), strchr(name, ':') != NULL ? "%s" : "%s:%d", name, SERVER_PORT);
-        have = ps3_link_resolve(buf, &addr);
+    if (!ps3_link_local(&local)) {
+        ps_mutex_lock(&lock);
+        hosting = false;
+        unpair("NO NETWORK");
+        ps_mutex_unlock(&lock);
+        return;
+    }
+    ps3_upnp_open(NET_PORT, local.ip, UPNP_LEASE_S, &upnp);
+    if (!upnp.router) {
+        ip = local.ip;
+        why = "NO UPNP: THE CODE WORKS ON THE LAN";
+    } else if (upnp.public_ip == 0 || private_ip(upnp.public_ip)) {
+        ip = local.ip;
+        why = "ROUTER HAS NO PUBLIC IP: LAN ONLY";
+    } else {
+        ip = upnp.public_ip;
+        why = upnp.opened ? "GIVE THE CODE TO THE OTHER PLAYER" : "UPNP REFUSED: FORWARD UDP 51000";
     }
     ps_mutex_lock(&lock);
-    if (state == PS3_NET_SEARCH) {
-        server = addr;
-        have_server = have;
-        nonce = (u32) ps3_sys_timebase() * 2654435761u ^ (u32) (ps3_sys_timebase() >> 32);
-        search_ms = now_ms();
-        last_search_ms = 0;
-        match_no = 0;
-        set_status(name[0] == '\0' ? "NO MATCHMAKER SET: LAN ONLY"
-                   : have           ? "SEARCHING"
-                                    : "MATCHMAKER NOT FOUND: LAN ONLY");
-        OSReport("netplay: searching for code %.8s; matchmaker %s%s, build %08x\n", code,
-                 name[0] != '\0' ? name : "none", name[0] != '\0' && !have ? " (does not resolve)" : "", build);
+    if (hosting) {
+        snprintf(code, sizeof(code), "%08X", ip);
+        set_state(PS3_NET_HOST);
+        set_status(why);
+        OSReport("netplay: hosting, code %s; UPnP: router %d, port opened %d, public address %08x; LAN %08x, "
+                 "build %08x\n",
+                 code, upnp.router, upnp.opened, upnp.public_ip, local.ip, build);
     }
     ps_mutex_unlock(&lock);
 }
@@ -554,13 +482,12 @@ static void net_main(void* arg)
 {
     static u8 buf[1500];
     Ps3NetAddr from;
-    bool search;
-    int n;
+    int n, req;
 
     if (!ps3_link_open(NET_PORT)) {
         OSReport("netplay: cannot open UDP port %u\n", NET_PORT);
         ps_mutex_lock(&lock);
-        running = false;
+        running = hosting = false;
         unpair("NETWORK ERROR");
         ps_mutex_unlock(&lock);
         return;
@@ -568,11 +495,17 @@ static void net_main(void* arg)
     build = code_hash();
     for (;;) {
         ps_mutex_lock(&lock);
-        search = search_request;
-        search_request = false;
+        req = request;
+        request = REQ_NONE;
+        if (req == REQ_JOIN) {
+            OSReport("netplay: joining code %s, build %08x\n", code, build);
+            connect_ms = now_ms();
+        }
         ps_mutex_unlock(&lock);
-        if (search) {
-            begin_search();
+        if (req == REQ_HOST) {
+            begin_host();
+        } else if (req == REQ_CLOSE) {
+            ps3_upnp_close(NET_PORT);
         }
         n = ps3_link_recv(&from, buf, sizeof(buf), 10000);
         ps_mutex_lock(&lock);
@@ -584,21 +517,50 @@ static void net_main(void* arg)
     }
 }
 
-// The menu calls it from the pad alarm: the thread does the work.
-void ps3_net_search(const char digits[8])
+// The menu's calls come from the pad alarm: the thread does the work.
+static void ask(int req)
 {
-    ps_mutex_lock(&lock);
     if (state == PS3_NET_PAIRED || state == PS3_NET_CONNECT) {
         send_simple(PK_BYE);
     }
-    memcpy(code, digits, 8);
-    search_request = true;
-    set_state(PS3_NET_SEARCH);
-    set_status("STARTING");
+    request = req;
+    match_no = 0;
+    nonce = (u32) ps3_sys_timebase() * 2654435761u ^ (u32) (ps3_sys_timebase() >> 32);
     if (!running) {
         running = true;
         ps_thread_start(net_main, NULL, "netplay");
     }
+}
+
+void ps3_net_host(void)
+{
+    ps_mutex_lock(&lock);
+    ask(REQ_HOST);
+    hosting = true;
+    code[0] = '\0';
+    set_state(PS3_NET_HOST);
+    set_status("OPENING THE PORT ON THE ROUTER");
+    ps_mutex_unlock(&lock);
+}
+
+void ps3_net_join(const char digits[8])
+{
+    char hex[9];
+
+    memcpy(hex, digits, 8);
+    hex[8] = '\0';
+    ps_mutex_lock(&lock);
+    ask(REQ_JOIN);
+    hosting = false;
+    memcpy(code, hex, sizeof(code));
+    target = (u32) strtoul(hex, NULL, 16);
+    role = 2;
+    session = nonce;
+    heard = acked = false;
+    last_hello_ms = 0;
+    connect_ms = now_ms();
+    set_state(PS3_NET_CONNECT);
+    set_status("JOINING");
     ps_mutex_unlock(&lock);
 }
 
@@ -608,7 +570,10 @@ void ps3_net_cancel(void)
     if (state == PS3_NET_PAIRED || state == PS3_NET_CONNECT) {
         send_simple(PK_BYE);
     }
-    search_request = false;
+    if (hosting) {
+        request = REQ_CLOSE;
+    }
+    hosting = false;
     unpair("");
     ps_mutex_unlock(&lock);
 }
@@ -618,6 +583,11 @@ int ps3_net_state(int* player, const char** why)
     *player = role;
     *why = status;
     return state;
+}
+
+const char* ps3_net_code(void)
+{
+    return code;
 }
 
 unsigned ps3_net_serial(void)
@@ -651,26 +621,42 @@ static bool is_acked(void)
     return setup_acked;
 }
 
+static bool is_ready(void)
+{
+    return ready_got;
+}
+
 static bool is_setup(void)
 {
     return setup_got;
 }
 
-// The rules up to their callbacks; the callbacks only compare, as both consoles run the same EBOOT.
+// The rules up to their callbacks, then the callbacks: the same EBOOT has them at the same addresses.
 #define RULES_DATA offsetof(StartMeleeRules, on_unpause_override)
 #define RULES_FUNCS 7
 #define PLAYERS_DATA (sizeof(PlayerInitData) * GM_MAX_PLAYERS)
 #define SETUP_SIZE (HEAD + 16 + RULES_DATA + RULES_FUNCS * 8 + PLAYERS_DATA)
 
-static void rules_funcs(const StartMeleeRules* r, u64 out[RULES_FUNCS])
+static void get_funcs(const StartMeleeRules* r, u64 f[RULES_FUNCS])
 {
-    out[0] = (u64) (uintptr_t) r->on_unpause_override;
-    out[1] = (u64) (uintptr_t) r->on_pause_override;
-    out[2] = (u64) (uintptr_t) r->check_for_pauser_override;
-    out[3] = (u64) (uintptr_t) r->on_match_start;
-    out[4] = (u64) (uintptr_t) r->on_frame_start;
-    out[5] = (u64) (uintptr_t) r->on_frame_end;
-    out[6] = (u64) (uintptr_t) r->on_match_end;
+    f[0] = (u64) (uintptr_t) r->on_unpause_override;
+    f[1] = (u64) (uintptr_t) r->on_pause_override;
+    f[2] = (u64) (uintptr_t) r->check_for_pauser_override;
+    f[3] = (u64) (uintptr_t) r->on_match_start;
+    f[4] = (u64) (uintptr_t) r->on_frame_start;
+    f[5] = (u64) (uintptr_t) r->on_frame_end;
+    f[6] = (u64) (uintptr_t) r->on_match_end;
+}
+
+static void set_funcs(StartMeleeRules* r, const u64 f[RULES_FUNCS])
+{
+    r->on_unpause_override = (void (*)(int)) (uintptr_t) f[0];
+    r->on_pause_override = (void (*)(int)) (uintptr_t) f[1];
+    r->check_for_pauser_override = (int (*)(void)) (uintptr_t) f[2];
+    r->on_match_start = (Event) (uintptr_t) f[3];
+    r->on_frame_start = (Event) (uintptr_t) f[4];
+    r->on_frame_end = (Event) (uintptr_t) f[5];
+    r->on_match_end = (void (*)(u8)) (uintptr_t) f[6];
 }
 
 static void reset_inputs(void)
@@ -705,16 +691,57 @@ static u8 local_opts(void)
     return (u8) (ps3_options.tap_jump[local_chan] | ps3_options.cstick_tilts[local_chan] << 1);
 }
 
-static bool handshake_p1(StartMeleeData* start)
+// The player's own fighter: the first human port of what their menus set.
+static PlayerInitData* own_fighter(StartMeleeData* start)
 {
-    u64 funcs[RULES_FUNCS];
-    u8* p = setup_pkt;
     int i;
 
+    for (i = 0; i < GM_MAX_PLAYERS; i++) {
+        if (start->players[i].slot_type == Gm_PKind_Human) {
+            return &start->players[i];
+        }
+    }
+    return &start->players[0];
+}
+
+// A 1v1: player 1's fighter in port 1, player 2's in port 2 with the same settings, nobody else.
+static void compose(StartMeleeData* start)
+{
+    PlayerInitData me = *own_fighter(start);
+    int i;
+
+    for (i = 2; i < GM_MAX_PLAYERS; i++) {
+        gm_SetupPlayerDefaults(&start->players[i]);
+    }
+    me.slot_type = Gm_PKind_Human;
+    // Each port reads its own pad, where the netplay puts that player's input.
+    me.slot = 0;
+    start->players[0] = me;
+    start->players[1] = me;
+    start->players[1].ckind = ready_ckind;
+    start->players[1].color = ready_color;
+    start->players[1].rumble_enabled = ready_rumble;
+    start->players[1].nametag = GM_NAMETAG_COUNT;
+    start->players[1].spawn_pos = -1;
+    start->players[1].team = me.team == 0 ? 1 : 0;
+}
+
+static bool handshake_p1(StartMeleeData* start)
+{
+    u8* p = setup_pkt;
+    u64 funcs[RULES_FUNCS];
+    int i;
+
+    OSReport("netplay: waiting for player 2's fighter\n");
+    if (!wait_for(is_ready, SETUP_WAIT_MS, true)) {
+        OSReport("netplay: player 2 did not start a VS match; this one is local\n");
+        set_status("PLAYER 2 DID NOT START: LOCAL MATCH");
+        return false;
+    }
+    ready_got = false;
+    compose(start);
     match_no++;
     seed = (u32) ps3_sys_timebase() ^ *HSD_RandSeedPtr;
-    start->players[0].slot_type = Gm_PKind_Human;
-    start->players[1].slot_type = Gm_PKind_Human;
     head(p, PK_SETUP);
     wr32(p + 8, session);
     wr32(p + 12, match_no);
@@ -722,86 +749,84 @@ static bool handshake_p1(StartMeleeData* start)
     p[20] = opts_local;
     p[21] = p[22] = p[23] = 0;
     memcpy(p + HEAD + 16, &start->rules, RULES_DATA);
-    rules_funcs(&start->rules, funcs);
+    get_funcs(&start->rules, funcs);
     for (i = 0; i < RULES_FUNCS; i++) {
         wr32(p + HEAD + 16 + RULES_DATA + i * 8, (u32) (funcs[i] >> 32));
         wr32(p + HEAD + 16 + RULES_DATA + i * 8 + 4, (u32) funcs[i]);
     }
     memcpy(p + HEAD + 16 + RULES_DATA + RULES_FUNCS * 8, start->players, PLAYERS_DATA);
     setup_len = SETUP_SIZE;
-    setup_acked = setup_refused = false;
+    setup_acked = false;
     setup_wanted = true;
     send_to(&peer, setup_pkt, setup_len);
-    OSReport("netplay: match %u set up (stage %d, fighters %d and %d), waiting for player 2\n", match_no,
-             start->rules.stkind, start->players[0].ckind, start->players[1].ckind);
+    OSReport("netplay: match %u set up (stage %d, fighters %d and %d)\n", match_no, start->rules.stkind,
+             start->players[0].ckind, start->players[1].ckind);
     if (!wait_for(is_acked, SETUP_WAIT_MS, true)) {
         setup_wanted = false;
-        OSReport("netplay: player 2 did not start a VS match; this one is local\n");
-        set_status("PLAYER 2 DID NOT START: LOCAL MATCH");
+        OSReport("netplay: player 2 did not answer the match; this one is local\n");
+        set_status("PLAYER 2 DID NOT ANSWER: LOCAL MATCH");
         return false;
     }
     setup_wanted = false;
-    if (setup_refused) {
-        OSReport("netplay: player 2 is in another VS mode; this match is local\n");
-        set_status("START THE SAME VS MODE");
-        return false;
-    }
     return true;
 }
 
+// Player 2 sends its own fighter, then takes player 1's whole match, its VS mode's callbacks too.
 static bool handshake_p2(StartMeleeData* start)
 {
+    const PlayerInitData* me = own_fighter(start);
     const u8* p = setup_pkt;
-    u64 ours[RULES_FUNCS];
-    bool same = true;
+    u64 funcs[RULES_FUNCS];
     int i;
 
+    head(ready_pkt, PK_READY);
+    wr32(ready_pkt + 8, session);
+    wr32(ready_pkt + 12, match_no + 1);
+    ready_pkt[16] = (u8) me->ckind;
+    ready_pkt[17] = me->color;
+    ready_pkt[18] = me->rumble_enabled;
+    ready_pkt[19] = opts_local;
     setup_got = false;
-    OSReport("netplay: waiting for player 1's match\n");
+    ready_wanted = true;
+    send_to(&peer, ready_pkt, sizeof(ready_pkt));
+    OSReport("netplay: fighter %d (colour %d) sent, waiting for player 1's match\n", me->ckind, me->color);
     if (!wait_for(is_setup, SETUP_WAIT_MS, true)) {
+        ready_wanted = false;
         OSReport("netplay: player 1 did not start a VS match; this one is local\n");
         set_status("PLAYER 1 DID NOT START: LOCAL MATCH");
         return false;
     }
-    setup_got = false;
+    ready_wanted = setup_got = false;
     if (setup_len < (int) SETUP_SIZE) {
         return false;
-    }
-    rules_funcs(&start->rules, ours);
-    for (i = 0; i < RULES_FUNCS; i++) {
-        u64 theirs = (u64) rd32(p + HEAD + 16 + RULES_DATA + i * 8) << 32 | rd32(p + HEAD + 16 + RULES_DATA + i * 8 + 4);
-
-        same &= theirs == ours[i];
     }
     match_no = rd32(p + 12);
     head(ack_pkt, PK_ACK);
     wr32(ack_pkt + 8, session);
     wr32(ack_pkt + 12, match_no);
-    ack_pkt[16] = opts_local;
-    ack_pkt[17] = same;
-    ack_len = HEAD + 10;
+    ack_len = HEAD + 8;
     send_to(&peer, ack_pkt, ack_len);
-    if (!same) {
-        OSReport("netplay: player 1 is in another VS mode; this match is local\n");
-        set_status("START THE SAME VS MODE");
-        return false;
-    }
     seed = rd32(p + 16);
     opts_remote = p[20];
     memcpy(&start->rules, p + HEAD + 16, RULES_DATA);
+    for (i = 0; i < RULES_FUNCS; i++) {
+        const u8* q = p + HEAD + 16 + RULES_DATA + i * 8;
+
+        funcs[i] = (u64) rd32(q) << 32 | rd32(q + 4);
+    }
+    set_funcs(&start->rules, funcs);
     memcpy(start->players, p + HEAD + 16 + RULES_DATA + RULES_FUNCS * 8, PLAYERS_DATA);
     OSReport("netplay: match %u from player 1 (stage %d, fighters %d and %d)\n", match_no, start->rules.stkind,
              start->players[0].ckind, start->players[1].ckind);
     return true;
 }
 
-bool ps3_net_handshake(StartMeleeData* start, bool* taken)
+bool ps3_net_handshake(StartMeleeData* start)
 {
     bool ok;
 
-    *taken = false;
     ps_mutex_lock(&lock);
-    if (state == PS3_NET_SEARCH || state == PS3_NET_CONNECT) {
+    if (state == PS3_NET_HOST || state == PS3_NET_CONNECT) {
         OSReport("netplay: a VS match starts while pairing; waiting up to %u s\n", PAIR_WAIT_MS / 1000);
         wait_for(is_paired, PAIR_WAIT_MS, false);
     }
@@ -816,7 +841,6 @@ bool ps3_net_handshake(StartMeleeData* start, bool* taken)
     if (ok) {
         reset_inputs();
         pending = true;
-        *taken = role == 2;
         set_status(role == 1 ? "NETPLAY MATCH: YOU ARE PORT 1" : "NETPLAY MATCH: YOU ARE PORT 2");
     }
     ps_mutex_unlock(&lock);
@@ -832,6 +856,7 @@ void ps3_net_match_begin(void)
         pending = false;
         armed = true;
         *HSD_RandSeedPtr = seed;
+        HSD_PadClearStatus();
         me = role - 1;
         other = 1 - me;
         // The options are per port: each player keeps their own on the port they play.
@@ -967,6 +992,19 @@ static void log_desync(const Check* remote, const Check* local)
     }
     OSReport("netplay: desync at frame %d: this console %08x, the other %08x\n", local->frame, local->hash,
              remote->hash);
+    if (st.desyncs == 1) {
+        s32 f;
+
+        // The inputs this console gave each port since the last check; the other console's log has its own.
+        for (f = local->frame - CHECK_EVERY + 1; f <= local->frame; f++) {
+            const NetIn* a = role == 1 ? &local_in[f % FRAMES] : &used_in[f % FRAMES];
+            const NetIn* b = role == 2 ? &local_in[f % FRAMES] : &used_in[f % FRAMES];
+
+            OSReport("netplay: frame %d inputs: port 1 %04x %d %d %d %d %u %u, port 2 %04x %d %d %d %d %u %u\n", f,
+                     a->button, a->sx, a->sy, a->cx, a->cy, a->l, a->r, b->button, b->sx, b->sy, b->cx, b->cy, b->l,
+                     b->r);
+        }
+    }
     if (v->frame != local->frame) {
         return;
     }
@@ -1194,9 +1232,14 @@ void ps3_net_frame_done(int frame, unsigned hash, const void* view, int size)
     ps_mutex_unlock(&lock);
 }
 
+bool ps3_net_playing(void)
+{
+    return armed || in_session;
+}
+
 int ps3_net_motor_channel(int chan)
 {
-    if (!in_session && !armed) {
+    if (!ps3_net_playing()) {
         return chan;
     }
     return chan == role - 1 ? local_chan : -1;

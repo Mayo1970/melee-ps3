@@ -9,7 +9,6 @@ typedef struct Ps3Options {
     bool tap_jump[4];     // per port: up on the control stick jumps
     bool cstick_tilts[4]; // per port: the C-stick gives tilts instead of smash attacks
     int netplay_delay;    // frames between a netplay input and its frame (0 to 7)
-    char netplay_server[64]; // the matchmaker, "host[:port]"; only in options.txt, else the build's (NET_SERVER)
 } Ps3Options;
 
 // They change only between matches, so both consoles of a netplay match can agree on them at its start.

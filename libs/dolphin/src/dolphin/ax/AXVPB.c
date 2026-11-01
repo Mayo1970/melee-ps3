@@ -452,6 +452,13 @@ void __AXServiceVPB(AXVPB* pvpb)
         *(dst) = *(src);
     }
 
+#ifdef TARGET_PS3
+    // Fast PS3 reads can put AXSetVoiceAddr and the single-address setters in one sync. The branch below then skips
+    // the full copy and the DSP keeps a stale loopFlag (streams stop at their first block end); the user copy has all.
+    if (sync & AX_SYNC_FLAG_COPYADDR) {
+        ppbDsp->addr = ppbUser->addr;
+    }
+#endif
     if (sync & (AX_SYNC_FLAG_COPYLOOP | AX_SYNC_FLAG_COPYLOOPADDR |
                 AX_SYNC_FLAG_COPYENDADDR | AX_SYNC_FLAG_COPYCURADDR))
     {

@@ -16,9 +16,12 @@ bool ps3_link_open(uint16_t port);
 bool ps3_link_send(const Ps3NetAddr* to, const void* buf, int len);
 // Waits up to about usec for a datagram: its length, or 0 when none came.
 int ps3_link_recv(Ps3NetAddr* from, void* buf, int cap, unsigned usec);
-// "a.b.c.d:port" or "name:port"; false when it does not resolve.
-bool ps3_link_resolve(const char* s, Ps3NetAddr* out);
-// This console's address on its own network, with the socket's port: the matchmaker sees only the router's.
+// This console's address on its own network, with the socket's port.
 bool ps3_link_local(Ps3NetAddr* out);
+// UPnP (upnp.c), from a socket of their own. A datagram to to, then the first answer and its sender (*from); a TCP
+// request to to, then all it answers until it closes. The answer's length, or -1 on an error or after ms.
+int ps3_link_udp_ask(const Ps3NetAddr* to, const void* req, int len, void* resp, int cap, unsigned ms,
+                     Ps3NetAddr* from);
+int ps3_link_tcp_ask(const Ps3NetAddr* to, const void* req, int len, void* resp, int cap, unsigned ms);
 
 #endif

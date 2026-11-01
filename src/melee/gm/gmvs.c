@@ -1594,6 +1594,10 @@ void fn_8016D8AC(int arg0, struct PlayerInitData* arg1)
         Player_SetPadPort(arg0, arg1->slot - 1);
     }
     if (arg1->slot_type == Gm_PKind_Human &&
+#ifdef TARGET_PS3
+        // Each console would read its own pads: a netplay match keeps the fighters both consoles agreed on.
+        !ps3_net_playing() &&
+#endif
         (HSD_PadCopyStatus[(u8) Player_GetPadPort(arg0)].button & HSD_PAD_A) &&
         (Player_GetPlayerCharacter(arg0) == CKind_Zelda ||
          Player_GetPlayerCharacter(arg0) == CKind_Seak))
