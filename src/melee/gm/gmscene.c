@@ -22,7 +22,10 @@
 #include <sysdolphin/baselib/perf.h>
 #include <sysdolphin/baselib/sobjlib.h>
 #ifdef TARGET_PS3
+#include <melee/ft/ftlib.h>
+#include <melee/if/ifmagnify.h>
 #include <ps3_intr.h>
+#include <ps3_rollback.h>
 #endif
 
 /* 479D30 */ static HSD_GObjLibInitDataType gobj_init_data;
@@ -271,6 +274,80 @@ static inline u64 maybe_gm_801A48A4(u8 i)
     }
 }
 
+#ifdef TARGET_PS3
+// The loop body below for one pad queue entry, so the rollback can run it again (ps3_rollback.h). True when the
+// scene ends.
+static bool gm_RunLogicFrame(void* arg)
+{
+    void (*on_frame)(void) = *(void (**)(void)) arg;
+    struct gm_80479D58_t* temp_r25 = &gm_80479D58;
+
+    HSD_PerfSetStartTime();
+    lb_800198E0();
+    if (DbLevel >= DbLKind_DebugRom) {
+        gm_801A4970(&temp_r25->unk_10.db_input);
+    }
+    if (gm_801A46B8(0) || !gm_GetDbPauseFlag(0)) {
+        temp_r25->unk_10.unk_38_0 = true;
+    } else {
+        temp_r25->unk_10.unk_38_0 = false;
+    }
+    if (gm_80479D58.unk_10.unk_38_0) {
+        lb_80019900();
+        if (lb_80019A30(0)) {
+            gm_EvaluateAllControllerInputs();
+        }
+        if (lb_80019A30(0) && on_frame != NULL) {
+            on_frame();
+        }
+    }
+    if (gm_80479D58.unk_10.x0 != gm_80479D58.unk_10.x1 ||
+        temp_r25->unk_10.x2 != temp_r25->unk_10.x3)
+    {
+        temp_r25->unk_10.unk_20 = maybe_gm_801A48A4(temp_r25->unk_10.x0);
+        temp_r25->unk_10.x1 = temp_r25->unk_10.x0;
+        temp_r25->unk_10.x3 = temp_r25->unk_10.x2;
+        temp_r25->unk_10.x2 = 0;
+    }
+    temp_r25->unk_10.unk_28 = temp_r25->unk_10.unk_20;
+    if (!lb_80019A30(0)) {
+        temp_r25->unk_10.unk_28 |= gm_803DA8C8[temp_r25->unk_10.unk_34];
+    }
+    if (!lb_80019A30(1)) {
+        temp_r25->unk_10.unk_28 |= ~gm_803DA8C8[temp_r25->unk_10.unk_34];
+    }
+    if (DbLevel >= DbLKind_DebugRom) {
+        db_CheckScreenshot();
+    }
+    // Game logic too: its frame timers are saved state and the sounds it starts take the RNG.
+    lbAudioAx_80027DF8();
+    if (temp_r25->unk_10.pre_gobj_proc != NULL) {
+        temp_r25->unk_10.pre_gobj_proc();
+    }
+    HSD_GObj_RunProcs();
+    // The render sets the off-screen state that the next frame's logic reads; a frame that runs again has no render
+    // before it, so in a rollback session the logic sets that state.
+    if (ps3_rb_session()) {
+        ftLib_UpdateScreenVisibilityAll();
+        ifMagnify_UpdateState();
+    }
+    if (temp_r25->unk_0 != -2) {
+        temp_r25->unk_0++;
+    }
+    if (gm_80479D58.unk_10.unk_38_0 && lb_80019A30(0)) {
+        if (temp_r25->unk_8 != -2) {
+            temp_r25->unk_8++;
+        }
+    }
+    HSD_PerfSetCPUTime();
+    if (DbLevel >= DbLKind_DebugRom) {
+        OSCheckActiveThreads();
+    }
+    gmMainLib_8046B0F0.xC = false;
+    return temp_r25->unk_C != 0;
+}
+#endif
+
 void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
 {
     int pad_queue_count;
@@ -317,6 +394,11 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
         }
 
         for (i = 0; i < pad_queue_count; i++) {
+#ifdef TARGET_PS3
+            if (ps3_rb_frame(gm_RunLogicFrame, &on_frame)) {
+                break;
+            }
+#else
             HSD_PerfSetStartTime();
             lb_800198E0();
             if (DbLevel >= DbLKind_DebugRom) {
@@ -378,6 +460,7 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
             if (temp_r25->unk_C != 0) {
                 break;
             }
+#endif
         }
         if (temp_r25->unk_C == 2) {
             break;
@@ -398,5 +481,8 @@ void gm_801A4D34(void (*on_frame)(void), UNUSED GameSceneInfo* info)
         HSD_PerfSetTotalTime();
         HSD_PerfInitStat();
     }
+#ifdef TARGET_PS3
+    ps3_rb_scene_end();
+#endif
     HSD_VIWaitXFBFlush();
 }

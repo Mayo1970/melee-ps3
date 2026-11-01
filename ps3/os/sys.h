@@ -21,6 +21,9 @@ unsigned ps3_sys_free_mb(void);
 // Runs the XMB callbacks. Returns true once the XMB has asked the game to quit.
 bool ps3_sys_poll(void);
 
+// True between the XMB's drawing begin and end events, as of the last poll.
+bool ps3_sys_overlay(void);
+
 // Ends the process and returns to the XMB.
 void ps3_sys_exit(void) __attribute__((noreturn));
 

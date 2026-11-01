@@ -131,6 +131,12 @@ bool ps3_sys_poll(void)
     return false;
 }
 
+// No XMB on the host.
+bool ps3_sys_overlay(void)
+{
+    return false;
+}
+
 // Exit status 0 only for the MELEE_HOST_SECONDS quit; a panic or a reset gives 1.
 void ps3_sys_exit(void)
 {

@@ -13,5 +13,9 @@ void* ps3_dat_realloc(void* ptr, size_t size);
 void ps3_dat_free(void* ptr);
 // The bytes allocated now and at most, for the logs.
 void ps3_dat_pool_usage(size_t* now, size_t* most);
+// The pool's memory, for the rollback's survey.
+void ps3_dat_pool_range(void** base, size_t* size);
+// While on, frees wait: a rollback may restore game state that still points at the block. Off frees them.
+void ps3_dat_pool_defer(bool on);
 
 #endif

@@ -11,6 +11,7 @@
 #include <sysdolphin/baselib/archive.h>
 
 #include <ps3_dat.h>
+#include <ps3_rollback.h>
 
 #include "../os/mem.h"
 #include "../os/prof.h"
@@ -275,7 +276,8 @@ static s32 motion(u8* src, u32 size, const char* name, FigaTree** tree, bool kee
             unlink_use(m);
             link_newest(m);
             ps3_prof.motion_hits++;
-        } else if (nbytes < CACHE_BYTES) {
+        } else if (nbytes < CACHE_BYTES || ps3_rb_session()) {
+            // In a rollback session an in-place parse would free natives that a restored state still uses.
             m = add(hash, src, size, name);
             ps3_prof.motion_misses += m != NULL;
         } else if (!full_logged) {

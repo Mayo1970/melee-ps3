@@ -6,6 +6,7 @@
 
 #include <dolphin/os.h>
 #include <dolphin/vi.h>
+#include <ps3_rollback.h>
 
 #include "../gx/backend.h"
 #include "../gx/gp.h"
@@ -62,6 +63,7 @@ static void retrace(void)
         gp_stop();
         ps3_sys_exit();
     }
+    gx_rsx_set_overlay(ps3_sys_overlay());
 }
 
 // The call trace build's main thread: its open calls (outermost first) and its last function entries.
@@ -291,6 +293,7 @@ static void heartbeat_main(void* arg)
         }
         log_audio(n);
         log_main(n);
+        ps3_rb_log(n);
         if (ps3_diag.main_calls != 0) {
             log_calltrace(n);
         }

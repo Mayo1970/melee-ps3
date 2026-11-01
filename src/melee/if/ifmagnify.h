@@ -20,6 +20,10 @@
 /* 2FC8E8 */ void ifMagnify_802FC8E8(void);
 /* 2FC940 */ void ifMagnify_802FC940(void);
 /* 2FC998 */ bool ifMagnify_802FC998(s32 ply_slot);
+#ifdef TARGET_PS3
+// The magnifier state that game logic reads (off-screen, edge), as its render callbacks would set it.
+void ifMagnify_UpdateState(void);
+#endif
 /* 4A1DE0 */ extern ifMagnify ifMagnify_804A1DE0;
 
 #endif

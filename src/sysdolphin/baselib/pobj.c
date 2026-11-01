@@ -1292,6 +1292,16 @@ static void PObjAmnesia(HSD_ClassInfo* info)
     HSD_PARENT_INFO(&hsdPObj)->amnesia(info);
 }
 
+#ifdef TARGET_PS3
+void HSD_PObjShapeBuffers(void* buf[2], u32 size[2])
+{
+    buf[0] = vertex_buffer;
+    size[0] = vertex_buffer_size * sizeof(f32[3]);
+    buf[1] = normal_buffer;
+    size[1] = normal_buffer_size * sizeof(f32[3]);
+}
+#endif
+
 static void PObjInfoInit(void)
 {
     hsdInitClassInfo(HSD_CLASS_INFO(&hsdPObj), HSD_CLASS_INFO(&hsdClass),

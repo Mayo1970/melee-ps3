@@ -11,6 +11,7 @@
 
 #include "../dat/pool.h"
 #include "../gx/gp.h"
+#include "heap.h"
 #include "intr.h"
 #include "mem.h"
 #include "ostime.h"
@@ -28,10 +29,17 @@ extern char _end[];
 unsigned char _stack_addr[8];
 unsigned char _stack_end[8];
 
+static u8* arena;
+
+void ps3_os_arena(u8** base, u32* size)
+{
+    *base = arena;
+    *size = ARENA_SIZE;
+}
+
 void OSInit(void)
 {
     static bool done;
-    u8* arena;
 
     if (done) {
         return;

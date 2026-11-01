@@ -159,4 +159,9 @@ void HSD_PObjRemoveAnimByFlags(HSD_PObj* pobj, u32 flags);
 
 void HSD_PObjDisp(HSD_PObj* pobj, Mtx vmtx, Mtx pmtx, u32 rendermode);
 
+#ifdef TARGET_PS3
+// The shape blend vertex and normal buffers, which the GP reads after the render; NULL until the first use.
+void HSD_PObjShapeBuffers(void* buf[2], u32 size[2]);
+#endif
+
 #endif

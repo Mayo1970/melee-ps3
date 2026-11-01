@@ -52,6 +52,10 @@
 /* 086A58 */ bool ftLib_GetScreenPos(HSD_GObj*, S32Vec2*);
 /* 086A8C */ bool ftLib_UpdateScreenVisibility(HSD_GObj*);
 /* 086B64 */ bool ftLib_IsOffscreen(HSD_GObj*);
+#ifdef TARGET_PS3
+// The off-screen state of each fighter, as the render would set it for the match camera.
+void ftLib_UpdateScreenVisibilityAll(void);
+#endif
 /* 086B74 */ CmSubject* ftLib_GetCameraSubject(HSD_GObj*);
 /* 086B80 */ float ftLib_80086B80(HSD_GObj*);
 /* 086B90 */ void ftLib_GetCameraSubjectBonePos(HSD_GObj*, Vec3* v);

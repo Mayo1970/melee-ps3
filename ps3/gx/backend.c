@@ -139,6 +139,10 @@ static VpEntry copy_vp;
 // The program starting at each slot. Programs are placed one after the other, so one never overlaps another.
 static VpEntry* vp_slots[DEV_VP_SLOTS];
 static u32 vp_slot_next;
+// The XMB overlay; the presents after it ends still reload the programs, as its last flips may come late.
+#define OVERLAY_TAIL 30
+static volatile bool overlay_on;
+static u32 overlay_presents;
 
 static VtxLayout layouts[LAYOUTS];
 static int nlayouts, layout_next;
@@ -429,6 +433,20 @@ static void use_vp(VpEntry* v)
     }
     dev_vertex_program((const u32(*)[4]) v->ucode, v->n, at, v->inputs, v->outputs, v->regs);
     stats.vp_loads++;
+}
+
+// No program stays loaded: each one goes up again at its next use.
+static void vp_forget(void)
+{
+    u32 i;
+
+    for (i = 0; i < DEV_VP_SLOTS; i++) {
+        if (vp_slots[i] != NULL) {
+            vp_slots[i]->slot = -1;
+            vp_slots[i] = NULL;
+        }
+    }
+    vp_slot_next = 0;
 }
 
 static void use_fp(const FpEntry* f)
@@ -3369,10 +3387,24 @@ void gx_rsx_present(u32 xfb)
             }
             vc_valid = false;
             memo.state_ok = false;
+            // The XMB draws at the flip with its own vertex program, over the loaded ones (the libgcm way loads
+            // the program at each set, so the system need not keep them); the constants go up again already.
+            if (overlay_on) {
+                overlay_presents = OVERLAY_TAIL;
+            }
+            if (overlay_presents != 0) {
+                overlay_presents--;
+                vp_forget();
+            }
             ps3_prof_lap(PROF_PRESENT, &t);
             return;
         }
     }
+}
+
+void gx_rsx_set_overlay(bool on)
+{
+    overlay_on = on;
 }
 
 void gx_rsx_get_stats(GxRsxStats* out)

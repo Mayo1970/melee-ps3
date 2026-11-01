@@ -199,6 +199,7 @@ SECTIONS
 
 	.data           : SUBALIGN(32)
 	{
+		INCLUDE rollback_data.ld
 		*(.data .data.* .gnu.linkonce.d.*)
 		KEEP (*(.gnu.linkonce.d.*personality*))
 		SORT(CONSTRUCTORS)
@@ -230,6 +231,7 @@ SECTIONS
 	.bss            : SUBALIGN(32)
 	{
 		*(.dynbss)
+		INCLUDE rollback_bss.ld
 		*(.bss .bss.* .gnu.linkonce.b.*)
 		*(COMMON)
 		/* Align here to ensure that the .bss section occupies space up to

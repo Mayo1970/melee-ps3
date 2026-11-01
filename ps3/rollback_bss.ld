@@ -1,0 +1,25 @@
+/* INCLUDEd in .bss (melee.ld, host.ld): as rollback_data.ld, [__rb_bss_start, __rb_bss_end). Also outside: the pad
+   queue and rumble lists the pad alarm fills (gmmain.c), and the AUX effects' work areas (lbaudio_ax.c). */
+*/game/src/sysdolphin/baselib/state.o(.bss .bss.*)
+*/game/src/sysdolphin/baselib/perf.o(.bss .bss.*)
+*/game/src/sysdolphin/baselib/tev.o(.bss.current_tev .bss.num_tex_gens .bss.prev_num_chans .bss.prev_mat_invalid)
+*/game/src/sysdolphin/baselib/tev.o(.bss.prev_amb_invalid)
+*/game/src/sysdolphin/baselib/pobj.o(.bss.prev_vtxdesclist_array .bss.prev_vtxdesc)
+*/game/src/melee/lb/lbaudio_ax.o(.bss.lbl_80433C64.* .bss.lbl_80441064.*)
+*/game/src/sysdolphin/baselib/synth.o(.bss .bss.*)
+*/game/src/sysdolphin/baselib/axdriver.o(.bss .bss.*)
+*/game/src/sysdolphin/baselib/video.o(.bss .bss.*)
+*/game/src/sysdolphin/baselib/devcom.o(.bss .bss.*)
+*/game/src/sysdolphin/baselib/rumble.o(.bss .bss.*)
+*/game/src/sysdolphin/baselib/card.o(.bss .bss.*)
+*/game/src/sysdolphin/baselib/debugconsole_main.o(.bss .bss.*)
+*/game/src/melee/lb/lbcardgame.o(.bss .bss.*)
+*/game/src/melee/lb/lbcardnew.o(.bss .bss.*)
+*/game/src/melee/lb/lbsnap.o(.bss .bss.*)
+*/game/src/melee/lb/lbmthp.o(.bss .bss.*)
+*/game/src/melee/lb/lbarq.o(.bss .bss.*)
+*/game/src/sysdolphin/baselib/controller.o(.bss.HSD_PadLibData)
+*/game/src/melee/gm/gmmain.o(.bss.gmMain_8046B108 .bss.gmMain_8046B1F8)
+__rb_bss_start = .;
+*/game/src/*(.bss .bss.*)
+__rb_bss_end = .;

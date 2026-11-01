@@ -5,6 +5,11 @@
 #include "rumble.h"
 #include <dolphin/os.h>
 #include <dolphin/pad.h>
+#ifdef TARGET_PS3
+#include <string.h>
+
+#include <ps3_rollback.h>
+#endif
 
 HSD_PadStatus default_status_data = { 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0,
                                       0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 1 };
@@ -343,6 +348,41 @@ static void HSD_PadCrossDir(HSD_PadStatus* mp)
     }
 }
 
+#ifdef TARGET_PS3
+static void HSD_PadApplyMaster(PADStatus* qread);
+
+// The queue's entry goes through the rollback, which keeps it for a re-run of the frame and gives it back then
+// (ps3_rollback.h); a re-run leaves the queue alone.
+void HSD_PadRenewMasterStatus(void)
+{
+    PadLibData* p = &HSD_PadLibData;
+    PADStatus stat[4];
+    bool have;
+    bool intr;
+
+    intr = OSDisableInterrupts();
+    have = !ps3_rb_rerun() && p->qcount != 0;
+    if (have) {
+        memcpy(stat, &p->queue->stat[p->qread * 4], sizeof(stat));
+        HSD_PadRawQueueShift(p->qnum, &p->qread);
+        p->qcount -= 1;
+    }
+    OSRestoreInterrupts(intr);
+    if (ps3_rb_pad(stat, have)) {
+        HSD_PadApplyMaster(stat);
+    }
+}
+
+static void HSD_PadApplyMaster(PADStatus* qread)
+{
+    int iVar1;
+    PadLibData* p = &HSD_PadLibData;
+    HSD_PadStatus* mp = &HSD_PadMasterStatus[0];
+    int i;
+
+    {
+        for (i = 0; i < 4; i++, mp += 1, qread += 1) {
+#else
 void HSD_PadRenewMasterStatus(void)
 {
     int iVar1;
@@ -362,6 +402,7 @@ void HSD_PadRenewMasterStatus(void)
         p->qcount -= 1;
 
         for (i = 0; i < 4; i++, mp += 1, qread += 1) {
+#endif
             mp->last_button = mp->button;
             mp->err = qread->err;
             if (mp->err == 0) {
@@ -416,7 +457,9 @@ void HSD_PadRenewMasterStatus(void)
             }
         }
     }
+#ifndef TARGET_PS3
     OSRestoreInterrupts(intr);
+#endif
 }
 
 static inline void HSD_PadCopyStatusFields(HSD_PadStatus* dst,

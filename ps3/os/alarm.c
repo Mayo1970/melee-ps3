@@ -4,6 +4,7 @@
 
 #include <dolphin/os.h>
 
+#include "alarm.h"
 #include "diag.h"
 #include "intr.h"
 #include "sync.h"
@@ -164,6 +165,17 @@ void OSSetPeriodicAlarm(OSAlarm* alarm, OSTime start, OSTime period, OSAlarmHand
     enqueue(alarm, fire, handler);
     ps_mutex_unlock(&lock);
     OSRestoreInterrupts(enabled);
+}
+
+void ps3_alarm_foreach(void (*fn)(OSAlarm* alarm, void* arg), void* arg)
+{
+    OSAlarm* alarm;
+
+    ps_mutex_lock(&lock);
+    for (alarm = head; alarm != NULL; alarm = alarm->next) {
+        fn(alarm, arg);
+    }
+    ps_mutex_unlock(&lock);
 }
 
 void OSCancelAlarm(OSAlarm* alarm)

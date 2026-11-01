@@ -29,6 +29,9 @@
 #include <sysdolphin/baselib/mobj.h>
 #include <sysdolphin/baselib/tobj.h>
 #include <sysdolphin/baselib/wobj.h>
+#ifdef TARGET_PS3
+#include <ps3_rollback.h>
+#endif
 
 static HSD_WObjDesc ifMagnify_803F97C0 = { NULL,
                                            { 0.0F, 0.0F, 300.0F },
@@ -208,7 +211,19 @@ void ifMagnify_802FB8C0(HSD_GObj* gobj, intptr_t code)
 
             HSD_JObjSetRotationZ(player->jobj, atan2f(dir.y, dir.x));
 
+#ifdef TARGET_PS3
+            // In a rollback session ifMagnify_UpdateState keeps the edge.
+            {
+                u8 edge = player->state.edge;
+
+                ifMagnify_802FB73C(player, &dir, &edge_pos);
+                if (ps3_rb_session()) {
+                    player->state.edge = edge;
+                }
+            }
+#else
             ifMagnify_802FB73C(player, &dir, &edge_pos);
+#endif
             translate.x = 0.09125f * edge_pos.x;
             translate.y = 0.1f * edge_pos.y;
             translate.z = 0.0f;
@@ -300,6 +315,12 @@ void ifMagnify_802FBBDC(HSD_GObj* gobj, intptr_t code)
 
     magnify = &ifMagnify_804A1DE0;
     for (i = 0; i < 6; i++) {
+#ifdef TARGET_PS3
+        // In a rollback session ifMagnify_UpdateState keeps the off-screen state.
+        if (ps3_rb_session()) {
+            break;
+        }
+#endif
         magnify->player[i].state.is_offscreen = 0;
     }
 
@@ -436,7 +457,13 @@ void ifMagnify_802FBBDC(HSD_GObj* gobj, intptr_t code)
             HSD_GObj_804D7814 = NULL;
             lb_800122C8(player->idesc, 0, 0, true);
             HSD_CObjEndCurrent();
+#ifdef TARGET_PS3
+            if (!ps3_rb_session()) {
+                player->state.is_offscreen = 1;
+            }
+#else
             player->state.is_offscreen = 1;
+#endif
         }
 
         HSD_CObjSetOrtho(cobj, top, bottom, left, right);
@@ -625,3 +652,37 @@ bool ifMagnify_802FC998(s32 ply_slot)
 {
     return ifMagnify_804A1DE0.player[ply_slot].state.is_offscreen;
 }
+
+#ifdef TARGET_PS3
+void ifMagnify_UpdateState(void)
+{
+    ifMagnify* magnify = &ifMagnify_804A1DE0;
+    bool hud = ifMagnify_IsHUDVisible();
+    int i;
+
+    // The arrow's edge, as ifMagnify_802FB8C0 finds it from the last off-screen state.
+    for (i = 0; i < 6; i++) {
+        ifMagnifyPlayer* player = &magnify->player[i];
+        HSD_GObj* fighter_gobj = Player_GetEntity(i);
+
+        if (hud && player->gobj != NULL && player->state.is_offscreen && fighter_gobj != NULL) {
+            S32Vec2 screen_pos;
+            Vec2 dir;
+            Vec2 edge_pos;
+
+            ftLib_GetScreenPos(fighter_gobj, &screen_pos);
+            dir.x = screen_pos.x - 320.0f;
+            dir.y = -((f32) screen_pos.y - 240.0f);
+            ifMagnify_802FB73C(player, &dir, &edge_pos);
+        }
+    }
+    // Then the off-screen state, as ifMagnify_802FBBDC sets it.
+    for (i = 0; i < 6; i++) {
+        ifMagnifyPlayer* player = &magnify->player[i];
+        HSD_GObj* fighter_gobj = Player_GetEntity(i);
+
+        player->state.is_offscreen = hud && !player->state.ignore_offscreen && fighter_gobj != NULL &&
+                                     ftLib_IsOffscreen(fighter_gobj) && ftLib_CanBeMagnified(fighter_gobj);
+    }
+}
+#endif

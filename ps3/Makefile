@@ -196,7 +196,7 @@ $(BUILD)/spu/vx_spu.elf: $(VX_SPU_SRCS) $(ROOT)/ps3/gx/vx_shared.h $(ROOT)/ps3/g
 
 # Melee as an EBOOT (ppu toolchain): the game, the SDK libraries the port builds, the port, the SPU program and
 # the native .dat readers over the schema from tools/datgen. Game and schema objects get -mminimal-toc.
-GAME_TITLE := Melee
+GAME_TITLE := Super Smash Bros: Melee
 GAME_DIR := $(BUILD)/game
 DOL := $(ROOT)/orig/GALE01/sys/main.dol
 DAT_SCHEMA := ps3/build/datgen/schema
@@ -207,7 +207,7 @@ GAME_SDK_SRCS := $(SDK_AUDIO_SRCS) $(SDK_GX_SRCS) libs/dolphin/src/dolphin/os/OS
 GAME_PORT_SRCS := $(addprefix ps3/,dvd/dvd.c os/intr.c os/globals.c os/os.c os/ostime.c os/heap.c \
                   os/alarm.c os/thread.c os/mem.c os/ppcarch.c audio/sdk_audio.c gx/fifo.c gx/gp.c sdk/mtx.c \
                   sdk/trig.c sdk/card.c sdk/stubs.c sdk/thp.c pad/pad.c vi/vi.c dat/pool.c dat/trace.c os/calltrace.c \
-                  os/mainprof.c) $(GX_RSX_SRCS) \
+                  os/mainprof.c net/rollback.c) $(GX_RSX_SRCS) \
                   $(EXTRA_SRCS)
 # The PSL1GHT side, which no SDK header meets.
 GAME_CELL_SRCS := $(addprefix ps3/,os/sync_cell.c os/sys_cell.c os/udplog_cell.c audio/audio_cell.c \
@@ -280,10 +280,20 @@ $(GAME_DIR)/include/sysdolphin/baselib/sislib_font.inc: $(DOL)
 	python3 tools/dol_inc.py $< 0x8040CD40 0x23E00 $@
 $(call GAME_OBJ,src/sysdolphin/baselib/hsd_3915.c src/sysdolphin/baselib/sislib_font.c): $(FONT_INCS)
 
+# The rollback's test mode in a console build, e.g. RB_FLAGS=-DPS3_RB_SYNC=2 (ps3/net/rollback.c); a change of
+# RB_FLAGS rebuilds that object only.
+RB_FLAGS ?=
+.PHONY: FORCE
+$(GAME_DIR)/rb_flags.txt: FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(RB_FLAGS)' | cmp -s - $@ || echo '$(RB_FLAGS)' > $@
+$(call GAME_OBJ,ps3/net/rollback.c): GAME_FLAGS := $(RB_FLAGS)
+$(call GAME_OBJ,ps3/net/rollback.c): $(GAME_DIR)/rb_flags.txt
+
 -include $(GAME_OBJS:.o=.d)
 
 game: $(GAME_DIR)/melee.pkg
-$(GAME_DIR)/melee.elf: $(GAME_OBJS) melee.ld
+$(GAME_DIR)/melee.elf: $(GAME_OBJS) melee.ld rollback_data.ld rollback_bss.ld
 	$(CC) $(ARCH) -T melee.ld $(GAME_WRAP) -Wl,--no-multi-toc -Wl,--gc-sections -Wl,-Map,$(GAME_DIR)/melee.map \
 	    $(EXTRA_LDFLAGS) $(GAME_OBJS) $(GAME_LIBS) -o $@
 	@echo "r2off stubs: $$($(PREFIX)nm $@ | grep -c r2off)"
@@ -305,14 +315,17 @@ $(GAME_DIR)/melee.pkg: $(GAME_DIR)/melee.elf
 # docker run -v <dir with games/Melee.iso>:/scratch ... qemu-ppc64 -R 0x100000000 build/linux/game/melee_host
 hostgame: $(GAME_DIR)/melee_host
 
-# The default script with SUBALIGN(32) on .rodata, .data and .bss, as melee.ld.
-$(GAME_DIR)/host.ld:
+# The default script with SUBALIGN(32) on .rodata, .data and .bss, and the rollback's ranges, as melee.ld.
+$(GAME_DIR)/host.ld: Makefile
 	@mkdir -p $(dir $@)
 	$(CC) -static -Wl,--verbose 2> /dev/null | sed -n '/^=====/,/^=====/p' | sed '1d;$$d' | \
-	    sed -E 's/^  (\.rodata|\.data|\.bss)( +):/  \1\2: SUBALIGN(32)/' > $@.tmp
-	@test "$$(grep -c 'SUBALIGN(32)' $@.tmp)" = 3 && mv $@.tmp $@
+	    sed -E 's/^  (\.rodata|\.data|\.bss)( +):/  \1\2: SUBALIGN(32)/' | \
+	    sed -E 's/^( *)(\*\(\.data \.data\.\* \.gnu\.linkonce\.d\.\*\))/\1INCLUDE rollback_data.ld\n\1\2/' | \
+	    sed -E 's/^( *)(\*\(\.bss \.bss\.\* \.gnu\.linkonce\.b\.\*\))/\1INCLUDE rollback_bss.ld\n\1\2/' > $@.tmp
+	@test "$$(grep -c 'SUBALIGN(32)' $@.tmp)" = 3 && test "$$(grep -c 'INCLUDE rollback_' $@.tmp)" = 2 && \
+	    mv $@.tmp $@
 
-$(GAME_DIR)/melee_host: $(GAME_OBJS) $(GAME_DIR)/host.ld
+$(GAME_DIR)/melee_host: $(GAME_OBJS) $(GAME_DIR)/host.ld rollback_data.ld rollback_bss.ld
 	$(CC) $(ARCH) -static -T $(GAME_DIR)/host.ld $(GAME_WRAP) $(HOST_WRAP) -Wl,--gc-sections \
 	    -Wl,-Map,$(GAME_DIR)/melee_host.map $(EXTRA_LDFLAGS) $(GAME_OBJS) -lpthread -lm -o $@
 	@$(PREFIX)readelf -lW $@ | grep LOAD

@@ -31,6 +31,9 @@
 #include <sysdolphin/baselib/gobj.h>
 #include <sysdolphin/baselib/random.h>
 #include <sysdolphin/baselib/rumble.h>
+#ifdef TARGET_PS3
+#include <ps3_rollback.h>
+#endif
 
 s32 ftLib_CountFighters(void)
 {
@@ -526,6 +529,55 @@ bool ftLib_GetScreenPos(HSD_GObj* gobj, S32Vec2* x)
     return false;
 }
 
+#ifdef TARGET_PS3
+// The off-screen state as ftLib_UpdateScreenVisibility sets it, when the match camera is current: whether the
+// fighter is drawn. write: also store it.
+static bool ftLib_ScreenVisibility(Fighter* fp, bool current, bool write)
+{
+    S32Vec2 pos = fp->x2188;
+    bool offscreen = false;
+    bool visible = true;
+
+    if (!fp->x2229_b3 && !fp->x2220_b7 && Camera_80030A50() != NULL && current) {
+        if (!Camera_80030CD8(fp->x890_cameraBox, &pos)) {
+            offscreen = true;
+            visible = Camera_80030CFC(fp->x890_cameraBox, 15);
+        }
+    }
+    if (write) {
+        fp->x221F_b0 = offscreen;
+        fp->x2188 = pos;
+    }
+    return visible;
+}
+
+// Game logic reads the off-screen state (the magnifier, off-screen damage), so in a rollback session the render
+// leaves it to ftLib_UpdateScreenVisibilityAll after each logic frame (ps3_rollback.h).
+bool ftLib_UpdateScreenVisibility(HSD_GObj* gobj)
+{
+    HSD_GObj* camera_gobj = Camera_80030A50();
+    bool current = camera_gobj != NULL && GET_COBJ(camera_gobj) == HSD_CObjGetCurrent();
+
+    return ftLib_ScreenVisibility(GET_FIGHTER(gobj), current, !ps3_rb_session());
+}
+
+void ftLib_UpdateScreenVisibilityAll(void)
+{
+    HSD_GObj* gobj = Camera_80030A50();
+
+    // The camera's render callback gives its CObj the logic's camera first (fn_800301D0).
+    if (gobj != NULL) {
+        Camera_8002A4AC(gobj);
+    }
+    for (gobj = HSD_GObjPLinkHead[HSD_GOBJ_PLINK_FIGHTER]; gobj != NULL; gobj = gobj->next) {
+        Fighter* fp = GET_FIGHTER(gobj);
+
+        if (!fp->is_sleeping) {
+            ftLib_ScreenVisibility(fp, true, true);
+        }
+    }
+}
+#else
 bool ftLib_UpdateScreenVisibility(HSD_GObj* gobj)
 {
     HSD_GObj* camera_gobj;
@@ -552,6 +604,7 @@ bool ftLib_UpdateScreenVisibility(HSD_GObj* gobj)
     fp->x221F_b0 = false;
     return true;
 }
+#endif
 
 bool ftLib_IsOffscreen(HSD_GObj* gobj)
 {

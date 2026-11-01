@@ -15,13 +15,18 @@
 SYS_PROCESS_PARAM(1100, 0x100000);
 
 static volatile bool quit;
+static volatile bool overlay;
 
 static void on_sysutil(u64 status, u64 param, void* user)
 {
     if (status == SYSUTIL_EXIT_GAME) {
         quit = true;
+    } else if (status == SYSUTIL_DRAW_BEGIN) {
+        overlay = true;
+    } else if (status == SYSUTIL_DRAW_END) {
+        overlay = false;
     }
-    // XMB opened (0x131) and closed (0x132), its drawing begins (0x121) and ends (0x122): the flicker comes with them.
+    // XMB opened (0x131) and closed (0x132), its drawing begins (0x121) and ends (0x122).
     ps3_log("sys: XMB event %#llx\n", (unsigned long long) status);
 }
 
@@ -78,6 +83,11 @@ bool ps3_sys_poll(void)
 {
     sysUtilCheckCallback();
     return quit;
+}
+
+bool ps3_sys_overlay(void)
+{
+    return overlay;
 }
 
 void ps3_sys_exit(void)

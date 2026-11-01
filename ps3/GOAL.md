@@ -636,7 +636,7 @@ UDP listener on that port.
 ## Next goal: 60 frames a second in matches
 
 Set by the user on 2026-10-28, to start after run 29. Done when a match runs at 60 presents a second on the
-console (the heartbeat's fourth line), with no stop.
+console (the heartbeat's fourth line), with no stop. Done: run 61 SUCCESS (2026-11-01), 4-player matches at 60.
 
 The budget: in run 28's Peach and DK match the GP thread took about 21 µs per GX draw (48,000 a second, 4,000 a
 frame, 12 presents). 60 presents need about 4 µs per draw at that count, 5 times less GP time. 83% of the draws
@@ -1123,6 +1123,17 @@ The user: "Let's do our best to get stable 60 FPS." Done when 4-player matches s
 - Melee run 61: the user reports SUCCESS (2026-11-01). The goal "60 frames a second in matches" is done with 4 players
   (5 fighters). The GC adapter was not used in this run.
 
+### XMB glitch (2026-11-01)
+
+- The user: opening the XMB with the PS button glitches the renderer. Cause (code review, not yet on the console):
+  the backend keeps vertex programs loaded in the RSX's transform program slots (`vp_slots`, 0 VP loads a second
+  in run 61's matches) and after a present only selects them again. libgcm loads the program at each set, so the
+  system need not keep the slots: while it draws the XMB at the flip (events 0x121 to 0x122), its own vertex program
+  can overwrite the loaded ones. The constants already go up again after each present.
+- Fix: `ps3_sys_overlay` (`sys_cell.c`, the drawing begin and end events) reaches the backend through the VI's
+  retrace (`gx_rsx_set_overlay`); while it is set, and for 30 presents after, each present forgets the loaded
+  programs (`vp_forget`), so they load again at their next use. The heartbeat's VP loads rise while the XMB is open.
+
 Other findings of 2026-10-29:
 - C stick: the right stick is the C stick (`pad.c`). Host check (`MELEE_HOST_PAD` now takes `CL CR CU CD`): C stick
   right in a VS match gives Mario's forward smash and back air. Not a fault: the user tried it in Training and
@@ -1178,6 +1189,15 @@ The user's list of what is left to address. Details of each are in the run entri
 4. **Smaller open items.** Fountain of Dreams runs at 49-52 presents a second (run 45; 42 before the cache took its
    star field list). The GP is the limit there, and the TEV setup its largest part (292 per mille): Part 2 step 3
    (TEV lookup) is in the run 56 package. Step 4 (SPUs) is not done. The title ID is still the placeholder `MELE00001`.
+5. **Next: what can still crash or hang the game.** The missing GX features and OS thread calls only degrade or
+   go unused; these can stop the game:
+   - LP64 faults left in the game code (issue 2): item finding 7, the `ft/` tether and chain views.
+   - MWCC and GCC differences (issue 3): MSL or runtime calls with other results than newlib's, float conversions
+     and DOL-offset reads in code not scanned yet.
+   - `mpLib_80056C54` reads `total_dist` unset on a first wall line; `hsd_3A76.c` SIS jump operands (opcodes 8/9)
+     read 8 bytes where the stream has 4.
+   - Host only: 13,14,5,12 on Castle panics "Not Found Item_Struct" (`item.c` 1997); 8,2/26 never starts
+     (`ground.c` 2310, stage param of stkind 26 not found).
 
 ## Not done for the game
 
@@ -1286,4 +1306,3 @@ The user's list of what is left to address. Details of each are in the run entri
 - Host profiling: `ppc64-qemu-plugins:1` has qemu 8.2.2 built with plugins (`/opt/qemu-8.2.2/build/qemu-ppc64`).
   A plugin that counts instructions per translation block and thread, with the `.text.<name>` sections of
   `melee_host.map` for the names, splits a run by function and thread.
-                                                                                                                                                                                                                                                                           

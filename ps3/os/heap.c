@@ -96,6 +96,7 @@ void ps_heap_init(PsHeap* heap, void* start, void* end)
 
     heap->free = NULL;
     heap->allocated = NULL;
+    heap->start = heap->top = s;
     if (e < s + MIN_CELL) {
         heap->size = 0;
         return;
@@ -105,12 +106,14 @@ void ps_heap_init(PsHeap* heap, void* start, void* end)
     cell->size = (long) (e - s);
     heap->size = cell->size;
     heap->free = cell;
+    heap->top = s + HEADER;
 }
 
 void* ps_heap_alloc(PsHeap* heap, size_t size)
 {
     long need = (long) round_up(size + HEADER);
     PsHeapCell* cell;
+    uintptr_t wrote;
 
     for (cell = heap->free; cell != NULL; cell = cell->next) {
         if (cell->size >= need) {
@@ -122,6 +125,7 @@ void* ps_heap_alloc(PsHeap* heap, size_t size)
     }
     if (cell->size - need < MIN_CELL) {
         heap->free = extract(heap->free, cell);
+        wrote = (uintptr_t) cell + (uintptr_t) cell->size;
     } else {
         PsHeapCell* rest = (PsHeapCell*) ((char*) cell + need);
 
@@ -137,6 +141,10 @@ void* ps_heap_alloc(PsHeap* heap, size_t size)
             heap->free = rest;
         }
         cell->size = need;
+        wrote = (uintptr_t) rest + HEADER;
+    }
+    if (wrote > heap->top) {
+        heap->top = wrote;
     }
     heap->allocated = add_front(heap->allocated, cell);
     return (char*) cell + HEADER;
@@ -187,6 +195,12 @@ volatile OSHeapHandle __OSCurrHeap = -1;
 static PsHeap* heaps;
 static int heap_count;
 
+PsHeap* ps3_heap_table(int* count)
+{
+    *count = heap_count;
+    return heaps;
+}
+
 static PsHeap* get(int heap)
 {
     return heap >= 0 && heap < heap_count && heaps[heap].size >= 0 ? &heaps[heap] : NULL;
@@ -202,6 +216,7 @@ void* OSInitAlloc(void* arenaStart, void* arenaEnd, int maxHeaps)
         heaps[i].size = -1;
         heaps[i].free = NULL;
         heaps[i].allocated = NULL;
+        heaps[i].start = heaps[i].top = 0;
     }
     __OSCurrHeap = -1;
     return (void*) round_up((uintptr_t) (heaps + maxHeaps));

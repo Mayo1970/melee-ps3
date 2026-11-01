@@ -15,6 +15,8 @@ bool gx_rsx_init(void);
 // Shows the display copy made to GameCube physical address xfb. The RSX belongs to the GP thread: call it only
 // while that thread is idle (after gp_fifo_sync).
 void gx_rsx_present(u32 xfb);
+// Whether the system draws over the game (the XMB). Any thread; the presents read it.
+void gx_rsx_set_overlay(bool on);
 
 typedef struct GxRsxStats {
     u32 draws, vertices, dropped_draws, rsx_draws;

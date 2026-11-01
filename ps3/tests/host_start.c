@@ -10,6 +10,7 @@
 #include <melee/gm/gmvsmelee.h>
 #include <melee/mn/types.h>
 #include <melee/pl/forward.h>
+#include <sysdolphin/baselib/random.h>
 
 void __real_gm_ChangeGameModeAfterCurrentScene(int pending_mode);
 void __real_gm_LoadAnnouncer(void);
@@ -49,6 +50,11 @@ void __wrap_gm_LoadAnnouncer(void)
     if (match() == NULL || gm_GetCurrentGameMode() != GM_DEBUG_VS) {
         return;
     }
+    // The boot seeds the RNG from the clock; MELEE_HOST_SEED repeats a match.
+    if (getenv("MELEE_HOST_SEED") != NULL) {
+        *HSD_RandSeedPtr = (u32) strtoul(getenv("MELEE_HOST_SEED"), NULL, 0);
+    }
+    OSReport("host_start: RNG seed %#x\n", *HSD_RandSeedPtr);
     snprintf(buf, sizeof(buf), "%s", match());
     fighters = strtok_r(buf, "/", &save);
     stage = strtok_r(NULL, "/", &save);

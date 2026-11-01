@@ -46,6 +46,9 @@
 #include <melee/sfx/crowdsfx.h>
 #include <sysdolphin/baselib/controller.h>
 #include <sysdolphin/baselib/gobjproc.h>
+#ifdef TARGET_PS3
+#include <ps3_rollback.h>
+#endif
 
 static u32 lbl_803D5620[] = {
     0x7C859,
@@ -2048,6 +2051,9 @@ void fn_8016E730(StartMeleeData* arg0)
     if (!arg0->rules.x1_4) {
         Stage_80225074(fn_8016E5C0(arg0));
     }
+#ifdef TARGET_PS3
+    ps3_rb_match_start();
+#endif
 }
 
 void gm_Scene_Vs_OnEnter(void* arg0)
