@@ -1,5 +1,5 @@
 // Log lines by UDP to the PC (PS3_LOG_IP, port 18194), one datagram each, after DolphinPS3's ps3/log.cpp.
-// Standard C types only, so SDK sources can include it next to their own headers.
+// Debug builds only (DEBUG=1). Standard C types only, so SDK sources can include it next to their own headers.
 #ifndef PS3_OS_UDPLOG_H
 #define PS3_OS_UDPLOG_H
 

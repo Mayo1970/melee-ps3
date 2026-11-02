@@ -21,6 +21,7 @@ enum {
     T_TC,   // texgen result
     T_COL0,
     T_COL1,
+    T_TCS,  // T_TCS + n: texcoord n, kept for an emboss texgen that reads it
 };
 
 enum { ATTN_NONE, ATTN_SPEC, ATTN_SPOT };
@@ -230,7 +231,41 @@ static int texmtx_addr(VpProg* p, const XfKey* key, int i)
     return i - 3;
 }
 
-static void gen_texgen(VpProg* p, const XfKey* key, int i)
+// GX emboss, as Dolphin's TransformUnit: the source texcoord moved by the direction to the light along the binormal
+// (s) and tangent (t), both through the normal matrix. Without them the source stays as it is.
+static void gen_emboss(VpProg* p, const XfKey* key, int i, u32 info)
+{
+    VpSrc z = vp_t(0, NULL);
+    int src = (info >> 12) & 7, l = C_LIGHT + LIGHT_STRIDE * ((info >> 15) & 7), k, r;
+
+    if (src < i) {
+        vp_op(p, VOP_MOV, T_TC, 7, false, vp_t(T_TCS + src, NULL), z, z);
+    } else {
+        // A texcoord not generated yet reads (0, 0, 1), as in xf_ref.
+        vp_op(p, VOP_MOV, T_TC, 3, false, zero(), z, z);
+        vp_op(p, VOP_MOV, T_TC, 4, false, one(), z, z);
+    }
+    if (!has(key, VA_BINRM) || !has(key, VA_TANGENT)) {
+        return;
+    }
+    // Texcoords 3 and 7 put their own matrix index in A0.x; the normal matrix's comes back.
+    if (i >= 3) {
+        vp_op(p, VOP_ARL, VP_A0, 1, false, has(key, VA_MIDX_A) ? vp_in(VA_MIDX_A, NULL) : vp_c(C_MIDX, NULL), z, z);
+    }
+    vp_op(p, VOP_ADD, T_LDIR, 7, false, vp_c(l + 3, NULL), vp_neg(vp_t(T_EYE, NULL)), z);
+    normalize(p, T_LDIR);
+    for (k = 0; k < 2; k++) {
+        vp_op(p, VOP_MUL, T_V, 7, false, vp_in(k == 0 ? VA_BINRM : VA_TANGENT, NULL), dq(1), z);
+        for (r = 0; r < 3; r++) {
+            vp_op(p, VOP_DP3, T_SRC, 1 << r, false, vp_ca(0, C_NRM + r, NULL), vp_t(T_V, NULL), z);
+        }
+        vp_op(p, VOP_DP3, T_S, 1, false, vp_t(T_LDIR, NULL), vp_t(T_SRC, NULL), z);
+        vp_op(p, VOP_ADD, T_TC, 1 << k, false, vp_t(T_TC, NULL), vp_t(T_S, "xxxx"), z);
+    }
+}
+
+// keep: an emboss texgen reads this texcoord.
+static void gen_texgen(VpProg* p, const XfKey* key, int i, bool keep)
 {
     VpSrc z = vp_t(0, NULL);
     u32 info = key->texinfo[i];
@@ -282,10 +317,14 @@ static void gen_texgen(VpProg* p, const XfKey* key, int i)
     } else if (type == 2 || type == 3) {
         vp_op(p, VOP_MOV, T_TC, 3, false, vp_t(type == 2 ? T_COL0 : T_COL1, NULL), z, z);
         vp_op(p, VOP_MOV, T_TC, 4, false, one(), z, z);
+    } else if (type == 1) {
+        gen_emboss(p, key, i, info);
     } else {
-        // Emboss: not done.
         vp_op(p, VOP_MOV, T_TC, 3, false, zero(), z, z);
         vp_op(p, VOP_MOV, T_TC, 4, false, one(), z, z);
+    }
+    if (keep) {
+        vp_op(p, VOP_MOV, T_TCS + i, 7, false, vp_t(T_TC, NULL), z, z);
     }
     vp_op(p, VOP_MOV, out, 3, false, vp_t(T_TC, NULL), z, z);
     vp_op(p, VOP_MOV, out, 4, false, zero(), z, z);
@@ -296,11 +335,15 @@ int xf_gen(const XfKey* key, VpProg* p)
 {
     VpSrc z = vp_t(0, NULL);
     bool lights = uses_lights(key), need_nrm = lights;
+    u32 keep = 0;
     int i, j, slot;
 
     for (i = 0; i < key->numtexgens; i++) {
         if (((key->texinfo[i] >> 7) & 0x1F) == 1) {
             need_nrm = true;
+        }
+        if (((key->texinfo[i] >> 4) & 7) == 1) {
+            keep |= 1u << ((key->texinfo[i] >> 12) & 7);
         }
     }
     vp_init(p);
@@ -349,7 +392,7 @@ int xf_gen(const XfKey* key, VpProg* p)
     vp_op(p, VOP_MOV, VP_OUT(VO_COL0), 0xF, false, vp_t(T_COL0, NULL), z, z);
     vp_op(p, VOP_MOV, VP_OUT(VO_COL1), 0xF, false, vp_t(T_COL1, NULL), z, z);
     for (i = 0; i < key->numtexgens && i < 8; i++) {
-        gen_texgen(p, key, i);
+        gen_texgen(p, key, i, (keep >> i) & 1);
     }
     for (i = 0, slot = key->tev_first; i < XF_TEV_CONSTS; i++) {
         if ((key->tev_consts >> i) & 1) {
@@ -671,7 +714,7 @@ static float ref_light(const float c[C_COUNT][4], int i, const Chan* ch, const f
 
 void xf_ref(const XfKey* key, const float c[C_COUNT][4], const XfIn* in, XfOut* out)
 {
-    float pos[4], eye[4], clip[4], nrm[3] = { 0, 0, 0 }, rawn[3] = { 0, 0, 0 }, col[2][4], midx[9];
+    float pos[4], eye[4], clip[4], nrm[3] = { 0, 0, 0 }, rawn[3] = { 0, 0, 0 }, col[2][4], midx[9], kept[8][3];
     int i, j, k, slot;
 
     if (has(key, VA_MIDX_A)) {
@@ -805,10 +848,32 @@ void xf_ref(const XfKey* key, const float c[C_COUNT][4], const XfIn* in, XfOut* 
             tc[0] = col[type - 2][0];
             tc[1] = col[type - 2][1];
             tc[2] = 1.0f;
+        } else if (type == 1) {
+            int s = (info >> 12) & 7, a;
+            const float* l = c[C_LIGHT + LIGHT_STRIDE * ((info >> 15) & 7)];
+
+            if (s < i) {
+                memcpy(tc, kept[s], sizeof(kept[s]));
+            }
+            if (has(key, VA_BINRM) && has(key, VA_TANGENT)) {
+                float ld[3] = { l[12] - eye[0], l[13] - eye[1], l[14] - eye[2] }, raw[3], v[3];
+
+                norm3(ld);
+                for (a = 0; a < 2; a++) {
+                    for (k = 0; k < 3; k++) {
+                        raw[k] = in->a[a == 0 ? VA_BINRM : VA_TANGENT][k] * dqf(c, 1);
+                    }
+                    for (k = 0; k < 3; k++) {
+                        v[k] = dot3(c[C_NRM + (int) midx[0] + k], raw);
+                    }
+                    tc[a] += dot3(ld, v);
+                }
+            }
         } else {
             tc[0] = tc[1] = 0.0f;
             tc[2] = 1.0f;
         }
+        memcpy(kept[i], tc, sizeof(kept[i]));
         out->tc[i][0] = tc[0];
         out->tc[i][1] = tc[1];
         out->tc[i][2] = 0.0f;
@@ -833,6 +898,7 @@ void xf_check_cases(VpProg* p, void (*add)(const char* name))
         u32 chan[4];
         u32 texinfo;
         u32 post;
+        u32 last; // the last texgen's texinfo, when not 0
     } k[] = {
         { "xf unlit colour", 1u << VA_POS | 1u << VA_COL0, 1, 1, 0, 0, 0, { 1, 0, 1, 0 }, 0, 0 },
         { "xf textured", 1u << VA_POS | 1u << VA_TEX0, 1, 0, 1, 0, 0x01, { 0 }, 5u << 7, 0 },
@@ -842,6 +908,8 @@ void xf_check_cases(VpProg* p, void (*add)(const char* name))
           { 0x3 | 0x4 | 2u << 7 | 1u << 10, 0x2 | 0x8 | 1u << 9, 0x2 | 0x4 | 1u << 9 | 1u << 10, 0x41 }, 0, 0 },
         { "xf texgen nrm dualtex", 1u << VA_POS | 1u << VA_NRM | 1u << VA_TEX0, 0, 1, 2, 1, 0x3F,
           { 0x1, 0, 0x1, 0 }, 1u << 7 | 1u << 2 | 1u << 1, 0x103 },
+        { "xf emboss", 1u << VA_POS | 1u << VA_BINRM | 1u << VA_TANGENT | 1u << VA_TEX0 | 1u << VA_MIDX_A, 1, 0,
+          4, 0, 0, { 0 }, 5u << 7, 0, 1u << 4 | 2u << 15 },
     };
     XfKey key;
     unsigned n, i;
@@ -860,6 +928,9 @@ void xf_check_cases(VpProg* p, void (*add)(const char* name))
         for (i = 0; i < key.numtexgens; i++) {
             key.texinfo[i] = k[n].texinfo + (i << 7);
             key.postinfo[i] = k[n].post;
+        }
+        if (k[n].last != 0) {
+            key.texinfo[key.numtexgens - 1] = k[n].last;
         }
         if (xf_gen(&key, p) < 0) {
             continue;

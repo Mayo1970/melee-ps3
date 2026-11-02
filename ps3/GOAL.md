@@ -631,7 +631,8 @@ Where the work stopped (2026-10-31), for the next session:
 - Melee run 55 (2026-10-31) SUCCESS: the user reports both fixed, the black flicker and the intro movie's tearing.
 
 The UDP log goes to `192.168.178.99`, port 18194 (`ps3/os/udplog_cell.c`). A listener: `nc -ul 18194`, or any
-UDP listener on that port.
+UDP listener on that port. Since 2026-11-02 only debug builds send it (`./build.sh -j12 game DEBUG=1`, also for the
+call trace build); retail builds (no `DEBUG`) only start the net library for the netplay. The GX test EBOOT keeps it.
 
 ## Next goal: 60 frames a second in matches
 
@@ -1607,6 +1608,23 @@ fighter `u`, Ground `u`, the Pokemon fight's start), each finding checked again 
   candidate; maybe stale memory from earlier stages).
 - Run 70 packages: normal `.got` 0x5A58, call trace 0x6BB0, 0 `r2off` stubs each.
 
+## Koopa shell lights (2026-11-02)
+
+The user: the Green and Red Shell items have the wrong lights. Cause: their body has an HSD bump texture (`TEX_BUMP`,
+NBT vertices), which HSD draws with GX emboss (`setupTextureCoordGenBump`, `SetupEmbossBumpTev` in `tobj.c`): texcoord
+n + 1 is texcoord n moved toward the first diffuse light, and the TEV adds the bump at n and subtracts it at n + 1,
+times the lit colour. `xfgen.c` gave the emboss texcoord (0, 0), so the shells showed the bump pattern, not a
+relief that follows the light; the backend did not log it. The same models: Capsule, Crate, Barrel, Barrel Cannon,
+Ray Gun, Super Scope, Hammer, Giga Bowser (20 bump textures), Samus (2).
+- Fix: `xfgen.c` makes the emboss texcoord as Dolphin's `TransformUnit`: the source texcoord plus the dot products of
+  the normalized direction from the vertex to the light with the binormal (s) and tangent (t), both through the
+  normal matrix, not normalized. Texcoords an emboss reads stay in temps `T_TCS + n`. Same in `xf_ref`.
+- Host: `progtest` 4000 of 4000 (1000 new cases end in an emboss), `rsxcheck` 20 of 20 (new "xf emboss"),
+  `scenetest` PASS.
+- Hardware test of the release package below (2026-11-02): SUCCESS, the user reports the shells as expected.
+- Release package (2026-11-02, no `DEBUG`, so no UDP log): `./build.sh -j12 game` PASS, `.got` 0x5A30, 0 `r2off`
+  stubs, about 24.7 MB in loaded segments.
+
 ## Bugfixes to do (2026-11-01, from the cross-view audit)
 
 Each one checked with ppu-gcc `offsetof` asserts (`build/audit_cv/`); details in `build/brr/cv_audit.txt`. None of
@@ -1678,7 +1696,7 @@ The user's list of what is left to address. Details of each are in the run entri
 
 | Part | Size or note |
 |---|---|
-| GX on RSX | Not drawn yet: indirect textures, TEV compare stages, two-compare alpha tests, logic ops, z textures, depth copies, emboss texgen, constant destination alpha, line width, a texcoord 7 matrix index in the vertex (the backend logs each once). Speed: FIFO draws, and display lists the cache does not take, are de-indexed on the PPE at each draw; textures are hashed again only after a write to them |
+| GX on RSX | Not drawn yet: indirect textures, TEV compare stages, two-compare alpha tests, logic ops, z textures, depth copies, constant destination alpha, line width, a texcoord 7 matrix index in the vertex (the backend logs each once). Speed: FIFO draws, and display lists the cache does not take, are de-indexed on the PPE at each draw; textures are hashed again only after a write to them |
 | CARD | Saves on the HDD; the stubs report no card in either slot |
 | OS threads | `OSSuspendThread` only counts; thread queues (`OSSleepThread`) are the minimal ones in `ps3/os/intr.c` |
 

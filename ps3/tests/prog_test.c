@@ -10,6 +10,8 @@
 #include "rsx_interp.h"
 
 #define XF_CASES 3000
+// Then cases whose last texgen is an emboss of an earlier one.
+#define XF_EMBOSS_CASES 1000
 #define TEV_CASES 3000
 
 static u32 seed = 1;
@@ -57,7 +59,7 @@ static void xf_case(int n)
     // Every other case, outside rnd(): the random states stay those of the earlier runs.
     key.old_depth = (u8) (n & 1);
     key.numchans = rnd() % 3;
-    key.numtexgens = rnd() % 5;
+    key.numtexgens = n < XF_CASES ? rnd() % 5 : 2 + rnd() % 7;
     key.dualtex = rnd() & 1;
     for (i = 0; i < 4; i++) {
         key.chan[i] = rnd() & 0x7FFF;
@@ -68,6 +70,18 @@ static void xf_case(int n)
 
         key.texinfo[i] = (rnd() & 6) | (u32) types[rnd() % 5] << 4 | (u32) rows[rnd() % 6] << 7;
         key.postinfo[i] = key.dualtex ? (rnd() % 62) | (rnd() & 1) << 8 : 0;
+    }
+    if (n >= XF_CASES) {
+        // Within the RSX's 512 instructions: one channel, lights 0-3.
+        key.numchans &= 1;
+        for (i = 0; i < 4; i++) {
+            key.chan[i] &= ~(0xFu << 11);
+        }
+        i = key.numtexgens - 1;
+        key.texinfo[i] = (key.texinfo[i] & 6) | 1u << 4 | (rnd() % i) << 12 | (rnd() & 7) << 15;
+        if (rnd() & 3) {
+            key.attrs |= 1u << VA_BINRM | 1u << VA_TANGENT;
+        }
     }
     key.tev_first = key.numtexgens;
     for (i = 0; i < XF_TEV_CONSTS && key.tev_first + nconst < 8; i++) {
@@ -302,13 +316,13 @@ int main(void)
 
     vp_set_text(false);
     fp_set_text(false);
-    for (i = 0; i < XF_CASES; i++) {
+    for (i = 0; i < XF_CASES + XF_EMBOSS_CASES; i++) {
         xf_case(i);
     }
     for (i = 0; i < TEV_CASES; i++) {
         tev_case(i);
     }
-    printf("XF: %d of %d cases match; TEV: %d of %d cases match\n", XF_CASES - xf_fail, XF_CASES,
-           TEV_CASES - tev_fail, TEV_CASES);
+    printf("XF: %d of %d cases match; TEV: %d of %d cases match\n", XF_CASES + XF_EMBOSS_CASES - xf_fail,
+           XF_CASES + XF_EMBOSS_CASES, TEV_CASES - tev_fail, TEV_CASES);
     return xf_fail || tev_fail;
 }

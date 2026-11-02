@@ -155,6 +155,8 @@ GX_EBOOT_SRCS := ps3/gx_eboot.c ps3/tests/gx_scene_run.c ps3/tests/gx_scene.c ps
                  ps3/gx/rsxdev_cell.c ps3/os/udplog_cell.c ps3/os/intr.c ps3/os/sync_cell.c ps3/os/globals.c \
                  $(GX_PORT_SRCS) $(GX_RSX_SRCS) $(SDK_GX_SRCS)
 GX_EBOOT_OBJS := $(patsubst %.c,$(EBOOT_DIR)/obj/%.o,$(GX_EBOOT_SRCS))
+# The test reports through the UDP log, so it keeps it in any build.
+$(EBOOT_DIR)/obj/ps3/os/udplog_cell.o: CFLAGS += -DPS3_UDPLOG
 EBOOT_LIBS := -L$(PS3DEV)/ppu/lib -lrsx -lgcm_sys -lsysutil -lsysmodule -lnet -lpthread -llv2 -lrt -lm
 
 $(EBOOT_DIR)/obj/%.o: $(ROOT)/%.c $(wildcard $(ROOT)/ps3/gx/*.h $(ROOT)/ps3/os/*.h $(ROOT)/ps3/tests/*.h)
@@ -302,6 +304,17 @@ $(GAME_DIR)/rb_flags.txt: FORCE
 	@echo '$(RB_FLAGS)' | cmp -s - $@ || echo '$(RB_FLAGS)' > $@
 $(call GAME_OBJ,ps3/net/rollback.c): GAME_FLAGS := $(RB_FLAGS)
 $(call GAME_OBJ,ps3/net/rollback.c): $(GAME_DIR)/rb_flags.txt
+
+# DEBUG=1: a debug build, with the UDP log to the PC (ps3/os/udplog.h); retail builds leave it out. A change of
+# DEBUG rebuilds that object only.
+DEBUG ?= 0
+$(GAME_DIR)/debug_flags.txt: FORCE
+	@mkdir -p $(dir $@)
+	@echo '$(DEBUG)' | cmp -s - $@ || echo '$(DEBUG)' > $@
+ifeq ($(DEBUG),1)
+$(call GAME_OBJ,ps3/os/udplog_cell.c): GAME_FLAGS += -DPS3_UDPLOG
+endif
+$(call GAME_OBJ,ps3/os/udplog_cell.c): $(GAME_DIR)/debug_flags.txt
 
 -include $(GAME_OBJS:.o=.d)
 
