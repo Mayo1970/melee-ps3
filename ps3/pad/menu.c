@@ -37,11 +37,11 @@
 #define COLOR_DIM 0xFFA0A8B8u
 #define COLOR_CURSOR 0xFF3050A0u
 
-enum { ROW_WIDESCREEN, ROW_UNLOCK, ROW_TAP_JUMP, ROW_CSTICK, ROW_DPAD, ROW_DELAY, ROW_NETPLAY, ROWS };
+enum { ROW_WIDESCREEN, ROW_UNLOCK, ROW_TAP_JUMP, ROW_CSTICK, ROW_CSTICK_1P, ROW_DPAD, ROW_DELAY, ROW_NETPLAY, ROWS };
 enum { DIR_UP = 1, DIR_DOWN = 2, DIR_LEFT = 4, DIR_RIGHT = 8 };
 
 Ps3Options ps3_options = {
-    false, { true, true, true, true }, { false, false, false, false }, { false, false, false, false }, 2
+    false, { true, true, true, true }, { false, false, false, false }, false, { false, false, false, false }, 2
 };
 
 static volatile bool open, in_match;
@@ -84,6 +84,8 @@ static void load(void)
             load_flags(ps3_options.tap_jump, v);
         } else if (sscanf(line, "cstick_tilts=%4s", v) == 1) {
             load_flags(ps3_options.cstick_tilts, v);
+        } else if (sscanf(line, "cstick_1p=%1s", v) == 1) {
+            ps3_options.cstick_1p = v[0] == '1';
         } else if (sscanf(line, "dpad_swap=%4s", v) == 1) {
             load_flags(ps3_options.dpad_swap, v);
         } else if (sscanf(line, "netplay_delay=%1s", v) == 1 && v[0] >= '0' && v[0] <= '7') {
@@ -109,6 +111,7 @@ static void save(void)
     fprintf(f, "widescreen=%c\n", ps3_options.widescreen ? '1' : '0');
     save_flags(f, "tap_jump", ps3_options.tap_jump);
     save_flags(f, "cstick_tilts", ps3_options.cstick_tilts);
+    fprintf(f, "cstick_1p=%c\n", ps3_options.cstick_1p ? '1' : '0');
     save_flags(f, "dpad_swap", ps3_options.dpad_swap);
     fprintf(f, "netplay_delay=%d\n", ps3_options.netplay_delay);
     fclose(f);
@@ -233,9 +236,9 @@ static void unlock_all(void)
 
 static void draw(void)
 {
-    static const char* const labels[ROWS] = { "WIDESCREEN", "UNLOCK ALL", "TAP JUMP", "C-STICK", "D-PAD SWAP",
-                                              "INPUT DELAY", "NETPLAY" };
-    static const int lines[ROWS] = { 2, 3, 5, 6, 7, 9, 10 };
+    static const char* const labels[ROWS] = { "WIDESCREEN", "UNLOCK ALL", "TAP JUMP", "C-STICK", "C-STICK 1P",
+                                              "D-PAD SWAP", "INPUT DELAY", "NETPLAY" };
+    static const int lines[ROWS] = { 2, 3, 5, 6, 7, 8, 10, 11 };
     char port[3] = "P1", v[12];
     int r, c;
 
@@ -254,9 +257,11 @@ static void draw(void)
             draw_netplay(MARGIN + LABEL_W, y);
             continue;
         }
-        if (r == ROW_DELAY || r == ROW_UNLOCK) {
+        if (r == ROW_DELAY || r == ROW_UNLOCK || r == ROW_CSTICK_1P) {
             if (r == ROW_UNLOCK) {
                 snprintf(v, sizeof(v), unlock_pending ? "WAIT" : all_unlocked() ? "DONE" : "PRESS A");
+            } else if (r == ROW_CSTICK_1P) {
+                snprintf(v, sizeof(v), ps3_options.cstick_1p ? "ATTACK" : "CAMERA");
             } else {
                 snprintf(v, sizeof(v), ps3_options.netplay_delay == 1 ? "1 FRAME" : "%d FRAMES",
                          ps3_options.netplay_delay);
@@ -341,10 +346,11 @@ static void toggle(int step)
     if (row == ROW_DELAY) {
         ps3_options.netplay_delay = (ps3_options.netplay_delay + step + 8) % 8;
     } else {
-        bool* v = row == ROW_WIDESCREEN ? &ps3_options.widescreen
-                  : row == ROW_TAP_JUMP ? &ps3_options.tap_jump[col]
-                  : row == ROW_DPAD     ? &ps3_options.dpad_swap[col]
-                                        : &ps3_options.cstick_tilts[col];
+        bool* v = row == ROW_WIDESCREEN  ? &ps3_options.widescreen
+                  : row == ROW_CSTICK_1P ? &ps3_options.cstick_1p
+                  : row == ROW_TAP_JUMP  ? &ps3_options.tap_jump[col]
+                  : row == ROW_DPAD      ? &ps3_options.dpad_swap[col]
+                                         : &ps3_options.cstick_tilts[col];
 
         *v = !*v;
     }
@@ -395,7 +401,7 @@ static void navigate(u16 down, u8 dir)
     } else if (dir & DIR_DOWN) {
         row = (row + 1) % ROWS;
     } else if (dir & (DIR_LEFT | DIR_RIGHT)) {
-        if (row == ROW_WIDESCREEN || row == ROW_DELAY) {
+        if (row == ROW_WIDESCREEN || row == ROW_CSTICK_1P || row == ROW_DELAY) {
             toggle((dir & DIR_LEFT) ? -1 : 1);
         } else if (row == ROW_NETPLAY) {
             join_chosen = !join_chosen;

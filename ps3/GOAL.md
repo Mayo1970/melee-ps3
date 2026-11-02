@@ -1435,6 +1435,12 @@ Done; hardware test SUCCESS (2026-11-01, the user):
   cleared (`gmMainLib_8015CEB4`; event 51 also needs a fighter's 1P clear flag, not written), and gives each trophy of
   the region (`Toy_803124BC`, then `Toy_SetUnlockState` where `Toy_80304CC8`). Build `./build.sh -j8 game` PASS:
   `.got` 0x5A58, 0 `r2off` stubs. Hardware test pending.
+- C-STICK 1P (2026-11-02, the user; one value for all ports, `cstick_1p` in `options.txt`, default CAMERA): in the 1-P
+  modes (`gm_IsCurrently1PMode_inline`) the game gives the fighter no C-stick and zooms the camera with its Y
+  (`Camera_8002B0E0`, slot 0's pad). ATTACK keeps the human's C-stick in `Fighter_procInput` (C-STICK's SMASH/TILT and
+  C-stick aerials apply) and gives the zoom the C-stick at rest, so it stays at 1.0. CPUs unchanged. Below C-STICK; the
+  picture keeps 400x272. Retail build `./build.sh -j8 game DEBUG=0` PASS: `.got` 0x5A50, 0 `r2off` stubs. Hardware
+  test SUCCESS (2026-11-02, the user).
 
 ## Unlocks, challengers and saves: investigation (2026-11-01)
 

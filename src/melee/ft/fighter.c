@@ -92,6 +92,10 @@
 #include <sysdolphin/baselib/mtx.h>
 #include <sysdolphin/baselib/random.h>
 
+#ifdef TARGET_PS3
+#include <ps3_options.h>
+#endif
+
 extern MotionState* ftData_CharacterStateTables[Ft_Kind_Max];
 
 /// ==== fighter.c variables ====
@@ -1822,8 +1826,15 @@ void Fighter_procInput(Fighter_GObj* gobj)
                 SET_STICKS(fp->input.lstick[0].x, fp->input.lstick[0].y,
                            HSD_PadGameStatus[fp->pad_port].nml_stickX,
                            HSD_PadGameStatus[fp->pad_port].nml_stickY);
+#ifdef TARGET_PS3
+                // C-STICK 1P on ATTACK: the human's C-stick stays in 1-P modes.
+                if (DbLevel < DbLKind_DebugRom &&
+                    (gm_IsCurrently1PMode_inline() == 0 ||
+                     ps3_options.cstick_1p))
+#else
                 if (DbLevel < DbLKind_DebugRom &&
                     gm_IsCurrently1PMode_inline() == 0)
+#endif
                 {
                     SET_STICKS(fp->input.cstick[0].x, fp->input.cstick[0].y,
                                HSD_PadGameStatus[fp->pad_port].nml_subStickX,

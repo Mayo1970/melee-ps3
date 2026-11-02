@@ -45,6 +45,10 @@
 #include <sysdolphin/baselib/random.h>
 #include <sysdolphin/baselib/wobj.h>
 
+#ifdef TARGET_PS3
+#include <ps3_options.h>
+#endif
+
 /* 029AAC */ static void Camera_80029AAC(CameraBounds* bounds,
                                          CameraTransformState* transform,
                                          f32 speed);
@@ -1395,7 +1399,15 @@ void Camera_8002B0E0(void)
     f32 var_f2;
 
     if ((gm_IsCurrently1PMode_inline() != 0) && (game_camera.x2C0 > 0.0f)) {
+#ifdef TARGET_PS3
+        // C-STICK 1P on ATTACK: the zoom sees the C-stick at rest, so it
+        // stays at 1.0 (the game's zoom-out returns it there).
+        var_f1 = ps3_options.cstick_1p
+                     ? 0.0f
+                     : HSD_PadGetNmlSubStickY(Player_GetPadPort(0));
+#else
         var_f1 = HSD_PadGetNmlSubStickY(Player_GetPadPort(0));
+#endif
         var_f2 = var_f1;
         if (var_f2 < 0.0f) {
             var_f1 = -var_f1;
