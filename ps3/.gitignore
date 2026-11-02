@@ -1,2 +1,3 @@
 # The root .gitignore drops CMake's generated Makefiles; this one is ours.
 !Makefile
+/GOAL.md
