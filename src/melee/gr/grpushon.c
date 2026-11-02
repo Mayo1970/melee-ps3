@@ -264,7 +264,12 @@ void grPushOn_802187A8(Ground_GObj* gobj)
     Ground* gp = GET_GROUND(gobj);
     HSD_LObj* lobj;
 
+#ifdef TARGET_PS3
+    // The DOL reads +0x10 of the head array, so link 4 (the stage lights); next_gx is at +0x18 with LP64.
+    gp->u.pushon.gobj = HSD_GObjGXLinkHead[4];
+#else
     gp->u.pushon.gobj = ((HSD_GObj*) HSD_GObjGXLinkHead)->next_gx;
+#endif
     PAD_STACK(16);
     grPushOn_802190D0(gp->u.pushon.gobj);
     lobj = ((HSD_GObj*) gp->u.pushon.gobj)->hsd_obj;
