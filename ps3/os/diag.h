@@ -4,10 +4,14 @@
 
 #define PS3_CALLTRACE_DEPTH 64
 #define PS3_CALLTRACE_RECENT 8
+#define PS3_MAIN_WHERE 8
 
 typedef struct Ps3Diag {
     // OSDisableInterrupts calls made by the main thread.
     volatile unsigned main_disables;
+    // The return addresses up the main thread's stack at its last OSDisableInterrupts, innermost first: where a
+    // stop happened (vi.c logs them once the main thread stops).
+    void* volatile main_where[PS3_MAIN_WHERE];
     volatile unsigned alarms, pad_reads, retrace_waits, card_calls;
     volatile unsigned dvd_reads, dvd_callbacks, arq_posts, arq_callbacks;
     // The thread that holds the interrupt lock, by name; NULL when none does.

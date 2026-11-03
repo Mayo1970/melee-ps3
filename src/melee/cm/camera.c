@@ -2917,6 +2917,13 @@ bool Camera_8002E234(void)
         break;
     case 2:
         ret = true;
+#ifdef TARGET_PS3
+        // The DOL reads stack garbage for a part that is not animated (the boss intro sets no pitch); NaN here
+        // made the boss intro camera NaN. That part stays at its target.
+        sp10 = game_camera.x35C.orbit.pitch;
+        spC = game_camera.x35C.orbit.yaw;
+        sp8 = game_camera.x35C.orbit.distance;
+#endif
         if (game_camera.x35C.orbit.b1) {
             ret &= Camera_8002E158(&sp10, game_camera.x368.orbit.pitch,
                                    game_camera.x35C.orbit.pitch);

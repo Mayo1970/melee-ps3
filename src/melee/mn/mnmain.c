@@ -1018,8 +1018,14 @@ void mn_8022A440(HSD_GObj* gp, HSD_JObj* root, MainMenuSelection selection)
 /// @brief updates cursor animation
 void mn_8022A5D0(HSD_GObj* gp, MainMenuSelection selection)
 {
+#ifdef TARGET_PS3
+    // One slot per option (10 in Special Melee), as in the DOL's frame. With 7, slots 7-9 overlapped sp50 and sp5C,
+    // which lb_8000B1CC fills before options 8-10 read them as JObj pointers.
+    HSD_JObj* spA0[ARRAY_SIZE(mn_803EAE68)];
+#else
     u8 _[8];
     HSD_JObj* spA0[7];
+#endif
     HSD_JObj* sp84[7];
     HSD_JObj* sp80;
     Vec3 sp74;

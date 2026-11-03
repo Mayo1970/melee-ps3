@@ -6,9 +6,9 @@
 #include <math.h>
 #include <string.h>
 
-// RSX temps: R1 PREV, R2-R4 REG0-REG2, R5 the stage's texel, R6-R8 inputs a b c, R9 input d, R10-R11 fog.
-// R0 is the output.
-enum { RT_TEX = 5, RT_A = 6, RT_B = 7, RT_C = 8, RT_D = 9, RT_F = 10, RT_G = 11 };
+// RSX temps: R1 PREV, R2-R4 REG0-REG2, R5 the stage's texel, R6-R8 inputs a b c, R9 input d, R10-R11 fog,
+// R12 the z texture's depth, R13 an offset texcoord. R0 is the output.
+enum { RT_TEX = 5, RT_A = 6, RT_B = 7, RT_C = 8, RT_D = 9, RT_F = 10, RT_G = 11, RT_Z = 12, RT_TC = 13 };
 
 typedef struct Operand {
     bool is_const;
@@ -281,7 +281,8 @@ u32 tev_konst_read(const TevConfig* cfg)
 }
 
 // The fog factor into R10.x, then PREV.rgb toward the fog colour. As Dolphin's PixelShaderGen, in float.
-static void gen_fog(const TevConfig* cfg, FpProg* p)
+// depth: the window depth in 0..1.
+static void gen_fog(const TevConfig* cfg, FpProg* p, FpSrc depth)
 {
     FpSrc z = fp_t(0, NULL), f = fp_t(RT_F, "x"), prm, col;
     int k24 = fp_const(p, 16777216.0f, 0.0f, 0.0f, 0.0f);
@@ -297,7 +298,7 @@ static void gen_fog(const TevConfig* cfg, FpProg* p)
         col = fp_c(fp_const(p, cfg->fog_color[0], cfg->fog_color[1], cfg->fog_color[2], 0.0f), NULL);
     }
     // zs: the window depth as a 24-bit value.
-    fp_op(p, FOP_MUL, RT_F, 1, false, fp_in(FIN_WPOS, "z"), fp_c(k24, "x"), z);
+    fp_op(p, FOP_MUL, RT_F, 1, false, depth, fp_c(k24, "x"), z);
     if (cfg->fog_ortho) {
         fp_op(p, FOP_MAD, RT_F, 1, false, f, replicated(prm, 0), fp_neg(replicated(prm, 3)));
     } else {
@@ -328,10 +329,65 @@ static void gen_fog(const TevConfig* cfg, FpProg* p)
     fp_op(p, FOP_MAD, 1, 7, false, fp_t(RT_G, NULL), f, fp_t(1, NULL));
 }
 
+// The depth from the last texel sampled, unswapped, as Dolphin's PixelShaderGen: its bytes weighted by the type,
+// plus the bias (and the fragment's depth for ADD), into R12.x in 0..1. Fog then reads it.
+static void gen_ztex(const TevConfig* cfg, FpProg* p)
+{
+    static const float weights[3][4] = { { 0, 0, 0, 1 }, { 1, 0, 0, 256 }, { 65536, 256, 1, 0 } };
+    const float* w = weights[cfg->ztex_type > ZTT_U24 ? ZTT_U24 : cfg->ztex_type];
+    FpSrc z = fp_t(0, NULL), t = fp_t(RT_Z, NULL);
+    int kw = fp_const(p, w[0], w[1], w[2], w[3]);
+    int k = fp_const(p, 255.0f, 0.5f, 16777215.0f, 1.0f / 16777215.0f);
+    int kb = fp_const(p, cfg->ztex_bias / 16777215.0f, 0.0f, 0.0f, 0.0f);
+    bool sampled = false;
+    int i;
+
+    for (i = 0; i < cfg->nstages; i++) {
+        sampled |= cfg->st[i].tex >= 0;
+    }
+    if (sampled) {
+        fp_op(p, FOP_MUL, RT_Z, 0xF, false, fp_t(RT_TEX, NULL), fp_c(k, "x"), z);
+        // Whole bytes first: the weighted sum is then exact in float.
+        fp_op(p, FOP_ADD, RT_Z, 0xF, false, t, fp_c(k, "y"), z);
+        fp_op(p, FOP_FLR, RT_Z, 0xF, false, t, z, z);
+        fp_op(p, FOP_DP4, RT_Z, 1, false, t, fp_c(kw, NULL), z);
+    } else {
+        fp_op(p, FOP_MOV, RT_Z, 1, false, fp_c(kb, "y"), z, z);
+    }
+    if (cfg->ztex_op == ZT_ADD) {
+        fp_op(p, FOP_MAD, RT_Z, 1, false, fp_in(FIN_WPOS, "z"), fp_c(k, "z"), fp_t(RT_Z, "x"));
+    }
+    fp_op(p, FOP_MAD, RT_Z, 1, true, fp_t(RT_Z, "x"), fp_c(k, "w"), fp_c(kb, "x"));
+    p->depth = true;
+}
+
+// The texel at the texcoord plus the GX offset, as Dolphin's GeometryShaderGen: across a point, s and t from 0 at
+// the lower left to the offset at the upper right (the sprite's t runs down); across a line, s at the middle.
+static void tex_offset(const TevConfig* cfg, FpProg* p, const TevStage* st)
+{
+    FpSrc z = fp_t(0, NULL), r = fp_t(RT_TC, NULL);
+
+    // xyxy: only s and t are interpolated.
+    if (cfg->tco_kind == TCO_POINT) {
+        int k = fp_const(p, cfg->tco, -cfg->tco, 0.0f, cfg->tco);
+
+        fp_op(p, FOP_MOV, RT_TC, 3, false, fp_in(FIN_SPRITE, "xyxy"), z, z);
+        fp_op(p, FOP_MAD, RT_TC, 3, false, r, fp_c(k, "xyxy"), fp_c(k, "zwzw"));
+        fp_op(p, FOP_ADD, RT_TC, 3, false, r, fp_in(FIN_TC0 + st->texcoord, "xyxy"), z);
+    } else {
+        int k = fp_const(p, cfg->tco * 0.5f, 0.0f, 0.0f, 0.0f);
+
+        fp_op(p, FOP_MOV, RT_TC, 3, false, fp_in(FIN_TC0 + st->texcoord, "xyxy"), z, z);
+        fp_op(p, FOP_ADD, RT_TC, 1, false, r, fp_c(k, "x"), z);
+    }
+    fp_tex_t(p, RT_TEX, RT_TC, st->tex);
+}
+
 int tev_gen(const TevConfig* cfg, FpProg* p)
 {
     FpSrc z = fp_t(0, NULL);
     u32 read = tev_regs_read(cfg);
+    bool ztex = cfg->ztex_op == ZT_ADD || cfg->ztex_op == ZT_REPLACE;
     int r, i, slots;
 
     fp_init(p);
@@ -352,6 +408,8 @@ int tev_gen(const TevConfig* cfg, FpProg* p)
         if (st->tex >= 0) {
             if (st->proj) {
                 fp_txp(p, RT_TEX, st->texcoord, st->tex);
+            } else if (cfg->tco_kind != TCO_NONE && ((cfg->tco_mask >> st->texcoord) & 1)) {
+                tex_offset(cfg, p, st);
             } else {
                 fp_tex(p, RT_TEX, st->texcoord, st->tex);
             }
@@ -376,10 +434,17 @@ int tev_gen(const TevConfig* cfg, FpProg* p)
             fp_op(p, FOP_MOV, 1 + st->alp.dest, 0x8, false, fp_t(RT_B, NULL), z, z);
         }
     }
+    if (ztex) {
+        gen_ztex(cfg, p);
+    }
     if (cfg->fog != FOG_NONE) {
-        gen_fog(cfg, p);
+        gen_fog(cfg, p, ztex ? fp_t(RT_Z, "x") : fp_in(FIN_WPOS, "z"));
     }
     fp_op(p, FOP_MOV, FP_OUT, 0xF, false, fp_t(1, NULL), z, z);
+    // The depth export register.
+    if (ztex) {
+        fp_op(p, FOP_MOV, 1, 4, false, fp_t(RT_Z, "x"), z, z);
+    }
     slots = fp_end(p);
     return p->err ? -1 : slots;
 }
@@ -492,7 +557,7 @@ void tev_ref(const TevConfig* cfg, const float ras[2][4], const float tex[8][4],
     memcpy(out, R[0], sizeof(float) * 4);
 }
 
-int copy_gen(const float colmat[28], FpProg* p)
+int copy_gen(const float colmat[28], bool depth, FpProg* p)
 {
     FpSrc z = fp_t(0, NULL);
     int mask, half, inv, add, j, slots;
@@ -503,7 +568,11 @@ int copy_gen(const float colmat[28], FpProg* p)
     mask = fp_const(p, colmat[20], colmat[21], colmat[22], colmat[23]);
     half = fp_const(p, 0.5f, 0.5f, 0.5f, 0.5f);
     inv = fp_const(p, colmat[24], colmat[25], colmat[26], colmat[27]);
-    fp_op(p, FOP_MUL, 1, 0xF, false, fp_t(1, NULL), fp_c(mask, NULL), z);
+    // A Z24S8 word read as A8R8G8B8 is (Z mid, Z low, stencil, Z high); Dolphin's depth texel is (high, mid, low, 1).
+    fp_op(p, FOP_MUL, 1, 0xF, false, fp_t(1, depth ? "wxyz" : NULL), fp_c(mask, NULL), z);
+    if (depth) {
+        fp_op(p, FOP_MOV, 1, 8, false, fp_c(mask, "w"), z, z);
+    }
     fp_op(p, FOP_ADD, 1, 0xF, false, fp_t(1, NULL), fp_c(half, NULL), z);
     fp_op(p, FOP_FLR, 1, 0xF, false, fp_t(1, NULL), z, z);
     fp_op(p, FOP_MUL, 1, 0xF, false, fp_t(1, NULL), fp_c(inv, NULL), z);

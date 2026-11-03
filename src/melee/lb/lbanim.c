@@ -62,7 +62,14 @@ HSD_FObj* fn_8001E60C(FigaTrack* track, s8 frames)
             track++;
         }
     }
+#ifdef TARGET_PS3
+    // No FObj when every track is skipped; the DOL's write then went into the track (r3).
+    if (first != NULL) {
+        fobj->next = NULL;
+    }
+#else
     fobj->next = NULL;
+#endif
     return first;
 }
 

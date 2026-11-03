@@ -38,7 +38,6 @@ enum {
     U_ALPHA_TWO = 1 << 1,
     U_TEV_COMPARE = 1 << 2,
     U_INDIRECT = 1 << 3,
-    U_ZTEX = 1 << 4,
     U_DST_ALPHA = 1 << 5,
     U_DEPTH_COPY = 1 << 6,
     U_COPY_FORMAT = 1 << 7,
@@ -54,6 +53,7 @@ typedef struct FpEntry {
     void* mem;
     u32 offset;
     u16 regs, texcoords, texcoords4, words;
+    bool depth;
 } FpEntry;
 
 typedef struct VpEntry {
@@ -115,7 +115,7 @@ static const FpEntry* fp_current;
 
 // The fragment program of each TEV key (tev_key): the register words a TEV config is made from, less the values,
 // then the words of the values in the program's code, if any (tev_key_code).
-#define TEV_KEY_WORDS (50 + 21)
+#define TEV_KEY_WORDS (53 + 21)
 #define TEV_KEY_BITS 10
 #define TEV_KEYS (1 << TEV_KEY_BITS)
 
@@ -192,7 +192,7 @@ static struct {
     u32 layout_cp;
     int layout_vat;
     VtxLayout* layout;
-    u32 tev_gen;
+    u32 tev_gen, tev_tco;
     const FpEntry* f;
     float tev[XF_TEV_CONSTS][4];
     u16 tev_mask;
@@ -206,7 +206,7 @@ static struct {
     // The RSX raster state as apply_state left it, its result, and the register words it read (state_same).
     u32 state_bp, state_xf;
     bool state_pass, state_olddepth;
-    u32 state_src[18];
+    u32 state_src[17];
     // The textures as bind_textures left them: the units the program samples and their register words.
     u32 tex_bp, tex_stamp, tex_tluts, tex_ab, tex_used;
     u32 tex_regs[8][5];
@@ -297,6 +297,7 @@ static FpEntry* fp_build(FpEntry* e, int slots)
     e->words = (u16) words;
     e->texcoords = fp_scratch.texcoords;
     e->texcoords4 = fp_scratch.texcoords4;
+    e->depth = fp_scratch.depth;
     e->used = true;
     stats.fragment_programs++;
     return e;
@@ -457,7 +458,7 @@ static void use_fp(const FpEntry* f)
         if (ps3_diag.gx_ab & 16384) {
             dev_barrier();
         }
-        dev_fragment_program(f->offset, f->regs, f->texcoords, f->texcoords4);
+        dev_fragment_program(f->offset, f->regs, f->texcoords, f->texcoords4, f->depth);
         fp_current = f;
     }
 }
@@ -522,7 +523,8 @@ static void fog_values(const GpState* s, float param[4], float color[4], bool* o
 
 // The TEV config for the current BP registers, with the per-draw values on free texcoord interpolants. Returns the
 // value rows with no free interpolant, which went into the config (the rows of mask).
-static u16 build_tev(const GpState* s, int numtexgens, TevConfig* cfg, float vals[XF_TEV_CONSTS][4], u16* mask)
+static u16 build_tev(const GpState* s, int numtexgens, u32 tco, TevConfig* cfg, float vals[XF_TEV_CONSTS][4],
+                     u16* mask)
 {
     u8 tables[4][4];
     float kval[4][4], reg[4][4], fog_param[4], fog_color[4];
@@ -649,14 +651,25 @@ static u16 build_tev(const GpState* s, int numtexgens, TevConfig* cfg, float val
             code |= 1u << 9;
         }
     }
+    if (((s->bp[0xF5] >> 2) & 3) == ZT_ADD || ((s->bp[0xF5] >> 2) & 3) == ZT_REPLACE) {
+        cfg->ztex_op = (u8) ((s->bp[0xF5] >> 2) & 3);
+        cfg->ztex_type = (u8) (s->bp[0xF5] & 3);
+        cfg->ztex_bias = (float) (s->bp[0xF4] & 0xFFFFFF);
+    }
+    if (tco != 0) {
+        cfg->tco_kind = (u8) (tco >> 16);
+        cfg->tco_mask = (u8) tco;
+        cfg->tco = 1.0f / (float) ((tco >> 8) & 0xFF);
+    }
     return code;
 }
 
 // The words of the registers build_tev makes a config from, less the TEV values: n words into key, returned. Equal
 // keys give equal configs while the values are on interpolants (tev_key_code otherwise).
-static u32 tev_key(const GpState* s, u32 numtexgens, u32 key[TEV_KEY_WORDS])
+static u32 tev_key(const GpState* s, u32 numtexgens, u32 tco, u32 key[TEV_KEY_WORDS])
 {
-    u32 gen = s->bp[0x00], nstages = ((gen >> 10) & 0xF) + 1, n = 2, swaps = 0, proj = 0, ind = 0, i;
+    u32 gen = s->bp[0x00], nstages = ((gen >> 10) & 0xF) + 1, n = 5, swaps = 0, proj = 0, ind = 0, i;
+    u32 zop = (s->bp[0xF5] >> 2) & 3;
 
     for (i = 0; i < 8; i++) {
         swaps |= (s->bp[0xF6 + i] & 0xF) << (4 * i);
@@ -681,6 +694,10 @@ static u32 tev_key(const GpState* s, u32 numtexgens, u32 key[TEV_KEY_WORDS])
     key[0] = (gen >> 10 & 0xF) | (gen >> 16 & 7) << 4 | numtexgens << 7 | (s->bp[0xF1] >> 20 & 0xF) << 11 |
              (u32) (ind != 0) << 15 | proj << 16;
     key[1] = swaps;
+    // The z texture, as build_tev reads it: nothing while it is off.
+    key[2] = zop == ZT_ADD || zop == ZT_REPLACE ? s->bp[0xF5] & 0xF : 0;
+    key[3] = key[2] != 0 ? s->bp[0xF4] & 0xFFFFFF : 0;
+    key[4] = tco;
     return n;
 }
 
@@ -788,7 +805,7 @@ static void tev_values(const GpState* s, u16 mask)
 
 #ifdef GX_TEV_CHECK
 // Host check: each draw setup builds the config as before and compares the program, mask and values.
-static void tev_check(const GpState* s, u32 numtexgens)
+static void tev_check(const GpState* s, u32 numtexgens, u32 tco)
 {
     static TevConfig cfg;
     static float vals[XF_TEV_CONSTS][4];
@@ -796,7 +813,7 @@ static void tev_check(const GpState* s, u32 numtexgens)
     u16 mask;
 
     memset(vals, 0, sizeof(vals));
-    build_tev(s, (int) numtexgens, &cfg, vals, &mask);
+    build_tev(s, (int) numtexgens, tco, &cfg, vals, &mask);
     checks++;
     if (fp_get(&cfg) != memo.f || mask != memo.tev_mask || memcmp(vals, memo.tev, sizeof(vals)) != 0) {
         if (errors++ < 20) {
@@ -812,11 +829,11 @@ static void tev_check(const GpState* s, u32 numtexgens)
 
 // The fragment program and TEV values of the current registers. The program is found by a word compare of tev_key,
 // with the words of the values in code if the config has some; build_tev and the config hash run for a new key only.
-static void tev_setup(const GpState* s, u32 numtexgens)
+static void tev_setup(const GpState* s, u32 numtexgens, u32 tco)
 {
     static TevConfig cfg;
     static float vals[XF_TEV_CONSTS][4];
-    u32 key[TEV_KEY_WORDS], n = tev_key(s, numtexgens, key), h = tev_key_hash(key, n);
+    u32 key[TEV_KEY_WORDS], n = tev_key(s, numtexgens, tco, key), h = tev_key_hash(key, n);
     TevKeyEntry* e = tev_lookup(key, n, h);
     const FpEntry* f;
     bool with_code = false;
@@ -839,7 +856,7 @@ static void tev_setup(const GpState* s, u32 numtexgens)
         u16 code;
 
         ps3_prof.tev_builds++;
-        code = build_tev(s, (int) numtexgens, &cfg, vals, &mask);
+        code = build_tev(s, (int) numtexgens, tco, &cfg, vals, &mask);
         f = fp_get(&cfg);
         if (f == NULL) {
             memo.tev_ok = false;
@@ -872,6 +889,7 @@ static void tev_setup(const GpState* s, u32 numtexgens)
     }
     tev_values(s, mask);
     memo.tev_gen = s->tev_gen;
+    memo.tev_tco = tco;
     memo.tev_ok = true;
 }
 
@@ -1041,32 +1059,29 @@ static bool apply_state(const GpState* s)
     dev_cull(cull == 2 || cull == 3, cull == 1 || cull == 3);
     dev_line_width((float) (s->bp[0x22] & 0xFF) / 6.0f);
     dev_point_size((float) ((s->bp[0x22] >> 8) & 0xFF) / 6.0f);
-    if ((s->bp[0xF5] & 3) != 0) {
-        unsupported(U_ZTEX, "a z texture");
-    }
     return apply_alpha_test(s);
 }
 
 // What apply_state reads besides the viewport depth mode: these BP registers, the XF viewport (0x1A-0x1F), the cull
 // bits of genmode and the alpha test A/B bit. memo.state_src holds them in this order.
-static const u8 state_bps[10] = { 0x20, 0x21, 0x22, 0x40, 0x41, 0x42, 0x43, 0x59, 0xF3, 0xF5 };
+static const u8 state_bps[9] = { 0x20, 0x21, 0x22, 0x40, 0x41, 0x42, 0x43, 0x59, 0xF3 };
 
 static bool state_same(const GpState* s)
 {
     const u32* m = memo.state_src;
     int i;
 
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < 9; i++) {
         if (m[i] != s->bp[state_bps[i]]) {
             return false;
         }
     }
     for (i = 0; i < 6; i++) {
-        if (m[10 + i] != s->xf_regs[0x1A + i]) {
+        if (m[9 + i] != s->xf_regs[0x1A + i]) {
             return false;
         }
     }
-    return m[16] == (s->bp[0x00] & 0xC000) && m[17] == (draw_ab & 524288);
+    return m[15] == (s->bp[0x00] & 0xC000) && m[16] == (draw_ab & 524288);
 }
 
 static void state_save(const GpState* s)
@@ -1074,14 +1089,14 @@ static void state_save(const GpState* s)
     u32* m = memo.state_src;
     int i;
 
-    for (i = 0; i < 10; i++) {
+    for (i = 0; i < 9; i++) {
         m[i] = s->bp[state_bps[i]];
     }
     for (i = 0; i < 6; i++) {
-        m[10 + i] = s->xf_regs[0x1A + i];
+        m[9 + i] = s->xf_regs[0x1A + i];
     }
-    m[16] = s->bp[0x00] & 0xC000;
-    m[17] = draw_ab & 524288;
+    m[15] = s->bp[0x00] & 0xC000;
+    m[16] = draw_ab & 524288;
 }
 
 #ifdef GX_STATE_CHECK
@@ -2077,13 +2092,37 @@ static VtxLayout* current_layout(const GpState* s, int vat)
 
 // The RSX state of a draw that does not join the open batch: programs, raster state, constants, textures. Its
 // layout, or NULL when the draw is not drawn (the caller counts it as dropped).
+// The texcoord offsets of a point or line draw, for the TEV config: TCO_* << 16 | the divisor << 8 | the texcoords
+// that take it (SU_SSIZE point and line offset bits). 0 when none.
+static u32 tex_offsets(const GpState* s, int prim)
+{
+    static const u8 divisor[8] = { 0, 16, 8, 4, 2, 1, 1, 1 };
+    u32 lp = s->bp[0x22], kind, d, mask = 0, bit, i;
+
+    if (prim == GP_POINTS) {
+        kind = TCO_POINT;
+        d = divisor[(lp >> 19) & 7];
+        bit = 19;
+    } else if (prim == GP_LINES || prim == GP_LINE_STRIP) {
+        kind = TCO_LINE;
+        d = divisor[(lp >> 16) & 7];
+        bit = 18;
+    } else {
+        return 0;
+    }
+    for (i = 0; i < 8; i++) {
+        mask |= ((s->bp[0x30 + 2 * i] >> bit) & 1) << i;
+    }
+    return d == 0 || mask == 0 ? 0 : kind << 16 | d << 8 | mask;
+}
+
 static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uint64_t* t)
 {
     VtxLayout* l;
     const FpEntry* f;
     VpEntry* v;
     XfKey key;
-    u32 numtexgens = s->xf_regs[0x3F] & 0xF, stamp, tex_ab;
+    u32 numtexgens = s->xf_regs[0x3F] & 0xF, stamp, tex_ab, tco;
     bool tev_hit, tex_hit, reused = true, nospec, olddepth;
     int i, k;
 
@@ -2095,14 +2134,15 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
     }
     numtexgens = numtexgens > 8 ? 8 : numtexgens;
     ps3_diag.gp_site = "draw: TEV";
-    tev_hit = memo.tev_ok && memo.tev_gen == s->tev_gen;
+    tco = tex_offsets(s, prim);
+    tev_hit = memo.tev_ok && memo.tev_gen == s->tev_gen && memo.tev_tco == tco;
     if (!tev_hit) {
         reused = false;
-        tev_setup(s, numtexgens);
+        tev_setup(s, numtexgens, tco);
     }
 #ifdef GX_TEV_CHECK
     if (memo.tev_ok) {
-        tev_check(s, numtexgens);
+        tev_check(s, numtexgens, tco);
     }
 #endif
     f = memo.f;
@@ -2167,6 +2207,7 @@ static const VtxLayout* draw_setup(GpState* s, int prim, int vat, u32 count, uin
     ps3_diag.gp_site = "draw: programs and textures";
     use_vp(v);
     use_fp(f);
+    dev_point_sprite(prim == GP_POINTS && (tco >> 16) == TCO_POINT);
     // The textures are checked again after a write to their registers, a TLUT load or a memory write
     // (bind_textures).
     stamp = ps3_mem_stamp();
@@ -2927,6 +2968,13 @@ static bool copy_colmat(u32 fmt, bool intensity, float m[28])
                 m[4 * ch + (fmt == 7 ? 3 : fmt == 9 ? 1 : 2)] = 1.0f;
             }
             break;
+        case 11: // RG8
+        case 12: // GB8
+            for (ch = 0; ch < 3; ch++) {
+                m[4 * ch + fmt - 11] = 1.0f;
+            }
+            m[12 + fmt - 10] = 1.0f;
+            break;
         default:
             return false;
         }
@@ -2942,10 +2990,11 @@ static bool copy_colmat(u32 fmt, bool intensity, float m[28])
     return true;
 }
 
-static const FpEntry* copy_program(const float colmat[28])
+static const FpEntry* copy_program(const float colmat[28], bool depth)
 {
     static struct {
         float m[28];
+        bool depth;
         FpEntry e;
         bool used;
     } cache[16];
@@ -2953,7 +3002,7 @@ static const FpEntry* copy_program(const float colmat[28])
     int i;
 
     for (i = 0; i < 16; i++) {
-        if (cache[i].used && memcmp(cache[i].m, colmat, sizeof(cache[i].m)) == 0) {
+        if (cache[i].used && cache[i].depth == depth && memcmp(cache[i].m, colmat, sizeof(cache[i].m)) == 0) {
             return &cache[i].e;
         }
     }
@@ -2965,15 +3014,17 @@ static const FpEntry* copy_program(const float colmat[28])
         cache[i].used = false;
     }
     memcpy(cache[i].m, colmat, sizeof(cache[i].m));
-    if (fp_build(&cache[i].e, copy_gen(colmat, &fp_scratch)) == NULL) {
+    cache[i].depth = depth;
+    if (fp_build(&cache[i].e, copy_gen(colmat, depth, &fp_scratch)) == NULL) {
         return NULL;
     }
     cache[i].used = true;
     return &cache[i].e;
 }
 
-// Draws the src rectangle of the EFB into all of dst (dw x dh).
-static void copy_pass(const DevTarget* dst, u32 sx, u32 sy, u32 sw, u32 sh, const FpEntry* fp, bool linear)
+// Draws the src rectangle of the EFB's colour, or of its depth buffer, into all of dst (dw x dh).
+static void copy_pass(const DevTarget* dst, u32 sx, u32 sy, u32 sw, u32 sh, const FpEntry* fp, bool linear,
+                      bool depth)
 {
     static const float clip[4][2] = { { -1, 1 }, { 1, 1 }, { 1, -1 }, { -1, -1 } };
     float scale[4] = { dst->width * 0.5f, dst->height * -0.5f, 0.5f, 0.0f };
@@ -3016,13 +3067,14 @@ static void copy_pass(const DevTarget* dst, u32 sx, u32 sy, u32 sw, u32 sh, cons
     dev_color_mask(true, true);
     dev_cull(false, false);
     memset(&t, 0, sizeof(t));
-    t.offset = efb_target.color_offset;
+    t.offset = depth ? efb_target.depth_offset : efb_target.color_offset;
     t.pitch = EFB_PITCH;
     t.width = EFB_WIDTH;
     t.height = EFB_HEIGHT;
     t.levels = 1;
     t.wrap_s = t.wrap_t = DEV_WRAP_CLAMP;
-    t.min_filter = t.mag_filter = linear ? DEV_FILTER_LINEAR : DEV_FILTER_NEAREST;
+    // Depth bytes cannot be filtered.
+    t.min_filter = t.mag_filter = linear && !depth ? DEV_FILTER_LINEAR : DEV_FILTER_NEAREST;
     dev_texture(0, &t);
     tex_bind(0, NULL);
     use_vp(&copy_vp);
@@ -3137,12 +3189,12 @@ static void efb_copy(GpState* s)
             static const float ident[28] = { 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0,
                                              255, 255, 255, 255, 1 / 255.0f, 1 / 255.0f, 1 / 255.0f, 1 / 255.0f };
             DevTarget t = { x->offset, EFB_PITCH, 0, 0, (u16) sw, (u16) lines };
-            const FpEntry* fp = copy_program(ident);
+            const FpEntry* fp = copy_program(ident, false);
 
             x->width = (u16) sw;
             x->height = (u16) lines;
             if (fp != NULL) {
-                copy_pass(&t, sx, sy, sw, sh, fp, lines != sh);
+                copy_pass(&t, sx, sy, sw, sh, fp, lines != sh, false);
             }
             stats.xfb_copies++;
         }
@@ -3153,13 +3205,13 @@ static void efb_copy(GpState* s)
         u32 dw = half ? (sw + 1) / 2 : sw, dh = half ? (sh + 1) / 2 : sh;
         float colmat[28];
         TexEntry* e;
+        // PE pixel format Z24: GXCopyTex of a z format, the formats as for colour (Dolphin).
+        bool depth = (s->bp[0x43] & 7) == 3;
 
-        if ((s->bp[0x43] & 7) == 3) {
-            unsupported(U_DEPTH_COPY, "a depth copy");
-        } else if (!copy_colmat(fmt, intensity, colmat)) {
-            unsupported(U_COPY_FORMAT, "an EFB copy format");
+        if (!copy_colmat(fmt, intensity && !depth, colmat)) {
+            unsupported(depth ? U_DEPTH_COPY : U_COPY_FORMAT, depth ? "a depth copy format" : "an EFB copy format");
         } else {
-            const FpEntry* fp = copy_program(colmat);
+            const FpEntry* fp = copy_program(colmat, depth);
 
             e = find_efb_texture(addr, dw, dh);
             if (e == NULL) {
@@ -3181,7 +3233,7 @@ static void efb_copy(GpState* s)
                 DevTarget t = { e->offset, e->pitch, 0, 0, (u16) dw, (u16) dh };
 
                 e->frame = frame;
-                copy_pass(&t, sx, sy, sw, sh, fp, half);
+                copy_pass(&t, sx, sy, sw, sh, fp, half, depth);
                 // lbshadow.c's shadows are 256x256.
                 if ((ps3_diag.gx_ab & 131072) && dw == 256 && dh == 256) {
                     check_shadow(e);

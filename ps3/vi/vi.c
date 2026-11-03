@@ -249,6 +249,31 @@ static void log_main(u32 n)
     last_uncached = ps3_prof.motion_uncached;
 }
 
+// A main thread with no interrupt disable or retrace wait for five heartbeats, on no queue, has stopped (a long parse
+// takes 2-3 s on the host): once per stop, the return addresses at its last OSDisableInterrupts, as the OSPanic stack.
+static void log_main_stop(u32 n)
+{
+    static unsigned last_disables, last_waits, still;
+    unsigned disables = ps3_diag.main_disables, waits = ps3_diag.retrace_waits;
+    char line[160];
+    int len, i;
+
+    if (disables != last_disables || waits != last_waits || ps3_diag.main_sleep != NULL) {
+        last_disables = disables;
+        last_waits = waits;
+        still = 0;
+        return;
+    }
+    if (++still != 5) {
+        return;
+    }
+    len = snprintf(line, sizeof(line), "heartbeat %u: main stopped after OSDisableInterrupts from", n);
+    for (i = 0; i < PS3_MAIN_WHERE && ps3_diag.main_where[i] != NULL; i++) {
+        len += snprintf(line + len, sizeof(line) - (size_t) len, " %08x", (u32) (uintptr_t) ps3_diag.main_where[i]);
+    }
+    OSReport("%s\n", line);
+}
+
 // Once a second, apart from the interrupts: a log that stops means the process is gone, counts that stop
 // name the part that is stuck (step 3 diagnostics).
 static void heartbeat_main(void* arg)
@@ -294,6 +319,7 @@ static void heartbeat_main(void* arg)
         }
         log_audio(n);
         log_main(n);
+        log_main_stop(n);
         ps3_rb_log(n);
         ps3_net_log(n);
         if (ps3_diag.main_calls != 0) {

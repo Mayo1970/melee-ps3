@@ -1226,8 +1226,14 @@ void gm_Scene_StaffRoll_OnEnter(void* unused)
 
     efLib_Init();
     efAsync_LoadSync(0);
+#ifdef TARGET_PS3
+    // The GameCube sizes are 198 entries of 12 and 0x3C bytes; with 8-byte pointers an entry is 24 and 0x48 bytes.
+    staffInfo = HSD_MemAlloc(ARRAY_SIZE(gm_803DBFD8) * sizeof(*staffInfo));
+    staffInfoSortBuf = HSD_MemAlloc(ARRAY_SIZE(gm_803DBFD8) * sizeof(*staffInfoSortBuf));
+#else
     staffInfo = HSD_MemAlloc(sizeof(struct staffInfo_t));
     staffInfoSortBuf = HSD_MemAlloc(sizeof(struct staffInfoSortBuf_t));
+#endif
     HSD_SisLib_803A62A0(0, "SdStRoll.dat", "SIS_StRollData");
     HSD_SisLib_803A611C(0, (HSD_GObj*) -1, 9, 13, 0, 18, 0, 19);
     lbAudioAx_80026F2C(28);
@@ -1331,7 +1337,11 @@ void gm_Scene_StaffRoll_OnEnter(void* unused)
         lbAudioAx_80023F28(lbAudioAx_8002305C(gm_801BEFB0(), !-r));
         lbBgFlash_800209F4();
         gm_804D6804.x0 = gm_804D6804.x4 = 0.0F;
+#ifdef TARGET_PS3
+        memzero(staffInfo, ARRAY_SIZE(gm_803DBFD8) * sizeof(*staffInfo));
+#else
         memzero(staffInfo, sizeof(struct staffInfo_t));
+#endif
         for (i = 0; i < 6; i++) {
             gm_80480D58[i] = 0;
         }

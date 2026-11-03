@@ -158,7 +158,8 @@ static void fp_vector(int op, const float* a, const float* b, const float* c, fl
     }
 }
 
-void fp_run(const u32* ucode, int words, const float in[16][4], FpSampler sample, void* user, float out[4])
+void fp_run(const u32* ucode, int words, const float in[16][4], FpSampler sample, void* user, float out[4],
+            float* depth)
 {
     float t[64][4];
     int k = 0;
@@ -229,4 +230,7 @@ void fp_run(const u32* ucode, int words, const float in[16][4], FpSampler sample
         }
     }
     memcpy(out, t[0], 16);
+    if (depth != NULL) {
+        *depth = t[1][2];
+    }
 }

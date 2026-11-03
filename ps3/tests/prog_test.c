@@ -296,7 +296,7 @@ static void tev_case(int n)
         return;
     }
     words = fp_ucode(&fp, ucode, 8192);
-    fp_run(ucode, words, (const float(*)[4]) in, sample, &tx, out);
+    fp_run(ucode, words, (const float(*)[4]) in, sample, &tx, out, NULL);
     tev_ref(&cfg, (const float(*)[4]) ras, (const float(*)[4]) tx.tex, depth, ref);
     for (k = 0; k < 4; k++) {
         if (!close(out[k], ref[k], 1e-3f)) {

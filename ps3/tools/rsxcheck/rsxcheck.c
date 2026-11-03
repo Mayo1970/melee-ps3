@@ -188,7 +188,7 @@ static void fp_cases(void)
         for (i = 0; i < 28; i++) {
             colmat[i] = (float) (i % 5) * 0.25f;
         }
-        copy_gen(colmat, &fp);
+        copy_gen(colmat, false, &fp);
         cases[ncases].kind = 'F';
         snprintf(cases[ncases].name, sizeof(cases[ncases].name), "copy");
         cases[ncases].words = fp_ucode(&fp, cases[ncases].uc, 8192);

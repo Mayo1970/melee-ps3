@@ -906,7 +906,12 @@ void mnDiagram2_Think(HSD_GObj* gobj)
             HSD_GObjProc_RemoveProc(HSD_GObj_CurrentInvokedProc);
             proc = HSD_GObj_SetupProc(gobj, mnDiagram2_OnAnimComplete, 0);
             proc->flags_3 = HSD_GObj_804D783C;
+#ifdef TARGET_PS3
+            // Word 4 is x10 on the GameCube only; with 8-byte pointers it is fighter_mode_header.
+            HSD_JObjSetFlagsAll(data->x10, JOBJ_HIDDEN);
+#else
             HSD_JObjSetFlagsAll(((HSD_JObj**) data)[4], JOBJ_HIDDEN);
+#endif
             if (data->header_text != NULL) {
                 HSD_SisLib_803A5CC4(data->header_text);
                 data->header_text = NULL;

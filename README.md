@@ -61,17 +61,14 @@ outside matches. **B**, **Start** or **Select** close it. Settings are saved to 
 | Unlock All | Unlocks all characters, stages, events 1-50 and trophies. |
 | Tap Jump | ON or OFF, per controller port. |
 | C-Stick | SMASH (default) or TILT, per port. TILT gives tilt attacks on the C-stick instead of smash attacks. |
+| C-Stick 1P | CAMERA (default) or ATTACK. In 1-P modes, ATTACK makes the C-stick attack as in VS instead of moving the camera. |
 | D-Pad Swap | DualShock 3 only, per port. The D-pad acts as the control stick. |
 | Input Delay | Netplay input delay, 0-7 frames. Default 2. |
 | Netplay | Host or join an online match. |
 
 ## Netplay
 
-Online 1v1 with rollback, in the style of Slippi.
-
-- Rollback only. There is no delay-based mode.
-- Save and restore of the game state run on an SPU, about 1-2 ms each.
-- A desync check compares the gameplay state of both consoles every 30 frames.
+Online 1v1 with rollback.
 - Each player picks their own fighter. The host picks the stage in the normal VS menus.
 - Rules are the host's VS rules.
 

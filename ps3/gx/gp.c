@@ -373,11 +373,11 @@ static void finish_work(void)
 }
 
 // The BP registers the backend's TEV config and values read: genmode, indirect stages, orders, stages, the TEV
-// colour and konst registers, fog, swap tables and konst selections.
+// colour and konst registers, fog, the z texture, swap tables and konst selections.
 static bool tev_bp(u32 reg)
 {
     return reg == 0x00 || (reg >= 0x10 && reg <= 0x1F) || (reg >= 0x28 && reg <= 0x2F) ||
-           (reg >= 0xC0 && reg <= 0xE7) || (reg >= 0xEE && reg <= 0xF2) || (reg >= 0xF6 && reg <= 0xFD);
+           (reg >= 0xC0 && reg <= 0xE7) || (reg >= 0xEE && reg <= 0xF2) || (reg >= 0xF4 && reg <= 0xFD);
 }
 
 // The BP registers whose write does more than store the value (bp_write).

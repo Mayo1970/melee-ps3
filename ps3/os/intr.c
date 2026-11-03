@@ -6,6 +6,8 @@
 #include "sync.h"
 
 #include <stdbool.h>
+#include <stddef.h>
+#include <stdint.h>
 
 #include <dolphin/os.h>
 #include <ps3_intr.h>
@@ -63,7 +65,25 @@ static void run_raised(void)
 BOOL OSDisableInterrupts(void)
 {
     if (&thread_marker == main_marker) {
+        const uintptr_t* f = __builtin_frame_address(0);
+        int i;
+
         ps3_diag.main_disables++;
+        // ELFv1: a function saves its return address in its caller's frame, at +16; frames go up the back chain.
+        // The first one may repeat the return address, as f can be this call's frame or the caller's.
+        ps3_diag.main_where[0] = __builtin_return_address(0);
+        for (i = 1; i < PS3_MAIN_WHERE; i++) {
+            uintptr_t c = f[0];
+
+            if (c <= (uintptr_t) f || c - (uintptr_t) f > 0x100000) {
+                break;
+            }
+            ps3_diag.main_where[i] = (void*) ((const uintptr_t*) c)[2];
+            f = (const uintptr_t*) c;
+        }
+        for (; i < PS3_MAIN_WHERE; i++) {
+            ps3_diag.main_where[i] = NULL;
+        }
     }
     if (disabled) {
         return FALSE;

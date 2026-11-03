@@ -374,10 +374,33 @@ void dev_point_size(float size)
     rsxSetPointSize(ctx, size < 1.0f ? 1.0f : size);
 }
 
+void dev_point_sprite(bool on)
+{
+    static int last = -1;
+
+    if (last != (int) on) {
+        last = on;
+        rsxSetPointSpriteControl(ctx, on ? GCM_TRUE : GCM_FALSE, GCM_POINT_SPRITE_RMODE_ZERO,
+                                 on ? GCM_POINT_SPRITE_TEX9 : 0);
+    }
+}
+
 void dev_line_width(float width)
 {
-    // PSL1GHT has no line width command: lines stay one pixel wide.
-    (void) width;
+    static u32 last;
+    // PSL1GHT has no line width call: the NV40 method, 6.3 fixed point as nouveau writes it.
+    u32 w = (u32) (width * 8.0f + 0.5f);
+    u32* p;
+
+    w = w < 8 ? 8 : w > 0x1FF ? 0x1FF : w;
+    if (w == last || (ctx->current + 2 > ctx->end && rsxContextCallback(ctx, 2) != 0)) {
+        return;
+    }
+    p = ctx->current;
+    *p++ = 1u << 18 | NV40TCL_LINE_WIDTH;
+    *p++ = w;
+    ctx->current = p;
+    last = w;
 }
 
 void dev_vertex_program(const u32 (*ucode)[4], u32 n, u32 start, u32 input_mask, u32 output_mask, u32 regs)
@@ -399,14 +422,14 @@ void dev_vp_constants(u32 first, u32 count, const float* v)
     rsxLoadVertexProgramParameterBlock(ctx, first, count, v);
 }
 
-void dev_fragment_program(u32 offset, u32 regs, u16 texcoords, u16 texcoords4)
+void dev_fragment_program(u32 offset, u32 regs, u16 texcoords, u16 texcoords4, bool depth)
 {
     rsxFragmentProgram fp;
 
     memset(&fp, 0, sizeof(fp));
     fp.num_regs = (u16) regs;
-    // The colour comes from R0, 32-bit.
-    fp.fp_control = 0x40;
+    // The colour comes from R0, 32-bit; 0xE is depth export from R1.z, as cgcomp sets it.
+    fp.fp_control = 0x40 | (depth ? 0xE : 0);
     fp.texcoords = texcoords;
     fp.texcoord2D = (u16) (texcoords & ~texcoords4);
     fp.texcoord3D = texcoords4;
@@ -760,7 +783,7 @@ void dev_present(u32 src_offset, u32 src_pitch, u32 w, u32 h, bool wide, const D
     }
     dev_vertex_program((const u32(*)[4]) present_vp, present_vp_n, DEV_VP_SLOTS, present_vp_in, present_vp_out,
                        1);
-    dev_fragment_program(present_fp_off, present_fp_regs, present_fp_tc, 0);
+    dev_fragment_program(present_fp_off, present_fp_regs, present_fp_tc, 0, false);
     if (!present_quad(left, (float) disp_w - left, top, (float) disp_h - top, &t)) {
         return;
     }

@@ -2,4 +2,7 @@ base: orig/GALE01/files
 symbols: config/GALE01/dat_symbols.txt
 include:
   - '*.dat'
+  # The US trophy texts: unlike the other .usd files, their tables have their own names (SIS_ToyData_E).
+  - 'SdToy.usd'
+  - 'SdToyExp.usd'
 

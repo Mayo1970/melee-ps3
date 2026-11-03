@@ -54,6 +54,8 @@ typedef struct FpProg {
     int max_temp;
     // Texcoords read, and those read with more than two components.
     u16 texcoords, texcoords4;
+    // The program writes the depth: R1.z, which the RSX takes with depth export on.
+    bool depth;
     int err;
     char text[FP_TEXT];
     int tlen;
@@ -72,6 +74,8 @@ void fp_op(FpProg* p, int op, int dst, int mask, bool sat, FpSrc a, FpSrc b, FpS
 void fp_tex(FpProg* p, int dst, int texcoord, int unit);
 // TXP: the texture at texcoord.xy / texcoord.w.
 void fp_txp(FpProg* p, int dst, int texcoord, int unit);
+// The texture at temp src.xy.
+void fp_tex_t(FpProg* p, int dst, int src, int unit);
 // Sets the end bit; returns the number of 16-byte slots (instructions plus inline constants).
 int fp_end(FpProg* p);
 // The ucode as 32-bit words in RSX order (halfwords swapped), constants inline. Returns words written, or -1.

@@ -28,7 +28,6 @@
 #define NET_VERSION 2
 #define HEAD 8
 #define FRAMES 128
-// Frames whose remote input may be a prediction, as Slippi's rollback window.
 #define MAX_AHEAD 7
 #define MAX_SEND 32
 #define CHECK_EVERY 30

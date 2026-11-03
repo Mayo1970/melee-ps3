@@ -2174,7 +2174,9 @@ struct ftDynamics {
     /// @todo Very similar to #ItemDynamics.
     struct ftDynamics_x0 {
         /*  +0 */ int dynamicsNum;
-        /*  +4 */ BoneDynamicsTemplate* ftDynamicBones DAT_COUNT(dynamicsNum);
+        /// Jigglypuff's Bu and Gr hats (#ftCo_8009DC54) read entries past
+        /// @c dynamicsNum.
+        /*  +4 */ BoneDynamicsTemplate* ftDynamicBones DAT_EXTENT;
     } x0;
     /*  +8 */ int x4;
     /*  +C */ AbsorbDesc* x8;

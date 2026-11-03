@@ -328,6 +328,20 @@ void fp_txp(FpProg* p, int dst, int texcoord, int unit)
     tex_op(p, FOP_TXP, dst, texcoord, unit);
 }
 
+void fp_tex_t(FpProg* p, int dst, int src, int unit)
+{
+    FpSrc s = fp_t(src, NULL);
+    char line[96];
+
+    emit(p, FOP_TEX, dst, 0xF, false, &s, 1, unit);
+    if (!s_text) {
+        return;
+    }
+    snprintf(line, sizeof(line), "TEX R%d, R%d, texture[%d], 2D;
+", dst, src, unit);
+    put(line);
+}
+
 int fp_end(FpProg* p)
 {
     int slots, len, i;

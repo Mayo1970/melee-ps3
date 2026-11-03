@@ -20,6 +20,13 @@ enum { TS_1, TS_2, TS_4, TS_HALF };
 enum { RAS_COL0, RAS_COL1, RAS_ZERO };
 // GX fog types (BP fog param 3 fsel).
 enum { FOG_NONE = 0, FOG_LINEAR = 2, FOG_EXP = 4, FOG_EXP2 = 5, FOG_REV_EXP = 6, FOG_REV_EXP2 = 7 };
+// Z texture op and type (BP 0xF5).
+enum { ZT_DISABLE, ZT_ADD, ZT_REPLACE };
+enum { ZTT_U8, ZTT_U16, ZTT_U24 };
+// Texcoord offsets of the draw's primitive (GXEnableTexOffsets): across a point or across a line's width.
+enum { TCO_NONE, TCO_POINT, TCO_LINE };
+// The RSX texcoord the point sprite coordinate replaces (rsxdev point sprites).
+#define FIN_SPRITE (FIN_TC0 + 9)
 
 typedef struct TevComb {
     u8 a, b, c, d, op, bias, scale, clamp, dest; // op: 0 add, 1 subtract; dest: PREV, REG0, REG1, REG2
@@ -45,11 +52,17 @@ typedef struct TevConfig {
     s8 rin[4];    // FP input of the start value of PREV, REG0, REG1, REG2
     s8 fog_pin;   // FP input of (A * 2^24, B magnitude, 2^-B shift, C), or of (A / 2^24, 0, 0, C) when orthographic
     s8 fog_cin;   // FP input of the fog colour
+    u8 ztex_op;   // ZT_*
+    u8 ztex_type; // ZTT_*
+    u8 tco_kind;  // TCO_*
+    u8 tco_mask;  // texcoords that take the offset
     TevStage st[16];
     float kval[4][4];
     float reg[4][4];
     float fog_param[4];
     float fog_color[4];
+    float ztex_bias; // 24-bit
+    float tco;       // the offset, in texture widths
 } TevConfig;
 
 // The TEV registers a config reads before any stage writes them: bit r for PREV, REG0, REG1, REG2.
@@ -63,7 +76,8 @@ int tev_gen(const TevConfig* cfg, FpProg* p);
 void tev_ref(const TevConfig* cfg, const float ras[2][4], const float tex[8][4], float depth, float out[4]);
 
 // EFB copy colour matrix: out = round(t * mask) / mask * M + add (colmat[28], as Dolphin's TextureCacheBase).
-int copy_gen(const float colmat[28], FpProg* p);
+// depth: t is the Z24S8 depth buffer read as A8R8G8B8, taken as (Z high, Z mid, Z low, 1) as Dolphin does.
+int copy_gen(const float colmat[28], bool depth, FpProg* p);
 // The texel as it is, from texcoord 0 on unit 0.
 int plain_gen(FpProg* p);
 

@@ -42,10 +42,14 @@ static u8 alpha_ref;
 static bool mask_rgb = true, mask_alpha = true;
 static bool cull_cw, cull_ccw;
 static float point_size = 1.0f;
+// Point sprites on, and the upper left corner of the point being drawn as one (sprite_x < 0: none).
+static bool sprite_on;
+static float sprite_x = -1.0f, sprite_y;
 static u32 vp_code[512][4];
 static u32 vp_start, vp_n;
 static float vconst[468][4];
 static u32 fp_offset;
+static bool fp_depth;
 static DevTexture tex[16];
 static bool tex_on[16];
 // The RSX's attribute registers as the commands set them (rsxdev_cell.c): format, and offset with the location in
@@ -265,6 +269,11 @@ void dev_point_size(float size)
     point_size = size < 1.0f ? 1.0f : size;
 }
 
+void dev_point_sprite(bool on)
+{
+    sprite_on = on;
+}
+
 void dev_line_width(float width)
 {
     (void) width;
@@ -288,9 +297,10 @@ void dev_vp_constants(u32 first, u32 count, const float* v)
     memcpy(vconst[first], v, 16u * count);
 }
 
-void dev_fragment_program(u32 offset, u32 regs, u16 texcoords, u16 texcoords4)
+void dev_fragment_program(u32 offset, u32 regs, u16 texcoords, u16 texcoords4, bool depth)
 {
     fp_offset = offset;
+    fp_depth = depth;
 }
 
 void dev_texture(int unit, const DevTexture* t)
@@ -500,7 +510,8 @@ static void shade(const Vert* v0, const Vert* v1, const Vert* v2, float b0, floa
     int i, k;
 
     z = clamp01(b0 * v0->z + b1 * v1->z + b2 * v2->z + depth_bias / 16777215.0f);
-    if (zp != NULL && depth_test && !compare(depth_func, z, (float) (*zp >> 8) / 16777215.0f)) {
+    // With depth export the test waits for the program's depth.
+    if (!fp_depth && zp != NULL && depth_test && !compare(depth_func, z, (float) (*zp >> 8) / 16777215.0f)) {
         return;
     }
     iw = b0 * v0->iw + b1 * v1->iw + b2 * v2->iw;
@@ -520,11 +531,21 @@ static void shade(const Vert* v0, const Vert* v1, const Vert* v2, float b0, floa
             }
         }
     }
+    if (sprite_x >= 0.0f) {
+        in[13][0] = ((float) px + 0.5f - sprite_x) / point_size;
+        in[13][1] = ((float) py + 0.5f - sprite_y) / point_size;
+    }
     in[0][0] = (float) px + 0.5f;
     in[0][1] = (float) py + 0.5f;
     in[0][2] = z;
     in[0][3] = iw;
-    fp_run((const u32*) (local + fp_offset), 8192, (const float(*)[4]) in, sample, NULL, col);
+    fp_run((const u32*) (local + fp_offset), 8192, (const float(*)[4]) in, sample, NULL, col, fp_depth ? &z : NULL);
+    if (fp_depth) {
+        z = clamp01(z);
+        if (zp != NULL && depth_test && !compare(depth_func, z, (float) (*zp >> 8) / 16777215.0f)) {
+            return;
+        }
+    }
     for (i = 0; i < 4; i++) {
         col[i] = clamp01(col[i]);
     }
@@ -644,11 +665,16 @@ static void transform(u32 index, Vert* v)
 }
 
 // Points, and lines too: squares of the point size.
-static void point(const Vert* v)
+static void point(const Vert* v, bool sprite)
 {
     float h = point_size * 0.5f;
     Vert q[4];
     int k;
+
+    if (sprite && sprite_on) {
+        sprite_x = v->x - h;
+        sprite_y = v->y - h;
+    }
 
     for (k = 0; k < 4; k++) {
         q[k] = *v;
@@ -657,6 +683,7 @@ static void point(const Vert* v)
     }
     triangle(&q[0], &q[1], &q[2]);
     triangle(&q[0], &q[2], &q[3]);
+    sprite_x = -1.0f;
 }
 
 void dev_draw(u32 prim, u32 count)
@@ -701,7 +728,7 @@ void dev_draw(u32 prim, u32 count)
         break;
     default:
         for (i = 0; i < count; i++) {
-            point(&v[i]);
+            point(&v[i], prim == DEV_PRIM_POINTS);
         }
         break;
     }
@@ -735,7 +762,7 @@ void dev_draw_indexed(u32 prim, u32 offset, u32 count)
         }
     } else {
         for (i = 0; i < count; i++) {
-            point(&v[IDX(i)]);
+            point(&v[IDX(i)], prim == DEV_PRIM_POINTS);
         }
     }
 #undef IDX

@@ -9,7 +9,9 @@
 void vp_run(const u32 (*w)[4], int n, const float (*c)[4], const float in[16][4], float out[16][4]);
 
 typedef void (*FpSampler)(void* user, int unit, const float coord[4], float out[4]);
-// ucode: as fp_ucode writes it (halfwords swapped). in is indexed by input id (fpgen.h FIN_*).
-void fp_run(const u32* ucode, int words, const float in[16][4], FpSampler sample, void* user, float out[4]);
+// ucode: as fp_ucode writes it (halfwords swapped). in is indexed by input id (fpgen.h FIN_*). depth, if not NULL,
+// gets R1.z, the depth export.
+void fp_run(const u32* ucode, int words, const float in[16][4], FpSampler sample, void* user, float out[4],
+            float* depth);
 
 #endif

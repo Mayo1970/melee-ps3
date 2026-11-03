@@ -82,14 +82,16 @@ void dev_color_mask(bool rgb, bool alpha);
 // cull_cw: cull the primitives that are clockwise on the screen; cull_ccw the others.
 void dev_cull(bool cull_cw, bool cull_ccw);
 void dev_point_size(float size);
+// Points as sprites: texcoord 9 is the coordinate across the point, (0, 0) at the upper left.
+void dev_point_sprite(bool on);
 void dev_line_width(float width);
 // Runs the n instructions at program slot start; ucode loads them there first, NULL means they are there.
 // regs: temps used.
 void dev_vertex_program(const uint32_t (*ucode)[4], uint32_t n, uint32_t start, uint32_t input_mask,
                         uint32_t output_mask, uint32_t regs);
 void dev_vp_constants(uint32_t first, uint32_t count, const float* v);
-// texcoords4: texcoords read with more than two components.
-void dev_fragment_program(uint32_t offset, uint32_t regs, uint16_t texcoords, uint16_t texcoords4);
+// texcoords4: texcoords read with more than two components. depth: the program writes the depth in R1.z.
+void dev_fragment_program(uint32_t offset, uint32_t regs, uint16_t texcoords, uint16_t texcoords4, bool depth);
 // NULL disables the unit.
 void dev_texture(int unit, const DevTexture* t);
 // An attribute at offset (IO, or local with DEV_LOCAL); count 0 disables it.
