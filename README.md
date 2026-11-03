@@ -4,11 +4,6 @@ A native port of Super Smash Bros. Melee to the PlayStation 3, built on the
 [doldecomp/melee](https://github.com/doldecomp/melee) decompilation. It runs as homebrew on a PS3 with CFW or HEN.
 It is built with the open-source [PSL1GHT](https://github.com/ps3dev/PSL1GHT) SDK.
 
-Melee-PS3 is not an emulator. The game code is compiled for the Cell PPE, GX is translated to the RSX, and the
-GameCube DSP runs on an SPU.
-
-Melee-PS3 is work in progress.
-
 ## Install and set up
 
 1. Install `melee.pkg` with the Package Manager on the XMB.
@@ -48,21 +43,21 @@ Supported disc formats: `.iso`, `.gcm`, `.ciso`, or an extracted disc folder (`s
 ### GameCube controller
 
 Plug the Wii U GameCube adapter into a USB port. No setup is needed. Rumble works when the adapter's power plug is
-connected. To open the PS3 menu, hold **Z** and press **D-pad Up**.
+connected.
 
 ## PS3 menu
 
-Press **Select** on a DualShock 3, or hold **Z** and press **D-pad Up** on any controller. The menu opens only
+Press **Select** on a DualShock 3, or hold **Z** and press **D-pad Up** on the GameCube controller. The menu opens only
 outside matches. **B**, **Start** or **Select** close it. Settings are saved to `options.txt`.
 
 | Option | Effect |
 |---|---|
 | Widescreen | 16:9 rendering. Letterboxed on a 4:3 TV. |
-| Unlock All | Unlocks all characters, stages, events 1-50 and trophies. |
+| Unlock All | Unlocks everything. |
 | Tap Jump | ON or OFF, per controller port. |
-| C-Stick | SMASH (default) or TILT, per port. TILT gives tilt attacks on the C-stick instead of smash attacks. |
+| C-Stick | SMASH (default) or TILT attacks, per port. |
 | C-Stick 1P | CAMERA (default) or ATTACK. In 1-P modes, ATTACK makes the C-stick attack as in VS instead of moving the camera. |
-| D-Pad Swap | DualShock 3 only, per port. The D-pad acts as the control stick. |
+| D-Pad Swap | The D-pad acts as the control stick. Doesn't work on GameCube controllers. |
 | Input Delay | Netplay input delay, 0-7 frames. Default 2. |
 | Netplay | Host or join an online match. |
 
@@ -77,10 +72,10 @@ Online 1v1 with rollback.
 1. Both players install the **same build**. A different build refuses the pairing.
 2. Host: open the PS3 menu, go to **NETPLAY**, choose **HOST**, press **A**. The row shows an 8-digit code.
 3. Joiner: go to **NETPLAY**, choose **JOIN**, press **A**, enter the host's code, press **A**.
-4. When the row shows **PLAYER 1** / **PLAYER 2**, close the menu and both start a VS match.
+4. When the row shows **PLAYER 1** / **PLAYER 2**, close the menu and both start a VS match. Pick any CPU character.
 
 The host opens UDP port **51000** with UPnP. If the router has no UPnP, forward UDP 51000 to the host's PS3 by hand.
-The joiner needs no setup. The code is the host's public IPv4 address in hexadecimal (`94.35.119.59` is `5E23773B`).
+The joiner needs no setup.
 
 ## Compiling
 
