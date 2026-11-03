@@ -337,8 +337,7 @@ void fp_tex_t(FpProg* p, int dst, int src, int unit)
     if (!s_text) {
         return;
     }
-    snprintf(line, sizeof(line), "TEX R%d, R%d, texture[%d], 2D;
-", dst, src, unit);
+    snprintf(line, sizeof(line), "TEX R%d, R%d, texture[%d], 2D;\n", dst, src, unit);
     put(line);
 }
 

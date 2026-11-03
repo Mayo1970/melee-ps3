@@ -337,8 +337,9 @@ static void gen_ztex(const TevConfig* cfg, FpProg* p)
     const float* w = weights[cfg->ztex_type > ZTT_U24 ? ZTT_U24 : cfg->ztex_type];
     FpSrc z = fp_t(0, NULL), t = fp_t(RT_Z, NULL);
     int kw = fp_const(p, w[0], w[1], w[2], w[3]);
-    int k = fp_const(p, 255.0f, 0.5f, 16777215.0f, 1.0f / 16777215.0f);
-    int kb = fp_const(p, cfg->ztex_bias / 16777215.0f, 0.0f, 0.0f, 0.0f);
+    int k = fp_const(p, 255.0f, 0.5f, 16777215.0f, 0.0f);
+    // The last MAD's two constants: one instruction reads one constant only.
+    int kb = fp_const(p, cfg->ztex_bias / 16777215.0f, 1.0f / 16777215.0f, 0.0f, 0.0f);
     bool sampled = false;
     int i;
 
@@ -352,12 +353,12 @@ static void gen_ztex(const TevConfig* cfg, FpProg* p)
         fp_op(p, FOP_FLR, RT_Z, 0xF, false, t, z, z);
         fp_op(p, FOP_DP4, RT_Z, 1, false, t, fp_c(kw, NULL), z);
     } else {
-        fp_op(p, FOP_MOV, RT_Z, 1, false, fp_c(kb, "y"), z, z);
+        fp_op(p, FOP_MOV, RT_Z, 1, false, fp_c(kb, "z"), z, z);
     }
     if (cfg->ztex_op == ZT_ADD) {
         fp_op(p, FOP_MAD, RT_Z, 1, false, fp_in(FIN_WPOS, "z"), fp_c(k, "z"), fp_t(RT_Z, "x"));
     }
-    fp_op(p, FOP_MAD, RT_Z, 1, true, fp_t(RT_Z, "x"), fp_c(k, "w"), fp_c(kb, "x"));
+    fp_op(p, FOP_MAD, RT_Z, 1, true, fp_t(RT_Z, "x"), fp_c(kb, "y"), fp_c(kb, "x"));
     p->depth = true;
 }
 
