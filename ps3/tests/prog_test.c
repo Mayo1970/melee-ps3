@@ -13,6 +13,7 @@
 // Then cases whose last texgen is an emboss of an earlier one.
 #define XF_EMBOSS_CASES 1000
 #define TEV_CASES 3000
+#define ZTEX_CASES 3072
 
 static u32 seed = 1;
 static VpProg vp;
@@ -36,7 +37,7 @@ static bool close(float a, float b, float tol)
     return fabsf(a - b) <= tol * m;
 }
 
-static int xf_fail, tev_fail;
+static int xf_fail, tev_fail, ztex_fail;
 
 static void xf_case(int n)
 {
@@ -310,6 +311,85 @@ static void tev_case(int n)
     }
 }
 
+// The menu erase's white Z8 texture, 24-bit carries, and fog with early depth.
+// Expected depth uses integer arithmetic, independently of the generated float operations.
+static void ztex_case(int n)
+{
+    static const u32 edges[] = { 0, 1, 255, 256, 65535, 65536, 0xFFFF00, 0xFFFFFF };
+    TevConfig cfg;
+    Texels tx;
+    float in[16][4] = { { 0 } }, ras[2][4] = { { 0.8f, 0.6f, 0.4f, 1 } };
+    float out[4], ref[4], got_depth, expected;
+    u32 bytes[4], zvalue = 0, bias, window;
+    int i, words, mode = n % 24, sample_on = (n / 24) % 2;
+
+    memset(&cfg, 0, sizeof(cfg));
+    memset(&tx, 0, sizeof(tx));
+    cfg.ztex_op = mode % 2 ? ZT_ADD : ZT_REPLACE;
+    cfg.ztex_type = (mode / 2) % 3;
+    cfg.early_depth = (mode / 6) % 2;
+    cfg.fog = mode / 12 ? FOG_LINEAR : FOG_NONE;
+    cfg.fog_ortho = 1;
+    cfg.fog_param[0] = 1.0f / 16777216.0f;
+    cfg.fog_color[0] = cfg.fog_color[1] = cfg.fog_color[2] = 0.1f;
+    cfg.fog_pin = cfg.fog_cin = -1;
+    for (i = 0; i < 4; i++) {
+        cfg.kin[i] = cfg.rin[i] = -1;
+        bytes[i] = (n / 48 < 8) ? 255 : rnd() & 255;
+        tx.tex[0][i] = (float) bytes[i] / 255.0f;
+        // A swap must not affect the depth texture.
+        cfg.st[0].tex_swap[i] = 3 - i;
+        cfg.st[0].ras_swap[i] = i;
+    }
+    cfg.nstages = 1;
+    cfg.st[0].tex = sample_on ? 0 : -1;
+    cfg.st[0].ras = RAS_COL0;
+    cfg.st[0].col.a = cfg.st[0].col.b = cfg.st[0].col.c = CC_ZERO;
+    cfg.st[0].col.d = CC_RASC;
+    cfg.st[0].alp.a = cfg.st[0].alp.b = cfg.st[0].alp.c = CA_ZERO;
+    cfg.st[0].alp.d = CA_RASA;
+    cfg.st[0].col.clamp = cfg.st[0].alp.clamp = 1;
+    bias = n / 48 < 8 ? edges[n / 48] : rnd() & 0xFFFFFF;
+    cfg.ztex_bias = (float) bias;
+    window = n / 48 < 8 ? edges[7 - n / 48] : rnd() & 0xFFFFFF;
+    in[FIN_WPOS][2] = (float) window / 16777215.0f;
+    memcpy(in[FIN_COL0], ras[0], sizeof(ras[0]));
+    if (sample_on) {
+        zvalue = cfg.ztex_type == ZTT_U8 ? bytes[3] :
+                 cfg.ztex_type == ZTT_U16 ? bytes[0] + 256 * bytes[3] :
+                 65536 * bytes[0] + 256 * bytes[1] + bytes[2];
+    }
+    if (cfg.ztex_op == ZT_ADD) {
+        zvalue += (u32) floorf(in[FIN_WPOS][2] * 16777215.0f);
+    }
+    expected = (float) ((zvalue + bias) & 0xFFFFFF) / 16777216.0f;
+    if (tev_gen(&cfg, &fp) < 0 || fp.depth != !cfg.early_depth) {
+        printf("ztex case %d: generation/export failed (error %d, export %d)\n", n, fp.err, fp.depth);
+        ztex_fail++;
+        return;
+    }
+    words = fp_ucode(&fp, ucode, 8192);
+    fp_run(ucode, words, (const float(*)[4]) in, sample, &tx, out, &got_depth);
+    // The colour reference takes the depth for fog explicitly, including with early depth.
+    tev_ref(&cfg, (const float(*)[4]) ras, (const float(*)[4]) tx.tex, expected, ref);
+    if (!cfg.early_depth && fabsf(got_depth - expected) > 0.75f / 16777215.0f) {
+        if (ztex_fail < 10) {
+            printf("ztex case %d: depth %.9g, expected %.9g\n", n, got_depth, expected);
+        }
+        ztex_fail++;
+        return;
+    }
+    for (i = 0; i < 4; i++) {
+        if (!close(out[i], ref[i], 1e-5f)) {
+            if (ztex_fail < 10) {
+                printf("ztex case %d: colour %d is %g, expected %g\n", n, i, out[i], ref[i]);
+            }
+            ztex_fail++;
+            return;
+        }
+    }
+}
+
 int main(void)
 {
     int i;
@@ -322,7 +402,11 @@ int main(void)
     for (i = 0; i < TEV_CASES; i++) {
         tev_case(i);
     }
+    for (i = 0; i < ZTEX_CASES; i++) {
+        ztex_case(i);
+    }
     printf("XF: %d of %d cases match; TEV: %d of %d cases match\n", XF_CASES + XF_EMBOSS_CASES - xf_fail,
            XF_CASES + XF_EMBOSS_CASES, TEV_CASES - tev_fail, TEV_CASES);
-    return xf_fail || tev_fail;
+    printf("Z textures: %d of %d cases match\n", ZTEX_CASES - ztex_fail, ZTEX_CASES);
+    return xf_fail || tev_fail || ztex_fail;
 }

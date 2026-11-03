@@ -54,6 +54,7 @@ typedef struct TevConfig {
     s8 fog_cin;   // FP input of the fog colour
     u8 ztex_op;   // ZT_*
     u8 ztex_type; // ZTT_*
+    u8 early_depth; // BP 0x43 bit 6: z textures affect fog, but not the depth buffer
     u8 tco_kind;  // TCO_*
     u8 tco_mask;  // texcoords that take the offset
     TevStage st[16];

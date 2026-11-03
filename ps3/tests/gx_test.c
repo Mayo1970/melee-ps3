@@ -388,6 +388,25 @@ static void test_tev_registers(void)
     check_eq("konst 1 BG", s->tev_konst[1][1] & 0xFFFFF, 0xB00C0);
 }
 
+static void test_depth_mode(void)
+{
+    u32 generation;
+
+    GXSetZCompLoc(GX_TRUE);
+    gp_fifo_sync();
+    generation = gp_get_state()->tev_gen;
+    GXSetZCompLoc(GX_FALSE);
+    gp_fifo_sync();
+    check_eq("late depth invalidates TEV", gp_get_state()->tev_gen, generation + 1);
+    generation = gp_get_state()->tev_gen;
+    GXSetZCompLoc(GX_TRUE);
+    gp_fifo_sync();
+    check_eq("early depth invalidates TEV", gp_get_state()->tev_gen, generation + 1);
+    GXSetZCompLoc(GX_TRUE);
+    gp_fifo_sync();
+    check_eq("same depth keeps TEV", gp_get_state()->tev_gen, generation + 1);
+}
+
 static void test_textures_copies(void)
 {
     u8* tex = arena_alloc(64 * 64 * 4);
@@ -523,6 +542,7 @@ int main(void)
     test_indexed_draw();
     test_display_list();
     test_tev_registers();
+    test_depth_mode();
     test_textures_copies();
     test_sync();
     test_stream();

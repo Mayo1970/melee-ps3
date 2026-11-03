@@ -115,7 +115,7 @@ static const FpEntry* fp_current;
 
 // The fragment program of each TEV key (tev_key): the register words a TEV config is made from, less the values,
 // then the words of the values in the program's code, if any (tev_key_code).
-#define TEV_KEY_WORDS (53 + 21)
+#define TEV_KEY_WORDS (54 + 21)
 #define TEV_KEY_BITS 10
 #define TEV_KEYS (1 << TEV_KEY_BITS)
 
@@ -655,6 +655,7 @@ static u16 build_tev(const GpState* s, int numtexgens, u32 tco, TevConfig* cfg, 
         cfg->ztex_op = (u8) ((s->bp[0xF5] >> 2) & 3);
         cfg->ztex_type = (u8) (s->bp[0xF5] & 3);
         cfg->ztex_bias = (float) (s->bp[0xF4] & 0xFFFFFF);
+        cfg->early_depth = (u8) ((s->bp[0x43] >> 6) & 1);
     }
     if (tco != 0) {
         cfg->tco_kind = (u8) (tco >> 16);
@@ -668,7 +669,7 @@ static u16 build_tev(const GpState* s, int numtexgens, u32 tco, TevConfig* cfg, 
 // keys give equal configs while the values are on interpolants (tev_key_code otherwise).
 static u32 tev_key(const GpState* s, u32 numtexgens, u32 tco, u32 key[TEV_KEY_WORDS])
 {
-    u32 gen = s->bp[0x00], nstages = ((gen >> 10) & 0xF) + 1, n = 5, swaps = 0, proj = 0, ind = 0, i;
+    u32 gen = s->bp[0x00], nstages = ((gen >> 10) & 0xF) + 1, n = 6, swaps = 0, proj = 0, ind = 0, i;
     u32 zop = (s->bp[0xF5] >> 2) & 3;
 
     for (i = 0; i < 8; i++) {
@@ -698,6 +699,7 @@ static u32 tev_key(const GpState* s, u32 numtexgens, u32 tco, u32 key[TEV_KEY_WO
     key[2] = zop == ZT_ADD || zop == ZT_REPLACE ? s->bp[0xF5] & 0xF : 0;
     key[3] = key[2] != 0 ? s->bp[0xF4] & 0xFFFFFF : 0;
     key[4] = tco;
+    key[5] = key[2] != 0 ? s->bp[0x43] & 0x40 : 0;
     return n;
 }
 
