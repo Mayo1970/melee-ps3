@@ -86,8 +86,14 @@ struct ftYs_DatAttrs {
     /*   +0 */ char pad_0[0x10];
     /*  +10 */ Vec2 x10;
     /*  +18 */ float x18;
+#ifdef TARGET_PS3
+    // 64-bit UNK_T would move every field after x18 off the .dat layout.
+    /*  +1C */ u32 x1C;
+    /*  +20 */ u32 x20;
+#else
     /*  +1C */ UNK_T x1C;
     /*  +20 */ UNK_T x20;
+#endif
     /*  +24 */ float x24;
     /*  +28 */ char pad_28[0xEC - 0x28];
     /*  +EC */ float xEC;
