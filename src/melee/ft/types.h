@@ -2290,7 +2290,7 @@ typedef struct ftKbCopyHat_Sword {
 /// Yoshi.
 typedef struct ftKbCopyHat_Yoshi {
     /*  +0 */ ftKbCopyHat hat;
-    /*  +C */ ftDynamics* dynamics;
+    /*  +C */ HSD_Joint* egg_joint;
     /* +10 */ HSD_AnimJoint* anims[4];
     /* +20 */ Article* egg DAT_MATCH_KBCOPY;
 } ftKbCopyHat_Yoshi;
