@@ -7,7 +7,7 @@ It is built with the open-source [PSL1GHT](https://github.com/ps3dev/PSL1GHT) SD
 ## Install and set up
 
 1. Install `melee.pkg` with the Package Manager on the XMB.
-2. Copy your disc image to `/dev_hdd0/game/MELE00001/USRDIR/games/` or to `/dev_usbXXX/games/` on a USB drive.
+2. Copy your disc image (rename it `Melee` to `/dev_hdd0/game/MELE00001/USRDIR/games/` or to `/dev_usbXXX/games/` on a USB drive.
    Subfolders are fine.
 3. Start **Super Smash Bros: Melee** from the Game column.
 
