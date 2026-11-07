@@ -316,29 +316,29 @@ void* ps3_dat_script(const void* at, u32 offset)
     return target;
 }
 
-bool ps3_dat_word(const void* native, u32 offset, u32* out)
+const void* ps3_dat_bytes(const void* native, u32* size)
 {
-    bool found = false;
+    const u8* found = NULL;
     unsigned i;
     size_t k;
 
     if (native == NULL) {
-        return false;
+        return NULL;
     }
     ps_mutex_lock(&spans_lock);
-    for (i = nspans; i-- > 0 && !found;) {
+    for (i = nspans; i-- > 0 && found == NULL;) {
         const DatMap* natives = &spans[i].native->natives;
 
         // The natives map goes from (offset, type id) to the object; the reverse takes a scan.
         for (k = 0; k < natives->cap; k++) {
             if (natives->keys[k] != UINT64_MAX && natives->values[k] == (uintptr_t) native) {
-                u32 at = (u32) (natives->keys[k] >> 32) + offset;
+                u32 at = (u32) (natives->keys[k] >> 32);
 
-                if (at + 4 <= spans[i].data_size) {
-                    const u8* p = spans[i].data + at;
-
-                    *out = (u32) p[0] << 24 | (u32) p[1] << 16 | (u32) p[2] << 8 | p[3];
-                    found = true;
+                if (at < spans[i].data_size) {
+                    found = spans[i].data + at;
+                    if (size != NULL) {
+                        *size = spans[i].data_size - at;
+                    }
                 }
                 break;
             }
@@ -346,4 +346,17 @@ bool ps3_dat_word(const void* native, u32 offset, u32* out)
     }
     ps_mutex_unlock(&spans_lock);
     return found;
+}
+
+bool ps3_dat_word(const void* native, u32 offset, u32* out)
+{
+    u32 size;
+    const u8* p = ps3_dat_bytes(native, &size);
+
+    if (p == NULL || offset + 4 > size) {
+        return false;
+    }
+    p += offset;
+    *out = (u32) p[0] << 24 | (u32) p[1] << 16 | (u32) p[2] << 8 | p[3];
+    return true;
 }

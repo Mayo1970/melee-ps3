@@ -16,6 +16,10 @@ void* ps3_dat_script(const void* at, u32 offset);
 // a field as another type than its declared one. False when `native` is no object of a live archive.
 bool ps3_dat_word(const void* native, u32 offset, u32* out);
 
+// The serialized bytes the reader made `native` from, and in `size` how many the archive has from there. NULL when
+// `native` is no object of a live archive. Pointer words in them are archive offsets.
+const void* ps3_dat_bytes(const void* native, u32* size);
+
 struct FigaTree;
 
 // A fighter motion's archive, which the game copied to `src`: parses it and looks up `name`, as HSD_ArchiveParse

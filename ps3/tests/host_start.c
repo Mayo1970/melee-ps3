@@ -1,5 +1,6 @@
 // The host build's start (--wrap on the calls below). MELEE_HOST_MATCH="ckind[:color],.../stkind[/item_freq[/mask]]":
 // debug VS, player 0 human. MELEE_HOST_ADV="ckind/scene": Adventure from that scene (0x38: F-Zero), no CSS.
+// MELEE_HOST_EVENT="level/ckind[:color]": the event of that internal level (gm_803DF918 gives its menu number), no CSS.
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -8,9 +9,13 @@
 #include <melee/gm/gm_1A3F.h>
 #include <melee/gm/gm_1601.h>
 #include <melee/gm/gmmain_lib.h>
+#include <melee/gm/gmevent.h>
 #include <melee/gm/gmregclear.h>
 #include <melee/gm/gmvsmelee.h>
 #include <melee/gm/types.h>
+#include <melee/it/forward.h>
+#include <melee/lb/lbdvd.h>
+#include <melee/lb/types.h>
 #include <melee/mn/types.h>
 #include <melee/pl/forward.h>
 #include <ps3_netplay.h>
@@ -19,6 +24,10 @@
 void __real_gm_ChangeGameModeAfterCurrentScene(int pending_mode);
 void __real_gm_LoadAnnouncer(void);
 void __real_gm_SetGameModeStateId(u8 id);
+void __real_gm_Mode_Event_OnLoad(void);
+void __real_gm_80168F88(void);
+void __real_itEvYoshiEgg_Spawn(Vec3* pos);
+ItemKind* __real_gm_801BEC54(void);
 
 static bool booted;
 
@@ -32,6 +41,11 @@ static const char* adventure(void)
     return getenv("MELEE_HOST_ADV");
 }
 
+static const char* event(void)
+{
+    return getenv("MELEE_HOST_EVENT");
+}
+
 // The first mode change is the boot's, to the title or the memory card scene.
 void __wrap_gm_ChangeGameModeAfterCurrentScene(int pending_mode)
 {
@@ -41,6 +55,9 @@ void __wrap_gm_ChangeGameModeAfterCurrentScene(int pending_mode)
     } else if (!booted && adventure() != NULL) {
         OSReport("host_start: mode %d becomes Adventure (%d)\n", pending_mode, GM_ADVENTURE);
         pending_mode = GM_ADVENTURE;
+    } else if (!booted && event() != NULL) {
+        OSReport("host_start: mode %d becomes Event (%d)\n", pending_mode, GM_EVENT);
+        pending_mode = GM_EVENT;
     }
     // MELEE_HOST_NET_HOST, or MELEE_HOST_NET_JOIN=<code>: the boot hosts or joins, so the match is a netplay one.
     if (!booted && getenv("MELEE_HOST_NET_HOST") != NULL) {
@@ -82,6 +99,79 @@ void __wrap_gm_SetGameModeStateId(u8 id)
     }
     OSReport("host_start: Adventure as ckind %d from scene %#x, RNG seed %#x\n", css->c_kind, id, *HSD_RandSeedPtr);
     __real_gm_SetGameModeStateId(id);
+}
+
+// The event's on_load picks the CSS (state 0) for a free fighter; the CSS's exit would fill x2 and x3.
+void __wrap_gm_Mode_Event_OnLoad(void)
+{
+    static bool done;
+    struct EventData* ev = &gmMainLib_804D3EE0->vs.unk_530;
+    char buf[64];
+    char* save = NULL;
+    char* c;
+
+    if (done || event() == NULL) {
+        __real_gm_Mode_Event_OnLoad();
+        return;
+    }
+    done = true;
+    snprintf(buf, sizeof(buf), "%s", event());
+    ev->unk_535 = (u8) atoi(strtok_r(buf, "/", &save));
+    c = strtok_r(NULL, "/", &save);
+    ev->x2 = c != NULL ? (s8) atoi(c) : CKind_Mario;
+    ev->x3 = c != NULL && strchr(c, ':') != NULL ? (u8) atoi(strchr(c, ':') + 1) : 0;
+    if (getenv("MELEE_HOST_SEED") != NULL) {
+        *HSD_RandSeedPtr = (u32) strtoul(getenv("MELEE_HOST_SEED"), NULL, 0);
+    }
+    OSReport("host_start: event level %d as ckind %d, RNG seed %#x\n", ev->unk_535, ev->x2, *HSD_RandSeedPtr);
+    __real_gm_Mode_Event_OnLoad();
+    // A free fighter (x44 != 0): the CSS preloads it in cache entry 0 every frame (mnCharSel_Scene_OnFrame).
+    if (ev->x44 != 0) {
+        struct GameCache* cache = &lbDvd_GetPreloadCacheScene()->game_cache;
+
+        cache->entries[0].char_id = ev->x2;
+        cache->entries[0].color = ev->x3;
+        lbDvd_80018254();
+    }
+    __real_gm_SetGameModeStateId(1);
+}
+
+// onEnterVs calls this last: the fighters the event chose.
+void __wrap_gm_80168F88(void)
+{
+    struct EventData* ev = &gmMainLib_804D3EE0->vs.unk_530;
+
+    if (event() != NULL && gm_GetCurrentGameMode() == GM_EVENT) {
+        OSReport("host_start: event level %d fighters %d %d %d %d\n", ev->unk_535, ev->x4C[0], ev->x4C[1],
+                 ev->x4C[2], ev->x4C[3]);
+    }
+    __real_gm_80168F88();
+}
+
+void __wrap_itEvYoshiEgg_Spawn(Vec3* pos)
+{
+    OSReport("host_start: event egg at %.2f %.2f %.2f\n", pos->x, pos->y, pos->z);
+    __real_itEvYoshiEgg_Spawn(pos);
+}
+
+ItemKind* __wrap_gm_801BEC54(void)
+{
+    ItemKind* kinds = __real_gm_801BEC54();
+    char line[256];
+    int n = 0;
+    int i;
+
+    if (kinds == NULL) {
+        return kinds;
+    }
+    for (i = 0; i < It_PKind_Items_Size && n < (int) sizeof(line) - 12; i++) {
+        n += snprintf(line + n, sizeof(line) - n, " %#x", kinds[i]);
+        if (kinds[i] == It_PKind_Terminate) {
+            break;
+        }
+    }
+    OSReport("host_start: event Pokemon list%s\n", line);
+    return kinds;
 }
 
 // onEnterDebugVs calls this last, after it fills gmVsMelee_StartData.

@@ -31,6 +31,27 @@
 #include <MetroTRK/intrinsics.h>
 #endif
 
+#ifdef TARGET_PS3
+#include <dolphin/os.h>
+#include <ps3_dat.h>
+
+// x4's type depends on the event, but the reader converts each as gm_804D6900_x4_t (16 bytes with LP64).
+// The lists and the egg's position have no pointers, so their serialized bytes are the native ones.
+static void* gm_EventX4Bytes(struct gm_804D6900_t* level)
+{
+    void* bytes;
+
+    if (level->x4 == NULL) {
+        return NULL;
+    }
+    bytes = (void*) ps3_dat_bytes(level->x4, NULL);
+    if (bytes == NULL) {
+        OSReport("gmevent: x4 %p is in no archive\n", (void*) level->x4);
+    }
+    return bytes;
+}
+#endif
+
 struct UnkSmallLoadData {
     u8 pad[8];
 };
@@ -224,8 +245,13 @@ s32 gm_801BAC9C(GameModeState* arg0, s32 arg1)
     s32 found;
     s32 count = 0;
     s32 k;
+#ifdef TARGET_PS3
+    struct gm_event_char_list* src =
+        gm_EventX4Bytes((*gm_804D6900)[ev->unk_535]);
+#else
     struct gm_event_char_list* src =
         (struct gm_event_char_list*) (*gm_804D6900)[ev->unk_535]->x4;
+#endif
     PAD_STACK(8);
 
     for (i = 0; i < ChKind_Max; i++) {
@@ -1475,7 +1501,11 @@ void gm_801BD028(HSD_GObj* arg0)
     PAD_STACK(0x1C);
 
     if (gmMainLib_804D3EE0->vs.unk_530.x10 == 0) {
+#ifdef TARGET_PS3
+        Vec3* src = gm_EventX4Bytes(levels[level]);
+#else
         Vec3* src = (Vec3*) levels[level]->x4;
+#endif
         pos.x = src->x;
         pos.y = src->y;
         pos.z = src->z;
@@ -2271,5 +2301,9 @@ ItemKind* gm_801BEC54(void)
     if (temp_r3 == NULL) {
         return NULL;
     }
+#ifdef TARGET_PS3
+    return gm_EventX4Bytes(temp_r3);
+#else
     return (ItemKind*) temp_r3->x4;
+#endif
 }
